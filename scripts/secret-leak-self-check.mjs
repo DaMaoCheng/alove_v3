@@ -7,6 +7,7 @@ const ROOT = process.cwd();
 const SKIP_DIRS = new Set([
   ".git",
   ".codex-backups",
+  ".backups",
   "node_modules",
   "uploads",
   "dist",
@@ -159,6 +160,7 @@ async function* walk(dir) {
   for (const entry of entries) {
     if (shouldSkipEntry(entry)) continue;
     const path = join(dir, entry.name);
+    if (entry.isDirectory() && ["logs", "docs/analysis", "docs/releases"].includes(relative(ROOT, path))) continue;
     if (entry.isDirectory()) {
       yield* walk(path);
       continue;
