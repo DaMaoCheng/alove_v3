@@ -1,0 +1,9 @@
+html[dir="rtl"] body[data-view="admin"] { direction: ltr; }
+html[dir="rtl"] body:not([data-view="admin"]) { direction: rtl; }
+html[dir="rtl"] body:not([data-view="admin"]) .sidebar { border-right: 0; border-left: 1px solid var(--line); }
+html[dir="rtl"] body:not([data-view="admin"]) .guest-discover-guide { left: auto; right: 0; }
+html[dir="rtl"] body:not([data-view="admin"]) .guest-discover-guide::before { right: auto; left: 100%; transform: translateY(-50%) scaleX(-1); }
+@media (max-width: 900px) {
+  html[dir="rtl"] body:not([data-view="admin"]) .guest-discover-guide--mobile { border-radius: 5px 0 5px 5px; }
+  html[dir="rtl"] body:not([data-view="admin"]) .guest-discover-guide--mobile::before { right: 0; bottom: 100%; left: auto; transform: none; border-right: 0; border-left: 12px solid transparent; clip-path: none; }
+}

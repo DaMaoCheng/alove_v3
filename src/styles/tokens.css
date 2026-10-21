@@ -1,0 +1,49 @@
+:root {
+  --accent: #07f468;
+  --accent-deep: #05c455;
+  --accent-soft: rgba(7, 244, 104, 0.14);
+  --gold: #f5c518;
+  --radius-card: 16px;
+  --radius-control: 12px;
+  --radius-pill: 999px;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --font-display: "Clash Display", "Satoshi", system-ui, sans-serif;
+  --font-body: "Satoshi", "Inter", system-ui, sans-serif;
+}
+
+:root[data-theme="dark"] {
+  --bg: #0a0c0b;
+  --bg-2: #0f1211;
+  --surface: #151916;
+  --tile: rgba(255, 255, 255, 0.05);
+  --tile-hover: rgba(255, 255, 255, 0.09);
+  --tile-active: rgba(7, 244, 104, 0.14);
+  --line: rgba(255, 255, 255, 0.09);
+  --ink: #f2f5f3;
+  --ink-2: rgba(242, 245, 243, 0.66);
+  --ink-3: rgba(242, 245, 243, 0.42);
+  --field: rgba(255, 255, 255, 0.05);
+  --scrim: linear-gradient(180deg, rgba(8,10,9,0) 35%, rgba(8,10,9,0.86) 100%);
+  --shadow-glow: 0 0 0 1px rgba(7,244,104,0.35), 0 18px 50px rgba(7,244,104,0.18);
+  --on-accent: #04140d;
+}
+
+:root[data-theme="light"] {
+  --bg: #f4f6f4;
+  --bg-2: #ffffff;
+  --surface: #ffffff;
+  --tile: rgba(15, 30, 22, 0.05);
+  --tile-hover: rgba(15, 30, 22, 0.09);
+  --tile-active: rgba(5, 163, 75, 0.13);
+  --line: rgba(15, 30, 22, 0.1);
+  --ink: #11201a;
+  --ink-2: rgba(17, 32, 26, 0.64);
+  --ink-3: rgba(17, 32, 26, 0.42);
+  --field: rgba(15, 30, 22, 0.04);
+  --accent: #05a34b;
+  --accent-deep: #048a3f;
+  --accent-soft: rgba(5, 163, 75, 0.13);
+  --scrim: linear-gradient(180deg, rgba(8,10,9,0) 30%, rgba(8,12,10,0.82) 100%);
+  --shadow-glow: 0 0 0 1px rgba(5,163,75,0.30), 0 18px 44px rgba(5,163,75,0.16);
+  --on-accent: #ffffff;
+}

@@ -1,0 +1,45 @@
+import assert from 'node:assert/strict';
+import {prepareProductCandidates} from '../server/product-candidate-ranking-service.js';
+import {selectProductsForMessage,buildProductCardDeliveryContext,suppressRepeatedProductCards} from '../server/chat-product-reply-service.js';
+import {executeProductSearchDetailed} from '../server/product-search-execution-service.js';
+const site={siteId:'site_fixture',siteSlug:'fixture'};
+const home={id:'h1',name:'Manchester United Home Long Sleeve Football Jersey 2026/27 Red',url:'https://fixture.invalid/h1',available:true,...site};
+const otherHome={id:'h2',name:'Manchester United Home Football Jersey Kit 2025/26 Red',url:'https://fixture.invalid/h2',available:true,...site};
+const away={id:'a1',name:'Manchester United Away Football Jersey 2026/27 White',url:'https://fixture.invalid/a1',available:true,...site};
+const intent={query:'Manchester United shirt',requestedTeam:'Manchester United',requestedProductType:'shirt',requestedVariants:['home','away'],requestedVariant:'home',shouldLoadProductContext:true,cardAllowed:true,candidateSearchAllowed:true,replyBoundary:{salesAllowed:true}};
+const context={...site,products:[home,otherHome],searchOutcome:'matched',cardAllowed:true,searchIntent:intent};
+let checks=0;const check=(ok,why)=>{assert(ok,why);checks++;};
+const selected=selectProductsForMessage(context);
+check(selected.length===1&&selected[0].id==='h1','a missing away target cannot be filled by a second home card');
+const plan=buildProductCardDeliveryContext(context);
+assert.deepEqual(plan.unfulfilledVariants,['away']);checks++;
+assert.deepEqual(selectProductsForMessage({...context,products:[home,otherHome,away]}).map(p=>p.id),['h1','a1']);checks++;
+assert.deepEqual(selectProductsForMessage({...context,products:[home,otherHome,away],searchIntent:{...intent,requestedVariants:['away','home']}}).map(p=>p.id),['a1','h1']);checks++;
+check(prepareProductCandidates([home,otherHome],{searchIntent:intent,limit:2}).length===2,'ranking preserves alternative evidence without granting another target slot');
+assert.deepEqual(prepareProductCandidates([home,otherHome,away],{searchIntent:intent,limit:2}).map(p=>p.id),['h1','a1']);checks++;
+check(selectProductsForMessage({...context,products:[home,away],searchIntent:{...intent,requestedVariants:[]}}).length===1,'ordinary single-card behavior is unchanged');
+const dedup=suppressRepeatedProductCards({...context,products:[home,away]},{recentMessages:[{product:home}],userText:'Another option?'});
+assert.deepEqual(selectProductsForMessage(dedup).map(p=>p.id),['a1']);checks++;
+assert.deepEqual(buildProductCardDeliveryContext(dedup).unfulfilledVariants,['home']);checks++;
+check(selectProductsForMessage({...context,products:[{...home,canonicalEdition:'fan'},away],searchIntent:{...intent,requestedEdition:'player'}}).length===0,'edition exclusions remain before target selection');
+check(selectProductsForMessage({...context,products:[home,away],cardAllowed:false}).length===0,'target allocation cannot grant card permission');
+const unknown={...home,id:'unknown',name:'Manchester United Football Jersey'};
+check(selectProductsForMessage({...context,products:[unknown],searchOutcome:'candidate'}).length===0,'unknown variant evidence cannot manufacture a home or away match');
+const polluted=[home,otherHome].map(p=>({...p,subtitle:'Manchester United home and away',tag:'home away',summary:'away option'}));
+check(selectProductsForMessage({...context,products:polluted}).length===1,'request-derived descriptor text cannot turn a Home title into an away card');
+check(selectProductsForMessage({...context,products:[home,{...away,name:'Manchester United Home and Away Jersey'}]}).length===1,'conflicting title evidence cannot fill away');
+let fetches=0;
+const detailed=await executeProductSearchDetailed({productApiUrl:'https://fixture.invalid/products',query:'Manchester United home away shirt',searchIntent:intent,limit:2,
+ fetchProducts:async()=>++fetches===1?[home,otherHome]:[away]});
+check(fetches===2&&detailed.matches.length===2,'an incomplete variant pair cannot stop the existing bounded recall after one home result');
+assert.deepEqual(new Set(detailed.matches.map(p=>p.id)),new Set(['h1','a1']));checks++;
+let misses=0;
+const partial=await executeProductSearchDetailed({productApiUrl:'https://fixture.invalid/products',query:'Manchester United home away shirt',searchIntent:intent,limit:2,
+ fetchProducts:async()=>{misses++;return [home,otherHome];}});
+check(misses<=3&&partial.matches.length===2&&selectProductsForMessage({...context,products:partial.matches}).length===1,'bounded recall preserves alternative evidence while delivery keeps the missing target unfilled');
+const actualQueries=[];
+const directed=await executeProductSearchDetailed({productApiUrl:'https://fixture.invalid/products',query:'Manchester United home away football jersey',searchIntent:{...intent,requestedKeywords:['football']},limit:2,
+ fetchProducts:async(_url,request)=>{actualQueries.push(request.query);return /United away$/.test(request.query)?[away]:[home,otherHome];}});
+check(actualQueries.length===3&&actualQueries.at(-1)==='Manchester United away','last existing recall slot targets missing away instead of scalar home');
+check(directed.matches.some(p=>p.id==='a1'),'a real source result from away recall is required for away delivery');
+console.log(`product variant delivery self-check passed: ${checks} checks; injected catalogue, no DB/network/models`);

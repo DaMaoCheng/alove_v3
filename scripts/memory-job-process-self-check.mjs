@@ -1,0 +1,56 @@
+import assert from 'node:assert/strict';
+import { existsSync } from 'node:fs';
+import { EventEmitter } from 'node:events';
+import { createMemoryJobRunner } from '../server/memory-job-runner-service.js';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createMemoryJobProcess } from '../server/memory-job-process-service.js';
+import { memoryJobClaimFilter, getMemoryJobExecutionBudgetMs, IMAGE_MEMORY_JOB_TYPES, canRetryInterruptedMemoryJob } from '../server/memory-job-policy.js';
+const folder = await mkdtemp(join(tmpdir(), 'alove-worker-boundary-'));
+const workerUrl = new URL('./fixtures/memory-worker-fixture.mjs', import.meta.url);
+const events = [];
+try {
+  const background = createMemoryJobProcess({ operation: 'runNext', lane: 'background', job: { payload: { lateFile: join(folder, 'late.txt') } }, workerUrl,
+    controlTimeoutMs: 3000, budgetForJob: () => 150, killGraceMs: 30, onEvent: e => events.push(e) });
+  const rejected = assert.rejects(background.promise, error => error.code === 'MEMORY_JOB_TIMEOUT' && error.stage === 'fixture_wait' && error.job.id === 'mem_job_fixture');
+  const image = createMemoryJobProcess({ operation: 'runNext', lane: 'image', workerUrl, controlTimeoutMs: 3000, budgetForJob: () => 3000 });
+  assert.equal((await image.promise).completed, true, 'image worker progresses independently of an indefinitely blocked background worker');
+  await rejected;
+  assert(events.some(e => e.event === 'exited' && e.signal === 'SIGKILL'), 'deadline awaits forced process termination');
+  await new Promise(resolve => setTimeout(resolve, 1250));
+  assert.equal(existsSync(join(folder, 'late.txt')), false, 'old worker cannot perform its delayed side effect after timeout returns');
+  const silent = createMemoryJobProcess({ operation: 'silent', workerUrl, controlTimeoutMs: 80, killGraceMs: 30 });
+  await assert.rejects(silent.promise, e => e.code === 'MEMORY_JOB_TIMEOUT', 'startup/claim deadline is also finite');
+  const stopped = createMemoryJobProcess({ operation: 'silent', workerUrl, controlTimeoutMs: 3000, killGraceMs: 30 });
+  const stoppedResult = assert.rejects(stopped.promise, e => e.code === 'MEMORY_JOB_STOPPED'); stopped.stop(); await stoppedResult;
+  await assert.rejects(createMemoryJobProcess({ operation: 'crash', workerUrl }).promise, e => e.code === 'MEMORY_WORKER_EXIT');
+  await assert.rejects(createMemoryJobProcess({ workerUrl: new URL('./fixtures/not-a-worker.mjs', import.meta.url), controlTimeoutMs: 1000 }).promise);
+  const spawnError = createMemoryJobProcess({ operation: 'silent', controlTimeoutMs: 1000, forkImpl: () => {
+    const fake = new EventEmitter(); fake.send = () => {}; fake.kill = () => { throw Error('No PID may be signalled'); };
+    queueMicrotask(() => { fake.emit('error', Object.assign(new Error('fixture spawn denied'), { code: 'EAGAIN' })); fake.emit('close', -1, null); }); return fake;
+  } });
+  await assert.rejects(spawnError.promise, e => e.code === 'EAGAIN', 'asynchronous spawn error without PID must finish on close');
+  const orchestration = [];
+  const runner = createMemoryJobRunner({ config: { enabled: true, batchSize: 1, pollMs: 20 }, onEvent: e => orchestration.push(e),
+    runProcess: input => createMemoryJobProcess({ ...input, workerUrl, controlTimeoutMs: 3000, budgetForJob: () => 500, killGraceMs: 30 }) });
+  const firstBatch = runner.runMemoryJobBatch();
+  await new Promise(resolve => setTimeout(resolve, 160));
+  await runner.runMemoryJobBatch();
+  await runner.stopMemoryJobRunnerAndWait();
+  await firstBatch;
+  assert(orchestration.filter(e => e.event === 'claimed' && e.jobType === 'generate_chat_image').length >= 2, 'actual runner may run another image batch while background lane is occupied');
+  assert.equal(orchestration.filter(e => e.event === 'claimed' && e.jobType === 'send_proactive_message').length, 1, 'actual runner keeps background single-flight');
+  assert.deepEqual(memoryJobClaimFilter('image').includeTypes, IMAGE_MEMORY_JOB_TYPES);
+  assert.deepEqual(memoryJobClaimFilter('background').excludeTypes, IMAGE_MEMORY_JOB_TYPES);
+  assert(getMemoryJobExecutionBudgetMs({ jobType: 'generate_chat_image' }) >= 270000, 'image whole-task budget preserves provider time plus I/O margin');
+  const failureBudget = getMemoryJobExecutionBudgetMs({ jobType: 'generate_chat_image_failure_reply' });
+  assert(getMemoryJobExecutionBudgetMs({ jobType: 'send_proactive_message' }) > failureBudget, 'two proactive candidate rounds preserve a larger window than one failure reply');
+  const nearlyExpired = { jobType: 'generate_chat_image', createdAt: new Date(Date.now() - 15 * 60 * 1000 + 2000).toISOString() };
+  assert(getMemoryJobExecutionBudgetMs(nearlyExpired) <= 2000, 'request age caps image attempt budget rather than refreshing it');
+  assert.equal(canRetryInterruptedMemoryJob({ jobType: 'send_proactive_message' }), false);
+  assert.equal(canRetryInterruptedMemoryJob({ jobType: 'backfill_claimed_guest_context' }), true);
+  assert.equal(canRetryInterruptedMemoryJob({ jobType: 'send_mascot_campaign_batch' }), true);
+  assert.equal(canRetryInterruptedMemoryJob({ jobType: 'unknown_side_effect' }), false);
+  console.log('Memory worker process checks passed: independent execution, confirmed timeout/kill, no late side effects, startup/crash/stop and bounded budgets (real child processes; no DB/network/images)');
+} finally { await rm(folder, { recursive: true, force: true }); }

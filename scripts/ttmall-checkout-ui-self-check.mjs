@@ -1,0 +1,51 @@
+import assert from "node:assert/strict";
+import fs from "node:fs";
+
+const panel = fs.readFileSync("src/features/chat/chat-ttmall-checkout-panel.js", "utf8");
+const chat = fs.readFileSync("src/features/chat/chat-page.js", "utf8");
+const search = fs.readFileSync("src/features/search/search-page.js", "utf8");
+const kitshop = fs.readFileSync("src/features/kitshop/kitshop-page.js", "utf8");
+const call = fs.readFileSync("src/features/call-modal/call-product-overlay.js", "utf8");
+const productPanel = fs.readFileSync("src/features/chat/chat-product-panel.js", "utf8");
+const styles = fs.readFileSync("src/features/app-shell/styles/chat.css", "utf8");
+
+for (const [name, source] of Object.entries({ chat, search, kitshop, call })) {
+  assert.match(source, /ttmallCheckoutPanelHtml/, `${name} must mount the shared TTMall checkout surface`);
+}
+assert.match(productPanel, /openTtmallCheckoutPanel/, "TTMall cart checkout must open the internal confirmation surface");
+assert.match(panel, /getTtmallCheckoutState/, "the panel must load server-owned checkout state");
+assert.match(panel, /clearProductCart/, "a confirmed or unresolved TTMall checkout must clear the stale browser cart without re-syncing it");
+assert.match(panel, /TTMALL_ORDER_RESPONSE_INVALID/, "an unconfirmed provider result must clear the stale browser cart instead of allowing a repeated checkout");
+assert.match(panel, /cartConsumed/, "a confirmed provider result must clear the browser cart before the user can reopen checkout");
+assert.match(panel, /data-ttmall-checkout-result/, "confirmed or unresolved checkout outcomes must replace the submit form and prevent a second click");
+assert.match(panel, /paymentOutcome === "failed"/, "an explicit TTMall payment failure must render as failure instead of an incomplete result");
+assert.match(panel, /TTMall checkout completed\./, "the panel must not use the obsolete follow-payment-instructions fallback for explicit terminal results");
+assert.match(panel, /getTtmallCheckoutOptions/, "the panel must load server-validated shipping/payment options");
+assert.match(panel, /saveTtmallCheckoutAddress/, "the panel must support TTMall address entry");
+assert.match(panel, /selectDropdownHtml/, "checkout choices must reuse the shared select dropdown");
+assert.match(panel, /bindDropdowns\(body\)/, "checkout choices must bind the shared dropdown interactions");
+assert.match(panel, /floating:\s*true/, "checkout dropdowns must opt into the shared floating menu mode");
+assert.match(panel, /State or region/, "the address form must collect the state required by direct TTMall payment creation");
+assert.match(panel, /bindAddressRegionSelectors/, "zone and country selection must refresh the valid state choices without a custom dropdown");
+assert.match(panel, /findStateCountryId/, "the address form must reject a state from another country before sending it to TTMall");
+assert.doesNotMatch(panel, /<label class="ttmall-checkout-field">(Delivery address|Zone|Country|Shipping method|Payment method)/, "dropdown headings must not be labels that open the select");
+assert.match(panel, /<div class="ttmall-checkout-field"><span>Delivery address<\/span>/, "delivery-address dropdown must have a non-interactive heading");
+assert.match(panel, /ttmall-checkout-check/, "the default-address toggle must use an inline checkbox row");
+assert.match(panel, /data-ttmall-checkout-change-address\]"\)\?\.addEventListener\("click"/, "the rendered address button must have a direct click handler");
+assert.match(panel, /const form = body\.querySelector\("\[data-ttmall-address-form\]"\);[\s\S]*form\?\.addEventListener\("submit"/, "the rendered address form must have a direct submit handler");
+assert.match(panel, /data-ttmall-checkout-back/, "address form cancel must use the checkout back action");
+assert.match(panel, /renderCheckout\(root, language\)/, "address form cancel must return to checkout instead of closing it");
+assert.match(panel, /btn btn-primary btn-block/, "submit actions must reuse the shared primary button");
+assert.match(panel, /btn btn-ghost btn-block/, "secondary actions must reuse the shared ghost button");
+assert.doesNotMatch(panel, /ttmall-checkout-copy|ttmall-checkout-note/, "checkout should not render redundant explanatory copy");
+assert.doesNotMatch(panel, /requiresSensitiveInput/, "the panel must show every payment method returned by the current site");
+assert.match(panel, /items: payments\.map/, "the payment dropdown must render every TTMall payment option");
+assert.match(panel, /shipping\.length && payments\.length/, "checkout availability must follow the full provider payment list");
+assert.doesNotMatch(panel, /ALOVE-safe payment method/, "the payment empty state must not describe an ALOVE-specific filtered list");
+assert.doesNotMatch(panel, /card_num|CVV|Authorization|cartHash/, "the browser checkout panel must not receive sensitive provider fields");
+assert.match(styles, /\.ttmall-checkout-panel/, "the checkout panel must have isolated styles");
+assert.match(styles, /\.ttmall-checkout-panel\s*\{[^}]*z-index:\s*86;[^}]*pointer-events:\s*auto;/, "the checkout panel must sit above the binding drawer and remain interactive inside Kitshop");
+const dropdown = fs.readFileSync("src/features/shared-ui/dropdown.js", "utf8");
+assert.match(dropdown, /data-dd-floating/, "shared dropdowns must support an opt-in floating menu mode");
+assert.match(dropdown, /position\s*=\s*"fixed"/, "floating menus must escape scroll-container clipping");
+console.log("TTMall checkout UI self-check passed");

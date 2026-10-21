@@ -1,0 +1,34 @@
+.admin-kitshop-page{ display:flex; flex-direction:column; gap:16px; }
+.admin-kitshop-actions{ align-items:center; flex-wrap:wrap; gap:12px; }
+.kitshop-admin-site-dd{ width:220px; min-width:220px; }
+.kitshop-admin-site-dd .dd-select-trigger{ min-height:36px; height:36px; border-radius:10px; font-size:13px; }
+.kitshop-admin-alert{ padding:12px 14px; border:1px solid color-mix(in srgb,var(--accent) 32%,transparent); border-radius:12px; background:var(--accent-soft); color:var(--ink); font-size:13px; font-weight:700; }
+.kitshop-admin-grid{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin-bottom:16px; }
+.kitshop-admin-kpi .kpi-v{ font-size:24px; white-space:nowrap; }
+.kitshop-admin-rules{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; margin-bottom:16px; padding:16px; }
+.kitshop-admin-rule{ min-width:0; display:flex; flex-direction:column; gap:6px; color:var(--ink-3); font-size:12px; line-height:1.45; }
+.kitshop-admin-rule b{ color:var(--ink); font-size:13px; }
+.kitshop-admin-panel{ margin-bottom:16px; overflow:hidden; }
+.kitshop-admin-section-head{ display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px 18px; border-bottom:1px solid var(--line); }
+.kitshop-admin-section-head h3{ margin:0; font-size:15px; color:var(--ink); }
+.kitshop-admin-section-head span{ color:var(--ink-3); font-size:12px; font-weight:700; }
+.kitshop-admin-section-list,.kitshop-admin-products{ overflow:auto; }
+.kitshop-admin-products{ max-height:min(520px,52vh); }
+.kitshop-admin-section-row,.kitshop-admin-product-head,.kitshop-admin-product-row{ width:max-content; min-width:100%; display:grid; align-items:center; gap:14px; box-sizing:border-box; padding:11px 18px; border-bottom:1px solid var(--line); }
+.kitshop-admin-section-row{ grid-template-columns:minmax(220px,1.25fr) minmax(130px,.7fr) minmax(220px,1fr) 92px 64px 88px 150px; }
+.kitshop-admin-product-head,.kitshop-admin-product-row{ grid-template-columns:minmax(360px,1.5fr) 150px 100px 64px 86px 150px 58px; }
+.kitshop-admin-product-head{ position:sticky; top:0; z-index:1; background:var(--surface); color:var(--ink-3); font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:.4px; }
+.kitshop-admin-section-row:last-child,.kitshop-admin-product-row:last-child{ border-bottom:none; }
+.kitshop-admin-section-row>span,.kitshop-admin-product-row>span,.kitshop-admin-product-head>span{ min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.kitshop-admin-section-row b,.kitshop-admin-section-row small,.kitshop-admin-product-title b,.kitshop-admin-product-title small{ display:block; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.kitshop-admin-section-row b,.kitshop-admin-product-title b{ color:var(--ink); font-size:13px; }
+.kitshop-admin-section-row small,.kitshop-admin-product-title small{ margin-top:3px; color:var(--ink-3); font-size:11px; }
+.kitshop-admin-product-title{ display:flex; align-items:center; gap:10px; }
+.kitshop-admin-thumb{ width:54px; height:54px; border-radius:10px; overflow:hidden; border:1px solid var(--line); background:var(--tile); flex:none; }
+.kitshop-admin-thumb img{ width:100%; height:100%; object-fit:cover; display:block; }
+.kitshop-admin-product-pager{ border-top:1px solid var(--line); }
+
+@media (max-width:900px){
+  .kitshop-admin-grid,.kitshop-admin-rules{ grid-template-columns:1fr; }
+  .kitshop-admin-site-dd{ width:190px; min-width:190px; }
+}

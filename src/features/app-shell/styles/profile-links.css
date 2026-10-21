@@ -1,0 +1,6 @@
+/* ============ PROFILE: ADMIN LINK ============ */
+.pm-admin-link{ display:flex; align-items:center; justify-content:center; gap:8px; width:100%; margin-top:10px; padding:11px; border:1px solid var(--line); border-radius:12px; background:transparent; color:var(--ink-2); cursor:pointer; font:inherit; font-weight:600; font-size:13px; transition:.2s; }
+.pm-admin-link:hover{ border-color:var(--accent); color:var(--accent); }
+.pm-admin-link svg{ width:17px; height:17px; }
+.pm-logout-link{ color:#d95d48; }
+.pm-logout-link:hover{ border-color:#d95d48; color:#d95d48; background:rgba(217,93,72,.08); }

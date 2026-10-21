@@ -1,0 +1,18 @@
+/* ============ VOICE BUBBLE BUTTON ============ */
+.voice-btn{ display:inline-flex; align-items:center; gap:6px; margin:0 0 0 8px; vertical-align:middle; padding:4px 9px 4px 5px; border:none; border-radius:var(--radius-pill); background:var(--tile); color:var(--ink-2); cursor:pointer; font:inherit; font-size:11px; line-height:1; transition:background .2s, color .2s; }
+.msg.me .voice-btn{ background:rgba(0,0,0,0.16); color:var(--on-accent); }
+.voice-btn:hover{ background:var(--tile-hover); color:var(--ink); }
+.voice-btn.is-disabled{ cursor:default; opacity:.62; color:var(--muted); }
+.voice-btn.is-disabled:hover{ background:var(--tile); color:var(--muted); }
+.voice-btn.is-disabled .vb-ic{ background:var(--tile-hover); color:var(--muted); }
+.voice-btn.is-disabled .vb-wave i{ opacity:.32; }
+.msg.me .voice-btn:hover{ background:rgba(0,0,0,0.24); }
+.voice-btn .vb-ic{ display:inline-flex; width:18px; height:18px; align-items:center; justify-content:center; border-radius:50%; background:var(--accent); color:var(--on-accent); }
+.msg.me .voice-btn .vb-ic{ background:var(--on-accent); color:var(--accent); }
+.voice-btn .vb-ic svg{ width:12px; height:12px; }
+.voice-btn .vb-wave{ display:inline-flex; align-items:center; gap:2px; height:14px; }
+.voice-btn .vb-wave i{ width:2px; height:5px; border-radius:2px; background:currentColor; opacity:.55; }
+.voice-btn.playing .vb-wave i{ animation:vbw .9s ease-in-out infinite; }
+.voice-btn .vb-wave i:nth-child(2){ animation-delay:.12s } .voice-btn .vb-wave i:nth-child(3){ animation-delay:.24s } .voice-btn .vb-wave i:nth-child(4){ animation-delay:.36s } .voice-btn .vb-wave i:nth-child(5){ animation-delay:.48s }
+@keyframes vbw{ 0%,100%{ height:5px } 50%{ height:13px } }
+.voice-btn .vb-time{ font-variant-numeric:tabular-nums; opacity:.8; }

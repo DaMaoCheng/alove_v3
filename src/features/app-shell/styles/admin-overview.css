@@ -1,0 +1,28 @@
+.product-funnel-panel{ margin-bottom:14px; }
+.product-kpi-row{ grid-template-columns:repeat(4,minmax(0,1fr)); }
+.product-kpi-primary{ background:var(--surface); border-color:color-mix(in srgb,var(--accent) 72%,transparent); box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--accent) 22%,transparent); }
+.product-kpi-primary .kpi-v{ color:var(--accent); }
+.product-source-row{ display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:16px; margin-top:16px; }
+.product-source-kpi{ min-width:0; padding:16px; border:1px solid var(--line); border-radius:16px; background:color-mix(in srgb,var(--surface) 84%,var(--bg)); }
+.product-source-kpi-head{ display:flex; justify-content:space-between; gap:12px; color:var(--muted); font-size:13px; }
+.product-source-kpi-head b{ color:var(--accent); font-weight:700; }
+.product-source-kpi-metrics{ display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:8px; margin-top:14px; color:var(--muted); font-size:12px; }
+.product-source-kpi-metrics span{ display:flex; flex-direction:column; gap:4px; min-width:0; }
+.product-source-kpi-metrics strong{ color:var(--text); font-size:18px; line-height:1.1; }
+.product-source-kpi-rates{ margin-top:12px; color:var(--muted); font-size:12px; }
+
+.admin-product-rank-panel{ display:flex; flex-direction:column; max-height:calc(100vh - 410px); min-height:260px; }
+.admin-product-rank-scroll{ flex:1 1 auto; min-height:0; overflow:auto; }
+.admin-product-rank-scroll .dt-head{ position:sticky; top:0; z-index:1; background:var(--surface); }
+.product-rank-pager{ flex:none; }
+
+.data-table.admin-product-rank-table .dt-head,.data-table.admin-product-rank-table .dt-row{ grid-template-columns:minmax(180px,1.55fr) .7fr .52fr .5fr .5fr .5fr .5fr .5fr .58fr; }
+.admin-product-rank-table .dt-cell.name{ min-width:0; overflow:hidden; }
+
+@media (max-width:920px){
+  .product-source-row{ grid-template-columns:1fr; }
+  .data-table.admin-product-rank-table .dt-head,.data-table.admin-product-rank-table .dt-row{ min-width:860px; }
+  .admin-product-rank-head{ align-items:flex-start; gap:12px; }
+  .admin-panel-tools{ width:100%; justify-content:flex-start; }
+  .admin-panel-search{ min-width:0; width:100%; max-width:none; }
+}

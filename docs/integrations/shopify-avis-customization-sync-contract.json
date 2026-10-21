@@ -1,0 +1,348 @@
+{
+  "document": {
+    "title": "Shopify Avis/Aris 定制配置同步给 Alove 的接口契约",
+    "version": "1.0.0",
+    "date": "2026-07-22",
+    "status": "proposal",
+    "language": "zh-CN"
+  },
+  "objective": {
+    "summary": "在不增加 Alove 站点管理输入字段、不增加第二个 Token 的前提下，让 Alove 使用现有 Shopify Admin Token 和 read_products 权限稳定读取每件商品的 Avis/Aris 定制配置。",
+    "reason": "Avis/Aris 的 option set 当前保存在第三方应用私有数据库中，其他 Shopify 应用的 Token 无法直接读取；公开 storefront 页面又可能返回 429，因此需要把可共享配置同步到 Shopify merchant-owned product metafield。",
+    "notIncluded": [
+      "Alove 不读取 Avis/Aris 私有数据库",
+      "Alove 不要求在站点管理页面新增 API URL、Token、namespace 或 key 输入框",
+      "Alove 不在前端自行推断价格、球员名单、Patch 或购物车参数",
+      "本契约不包含订单同步、客户账号同步或折扣码同步"
+    ]
+  },
+  "fixedShopifyConvention": {
+    "ownerResource": "PRODUCT",
+    "ownership": "merchant-owned",
+    "namespace": "alove",
+    "key": "customization_options",
+    "type": "json",
+    "reservedNamespaceForbidden": [
+      "$app",
+      "app--*",
+      "shopify--*"
+    ],
+    "reason": "merchant-owned 自定义 namespace 可以由具有商品权限的其他已安装应用读取；Avis 私有 namespace 或 app-owned namespace 不能作为跨应用稳定契约。"
+  },
+  "permissions": {
+    "aloveReader": {
+      "token": "继续使用站点当前已保存的 Shopify Admin Token",
+      "requiredScope": "read_products",
+      "newSiteManagementFieldRequired": false,
+      "newTokenRequired": false,
+      "writePermissionRequired": false
+    },
+    "storeSideSyncWriter": {
+      "responsibility": "由独立站技术、自建 Shopify 应用或 Avis 侧同步程序把配置写入 merchant-owned product metafield",
+      "requiredScope": "write_products",
+      "note": "写入端使用独立站已有的安全凭据；该凭据不需要也不允许提供给 Alove 前端。"
+    }
+  },
+  "metafieldValueSchema": {
+    "schemaVersion": "1.0",
+    "enabled": true,
+    "source": "avis",
+    "sourceOptionSetIds": [
+      "replace-with-real-avis-option-set-id"
+    ],
+    "sourceUpdatedAt": "2026-07-22T00:00:00.000Z",
+    "currency": "GBP",
+    "options": [
+      {
+        "id": "customize",
+        "sourceOptionId": "replace-with-real-avis-option-id",
+        "label": "CUSTOMIZE",
+        "inputType": "radio",
+        "required": false,
+        "placeholder": "",
+        "dependsOn": null,
+        "validation": null,
+        "cartPropertyName": "CUSTOMIZE",
+        "priceAction": {
+          "type": "none",
+          "variantId": null,
+          "quantity": 0
+        },
+        "values": [
+          {
+            "id": "choose-player",
+            "sourceValueId": "replace-with-real-avis-value-id",
+            "label": "Choose a player",
+            "imageUrl": null,
+            "price": 0,
+            "cartPropertyValue": "Choose a player",
+            "priceAction": {
+              "type": "none",
+              "variantId": null,
+              "quantity": 0
+            }
+          },
+          {
+            "id": "add-yours",
+            "sourceValueId": "replace-with-real-avis-value-id",
+            "label": "Add yours",
+            "imageUrl": null,
+            "price": 0,
+            "cartPropertyValue": "Add yours",
+            "priceAction": {
+              "type": "none",
+              "variantId": null,
+              "quantity": 0
+            }
+          }
+        ]
+      },
+      {
+        "id": "player",
+        "sourceOptionId": "replace-with-real-avis-option-id",
+        "label": "Choose a player",
+        "inputType": "select",
+        "required": true,
+        "placeholder": "Choose a player",
+        "dependsOn": {
+          "optionId": "customize",
+          "operator": "equals",
+          "valueId": "choose-player"
+        },
+        "validation": null,
+        "cartPropertyName": "Choose a player",
+        "priceAction": {
+          "type": "none",
+          "variantId": null,
+          "quantity": 0
+        },
+        "values": [
+          {
+            "id": "morata-7",
+            "sourceValueId": "replace-with-real-avis-value-id",
+            "label": "MORATA #7",
+            "imageUrl": null,
+            "price": 10,
+            "cartPropertyValue": "MORATA #7",
+            "priceAction": {
+              "type": "avis_addon_variant",
+              "variantId": "replace-with-real-addon-variant-id-or-null",
+              "quantity": 1
+            }
+          },
+          {
+            "id": "lamine-yamal-19",
+            "sourceValueId": "replace-with-real-avis-value-id",
+            "label": "LAMINE YAMAL #19",
+            "imageUrl": null,
+            "price": 10,
+            "cartPropertyValue": "LAMINE YAMAL #19",
+            "priceAction": {
+              "type": "avis_addon_variant",
+              "variantId": "replace-with-real-addon-variant-id-or-null",
+              "quantity": 1
+            }
+          }
+        ]
+      },
+      {
+        "id": "name",
+        "sourceOptionId": "replace-with-real-avis-option-id",
+        "label": "Name",
+        "inputType": "text",
+        "required": true,
+        "placeholder": "Enter your name",
+        "dependsOn": {
+          "optionId": "customize",
+          "operator": "equals",
+          "valueId": "add-yours"
+        },
+        "validation": {
+          "minLength": 1,
+          "maxLength": 20,
+          "pattern": "^[A-Za-z0-9 .'-]+$"
+        },
+        "cartPropertyName": "Name",
+        "priceAction": {
+          "type": "avis_addon_variant",
+          "variantId": "replace-with-real-addon-variant-id-or-null",
+          "quantity": 1
+        },
+        "price": 5,
+        "values": []
+      },
+      {
+        "id": "number",
+        "sourceOptionId": "replace-with-real-avis-option-id",
+        "label": "Number",
+        "inputType": "number",
+        "required": true,
+        "placeholder": "Enter your number",
+        "dependsOn": {
+          "optionId": "customize",
+          "operator": "equals",
+          "valueId": "add-yours"
+        },
+        "validation": {
+          "min": 0,
+          "max": 99
+        },
+        "cartPropertyName": "Number",
+        "priceAction": {
+          "type": "avis_addon_variant",
+          "variantId": "replace-with-real-addon-variant-id-or-null",
+          "quantity": 1
+        },
+        "price": 5,
+        "values": []
+      },
+      {
+        "id": "patch-list",
+        "sourceOptionId": "replace-with-real-avis-option-id",
+        "label": "Patch List",
+        "inputType": "select_with_image",
+        "required": false,
+        "placeholder": "No patch",
+        "dependsOn": null,
+        "validation": null,
+        "cartPropertyName": "Patch List",
+        "priceAction": {
+          "type": "none",
+          "variantId": null,
+          "quantity": 0
+        },
+        "values": [
+          {
+            "id": "no-patch",
+            "sourceValueId": "none",
+            "label": "No patch",
+            "imageUrl": null,
+            "price": 0,
+            "cartPropertyValue": "No patch",
+            "priceAction": {
+              "type": "none",
+              "variantId": null,
+              "quantity": 0
+            }
+          },
+          {
+            "id": "world-cup-qualifiers-badges",
+            "sourceValueId": "replace-with-real-avis-value-id",
+            "label": "2026 World Cup Qualifiers & EURO Qualifiers & UEFA Foundation 10 Years Badges",
+            "imageUrl": "https://cdn.shopify.com/replace-with-real-patch-image.jpg",
+            "price": 8,
+            "cartPropertyValue": "2026 World Cup Qualifiers & EURO Qualifiers & UEFA Foundation 10 Years Badges",
+            "priceAction": {
+              "type": "avis_addon_variant",
+              "variantId": "replace-with-real-addon-variant-id-or-null",
+              "quantity": 1
+            }
+          }
+        ]
+      }
+    ],
+    "cartSubmission": {
+      "baseVariantRequired": true,
+      "properties": "Alove 按每个已选 option 的 cartPropertyName/cartPropertyValue 生成 Shopify line item properties；文本和数字类型使用用户输入值。",
+      "priceActionTypes": {
+        "none": "不增加附加商品或附加价格。",
+        "avis_addon_variant": "按 variantId 和 quantity 添加 Avis 实际使用的隐藏加价 variant；variantId 必须由独立站技术从真实 Avis 购物车行为中提供。"
+      },
+      "important": "仅提交 line item properties 不会自动改变 Shopify 价格。凡是 price 大于 0 的 option/value，必须同步 Avis 实际使用的加价机制；在 variantId 或真实提交规则未确认前，Alove 不得伪造附加价格并直接下单。"
+    }
+  },
+  "allowedInputTypes": [
+    "radio",
+    "select",
+    "select_with_image",
+    "text",
+    "textarea",
+    "number"
+  ],
+  "syncRules": {
+    "triggers": [
+      "Avis/Aris option set 创建或修改后",
+      "商品和 option set 绑定关系修改后",
+      "商品可定制状态关闭后",
+      "建议每天执行一次全量一致性校验作为补偿"
+    ],
+    "upsert": "按 Shopify product GID 调用 metafieldsSet，写入 alove.customization_options。",
+    "noCustomization": "商品不支持定制时，删除该 metafield，或写入 enabled=false 且 options=[]。",
+    "fullReplacement": "每次同步写入该商品的完整定制配置，不发送局部 patch，避免旧球员、旧 Patch 或旧加价规则残留。",
+    "sourceIdentifiers": "必须保留 Avis 的 option set、option 和 value 原始 ID，便于排查和购物车映射。",
+    "freshness": "sourceUpdatedAt 必须使用 Avis 配置真实更新时间；相同版本可跳过重复写入。",
+    "failurePolicy": "同步失败时保留上一个已验证版本并记录失败；不能写入半份配置或空配置伪装成功。"
+  },
+  "shopifyWriteExample": {
+    "endpoint": "POST https://{shop}.myshopify.com/admin/api/{apiVersion}/graphql.json",
+    "headers": {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": "由独立站同步服务安全注入，不写入本文档"
+    },
+    "query": "mutation SetAloveCustomization($metafields: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $metafields) { metafields { id namespace key type updatedAt } userErrors { field message code } } }",
+    "variables": {
+      "metafields": [
+        {
+          "ownerId": "gid://shopify/Product/{productId}",
+          "namespace": "alove",
+          "key": "customization_options",
+          "type": "json",
+          "value": "将 metafieldValueSchema 对象 JSON.stringify 后放在这里"
+        }
+      ]
+    }
+  },
+  "aloveReadExample": {
+    "usesExistingSiteToken": true,
+    "query": "query AloveProductCustomization($query: String!) { products(first: 1, query: $query) { nodes { id title handle updatedAt customization: metafield(namespace: \"alove\", key: \"customization_options\") { id type value updatedAt } } } }",
+    "variables": {
+      "query": "handle:{productHandle}"
+    }
+  },
+  "aloveRuntimeRules": {
+    "validation": [
+      "只接受 schemaVersion=1.0、enabled=true 且 options 为数组的 JSON。",
+      "只接受 allowedInputTypes 中的输入类型。",
+      "忽略未知字段、未知 inputType、非法 URL、非法价格和无法满足的 dependsOn。",
+      "商品、variant、价格附加项和购物车目标必须继续由服务端可信 Shopify 数据验证。"
+    ],
+    "cache": [
+      "缓存键至少包含 siteId、productId 和 metafield.updatedAt。",
+      "同一个商品的并发读取必须合并，避免重复请求 Shopify。",
+      "读取失败时可以短期使用最后一个已验证缓存；没有有效缓存则不显示定制区域。"
+    ],
+    "failClosed": "配置缺失、JSON 非法、依赖不完整或加价映射不可信时，不展示或不允许提交相关定制项；不能编造球员、Patch、价格或 variantId。"
+  },
+  "security": {
+    "mustNotContain": [
+      "Shopify Admin Token",
+      "Avis API Token",
+      "客户身份数据",
+      "订单数据",
+      "Cookie 或 session",
+      "任意 HTML 或可执行 JavaScript"
+    ],
+    "imageUrl": "只允许 http/https 公网图片 URL；Alove 服务端仍需执行现有安全清洗。",
+    "text": "所有 label、placeholder 和 property value 都按纯文本处理。",
+    "access": "metafield 使用 merchant-owned custom namespace；不得依赖 Avis 的 app-- 保留 namespace。"
+  },
+  "acceptanceCriteria": [
+    "不修改 Alove 站点管理字段，现有 Shopify Admin Token 可以随商品查询读取 customization metafield。",
+    "支持定制和不支持定制的商品能被准确区分。",
+    "不同商品返回各自真实的球员、姓名/号码规则、Patch、价格和依赖关系，不使用全站公共假数据。",
+    "Avis 配置变化后 metafield 能被同步更新，sourceUpdatedAt 随之变化。",
+    "商品详情的 Search、Kitshop、Chat 和实时通话入口读取同一份标准结构。",
+    "选择定制项后，购物车 line item properties 与独立站 Avis 正常下单结果一致。",
+    "所有加价项在 Shopify Checkout 的实际金额与 Avis 独立站一致。",
+    "配置缺失、同步失败、数据非法或网络失败时不会伪造定制信息，也不会提交错误订单。"
+  ],
+  "informationRequiredFromStoreTechnicalTeam": [
+    "确认能否在 Avis 配置保存后触发同步；如果不能，提供可执行的定时同步方式。",
+    "提供 Avis option set、option、value 与 Shopify 商品 GID/handle 的绑定来源。",
+    "确认每一种 Avis 输入类型对应的 line item property 名称。",
+    "确认所有加价项实际使用的 Shopify variantId、数量和加入购物车顺序，或提供等价的 Avis 官方购物车提交协议。",
+    "确认取消定制、商品下架、option set 停用时的清理规则。",
+    "先用 Spain Away Football Shirt World Cup 2026 White 作为验收样品，完整同步 Choose a player、Add yours、Name、Number 和 Patch List。"
+  ],
+  "finalDecision": "推荐采用固定 merchant-owned product metafield。Alove 读取端不增加站点管理字段、不增加 Token；独立站侧负责把 Avis 私有配置同步进 Shopify，并提供真实购物车加价映射。"
+}

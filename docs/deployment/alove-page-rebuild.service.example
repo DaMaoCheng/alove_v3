@@ -1,0 +1,26 @@
+[Unit]
+Description=AIOVE Page Rebuild
+After=network.target mysql.service
+Wants=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/aiove-page-rebuild
+EnvironmentFile=/opt/aiove-page-rebuild/.env
+ExecStart=/usr/bin/node server/server.js
+Restart=always
+RestartSec=5
+User=aiove
+Group=aiove
+
+# Keep enough time for graceful HTTP, memory runner, and DB pool shutdown.
+TimeoutStopSec=30
+KillSignal=SIGTERM
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ReadWritePaths=/opt/aiove-page-rebuild/uploads
+
+[Install]
+WantedBy=multi-user.target

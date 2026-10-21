@@ -1,0 +1,44 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+
+const source = await readFile(resolve("embed/v1.js"), "utf8");
+
+assert.match(source, /attachShadow\(\{ mode: "open" \}\)/, "外嵌挂件必须隔离外站样式");
+assert.match(source, /credentials: "omit"/, "公开配置请求不能携带 ALOVE 登录凭据");
+assert.match(source, /mode: "cors"/, "公开配置请求必须走受控跨域读取");
+assert.match(source, /\/api\/embed\/handoff/, "loader 必须从 Alove 获取受签名保护的来源交接 token");
+assert.match(source, /sourceContextEnabled = config\.sourceContextEnabled === true/, "loader 只能为服务端明确启用的 TTMall 站点请求来源交接");
+assert.match(source, /sourceContextEnabled \? handleCtaClick : closeCard/, "未启用来源交接的站点必须保持原 CTA 点击行为");
+assert.match(source, /sourceUrl: sourcePageUrl\(window\.location\.href\)/, "loader 必须读取当前外站页面地址");
+assert.match(source, /`\$\{url\.origin\}\$\{url\.pathname\}`/, "loader 发送来源前必须剔除 query 和 hash");
+assert.match(source, /sourceTitle: String\(document\.title/, "loader 必须读取当前外站页面标题");
+assert.match(source, /url\.searchParams\.set\("handoff", token\)/, "loader 必须把 handoff 附加到现有 CTA 地址");
+assert.match(source, /normal CTA remains usable/, "来源交接失败时必须保持原 CTA 可用");
+assert.match(source, /window\.open\("about:blank", "_blank"\)/, "handoff 未就绪时必须在用户点击中同步打开目标标签，避免异步弹窗被拦截");
+assert.match(source, /pendingWindow\.opener = null/, "等待 handoff 的新标签必须切断 opener");
+assert.match(source, /const freshRequest = refreshSourceHandoff\(\)/, "每次 CTA 点击都必须重新获取当前页面 handoff");
+assert.match(source, /Promise\.race\(\[freshRequest, timeout\]\)/, "handoff 请求必须有超时降级，避免新标签永久停留空白页");
+assert.match(source, /sourceHandoffRequestId/, "并发 handoff 请求必须用请求序号防止旧响应覆盖新 token");
+assert.match(source, /pendingWindow\.location\.replace\(token \? addHandoffToCtaUrl\(baseCtaUrl, token\) : baseCtaUrl\)/, "handoff 成功使用新 token，超时或失败回退到原 CTA");
+assert.match(source, /textContent = textOrFallback/, "远程文案必须以纯文本写入");
+assert.match(source, /target = "_blank"/, "CTA 必须在新标签页打开");
+assert.match(source, /rel = "noopener noreferrer"/, "CTA 必须隔离 opener");
+assert.match(source, /role", "dialog"/, "弹窗必须具备 dialog 语义");
+assert.doesNotMatch(source, /aria-modal/, "轻量引导卡不能伪装成未实现焦点陷阱的 modal");
+assert.match(source, /event\.key === "Escape"/, "弹窗必须支持 Escape 关闭");
+assert.match(source, /@media \(max-width: 640px\)/, "挂件必须包含手机布局");
+assert.match(source, /__aioveExternalEmbedMounts/, "重复安装代码不能重复渲染同一挂件");
+assert.match(source, /max-height: min\(560px/, "长文案必须受视口高度约束");
+assert.match(source, /\.launcher img \{[^}]*object-fit: contain[^}]*background: transparent/, "透明挂件图标必须保留透明通道，不能裁成带底板的圆图");
+assert.match(source, /\.card-avatar \{[^}]*object-fit: contain[^}]*background: transparent/, "透明弹窗头像必须保留透明通道");
+assert.match(source, /appendRichText\(heading, content\.title, content\.titleRichText/, "外站标题必须按后台保存的受限颜色片段渲染");
+assert.match(source, /appendRichText\(description, content\.description, content\.descriptionRichText/, "外站说明必须按后台保存的受限颜色片段渲染");
+assert.match(source, /segment\.style\.color = mark\.color/, "外站只可应用服务端已校验的 #RRGGBB 颜色片段");
+assert.match(source, /h2 \{[^}]*font-size: 22px; font-weight: 700;/, "挂件标题字号和字重必须与 FKK 视觉规范一致");
+assert.match(source, /\.beta \{[^}]*background: var\(--aiove-accent\);[^}]*font-size: 11px;/, "BETA 标签必须使用和 CTA 相同的主题色");
+assert.match(source, /p \{[^}]*font-size: 14px; line-height: 1\.5;/, "挂件说明字号必须与 FKK 视觉规范一致");
+assert.match(source, /\.cta \{[^}]*min-height: 48px;[^}]*font-size: 15px; font-weight: 700;/, "CTA 字号和高度必须与 FKK 视觉规范一致");
+assert.doesNotMatch(source, /innerHTML\s*=\s*config/, "远程配置不能直接拼接到 innerHTML");
+
+console.info("[external-embed-loader-self-check] passed");

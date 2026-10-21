@@ -1,0 +1,26 @@
+{
+  "name": "alove-page-rebuild",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server/server.js",
+    "preflight:multisite": "node scripts/multisite-full-preflight.mjs",
+    "smoke:multisite": "node scripts/multisite-http-smoke.mjs",
+    "check:deployment": "node scripts/deployment-check.mjs",
+    "package:deployment": "node scripts/create-deployment-archive.mjs",
+    "deploy:release": "node scripts/deploy-server-release.mjs"
+  },
+  "dependencies": {
+    "@elevenlabs/elevenlabs-js": "^2.53.0",
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "mysql2": "^3.20.0",
+    "nodemailer": "^9.0.1",
+    "sharp": "^0.35.0",
+    "undici": "7.28.0",
+    "ws": "^8.21.0"
+  },
+  "engines": {
+    "node": ">=20.18.1"
+  }
+}

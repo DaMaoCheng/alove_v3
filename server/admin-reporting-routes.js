@@ -1,0 +1,4 @@
+import { readJson, sendJson } from "./http-utils.js";
+import { requireAdmin, ADMIN_SCOPES } from "./route-utils.js";
+import { createReportingToken, listReportingTokens, revokeReportingToken } from "./reporting-token-service.js";
+export async function handleAdminReportingRoute(req,res,{path}) { if(path==="/api/admin/reporting-tokens"&&req.method==="GET"){await requireAdmin(req);sendJson(res,200,await listReportingTokens());return true;} if(path==="/api/admin/reporting-tokens"&&req.method==="POST"){const actor=await requireAdmin(req,ADMIN_SCOPES.ACCOUNTS_WRITE);sendJson(res,201,await createReportingToken(await readJson(req),actor));return true;} const m=path.match(/^\/api\/admin\/reporting-tokens\/([^/]+)\/revoke$/);if(m&&req.method==="POST"){await requireAdmin(req,ADMIN_SCOPES.ACCOUNTS_WRITE);sendJson(res,200,await revokeReportingToken(decodeURIComponent(m[1])));return true;}return false;}

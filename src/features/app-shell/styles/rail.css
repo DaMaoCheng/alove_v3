@@ -1,0 +1,23 @@
+/* ============================================================
+   DESKTOP SIDEBAR COLLAPSE (rail) — desktop only
+   ============================================================ */
+@media (min-width: 901px) {
+  body.rail .shell { grid-template-columns: 78px 1fr; }
+  body.rail .sidebar { padding: 22px 12px; align-items: center; }
+  /* hide all text labels, keep icons centered (but NOT the avatar wrapper) */
+  body.rail .sidebar .nav-item span:not(.nav-av-wrap),
+  body.rail .sidebar .logo .word,
+  body.rail .sidebar .nav-label,
+  body.rail .sidebar .user-tile .ut-text { display: none; }
+  body.rail .sidebar .nav-item { justify-content: center; padding: 0; width: 44px; }
+  /* collapsed: enlarge contact avatars to match the icon size */
+  body.rail .sidebar .nav-av-wrap .nav-av { width: 28px; height: 28px; }
+  body.rail .sidebar .nav-av-wrap.has-msg::after { width: 10px; height: 10px; right: -1px; bottom: -1px; }
+  body.rail .sidebar-head { padding: 6px 0 16px; justify-content: center; }
+  body.rail .sidebar .nav-sep { width: 44px; margin: 12px 0; }
+  body.rail .sidebar .user-tile { justify-content: center; padding: 9px 0; }
+  /* when collapsed: hide the collapse button, LOGO becomes the expand trigger */
+  body.rail .rail-toggle { display: none; }
+  body.rail .logo-tap { cursor: pointer; }
+  body.rail .logo-tap:hover .logo svg { color: var(--accent); }
+}

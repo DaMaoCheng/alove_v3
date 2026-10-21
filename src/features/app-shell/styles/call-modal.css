@@ -1,0 +1,62 @@
+/* ============ CHAT CALL BUTTON ============ */
+.call-btn{ width:38px; height:38px; display:inline-flex; align-items:center; justify-content:center; border:1px solid var(--line); border-radius:50%; background:var(--tile); color:var(--ink); cursor:pointer; margin-right:6px; transition:.2s; }
+.call-btn:hover{ background:var(--accent); color:var(--on-accent); border-color:transparent; }
+.call-btn svg{ width:19px; height:19px; }
+
+/* ============ CALL MODAL ============ */
+.call-scrim{ position:fixed; inset:0; background:rgba(4,8,6,0.72); backdrop-filter:blur(8px); z-index:120; animation:pmFade .25s ease; }
+.call-modal{ position:fixed; z-index:121; left:50%; top:50%; transform:translate(-50%,-50%); width:min(380px,calc(100vw - 32px)); background:var(--surface); border:1px solid var(--line); border-radius:26px; padding:34px 26px 26px; text-align:center; box-shadow:0 30px 80px rgba(0,0,0,.5); animation:pmPop .32s var(--ease); }
+.call-stage{ position:relative; display:flex; flex-direction:column; align-items:center; }
+.call-aura{ position:absolute; top:-6px; width:150px; height:150px; border-radius:50%; background:radial-gradient(circle,var(--accent-soft) 0%,transparent 70%); animation:callPulse 2.4s ease-in-out infinite; }
+@keyframes callPulse{ 0%,100%{ transform:scale(.92); opacity:.7 } 50%{ transform:scale(1.12); opacity:1 } }
+.call-avatar{ position:relative; width:118px; height:118px; border-radius:50%; overflow:hidden; border:3px solid var(--accent); box-shadow:0 0 0 6px var(--accent-soft); }
+.call-avatar img{ width:100%; height:100%; object-fit:cover; }
+.call-name{ font-family:var(--font-display); font-weight:600; font-size:22px; color:var(--ink); margin-top:16px; }
+.call-status{ display:flex; align-items:center; gap:7px; color:var(--ink-2); font-size:13px; margin-top:5px; font-variant-numeric:tabular-nums; }
+.call-live-text{ width:100%; min-height:34px; margin-top:10px; color:var(--ink); font-size:13px; line-height:1.45; overflow:hidden; }
+.call-live-row{ display:flex; align-items:flex-start; gap:8px; min-width:0; text-align:left; }
+.call-live-row.user{ justify-content:flex-end; text-align:right; }
+.call-live-row.user .call-live-dot{ order:2; }
+.call-live-row.user p{ order:1; }
+.call-live-dot{ flex:none; width:7px; height:7px; margin-top:7px; border-radius:999px; background:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+.call-live-row.assistant .call-live-dot{ background:var(--ink-3); box-shadow:none; }
+.call-live-row p{ min-width:0; max-width:88%; margin:0; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+.call-latency{ min-height:16px; margin-top:5px; color:var(--ink-3); font-size:11px; line-height:1.35; }
+.call-dot{ width:8px; height:8px; border-radius:50%; background:var(--accent); box-shadow:0 0 0 0 var(--accent); animation:callDot 1.6s ease-out infinite; }
+@keyframes callDot{ 0%{ box-shadow:0 0 0 0 rgba(7,244,104,.5) } 100%{ box-shadow:0 0 0 8px rgba(7,244,104,0) } }
+.call-wave{ display:flex; align-items:center; justify-content:center; gap:4px; height:34px; margin-top:18px; }
+.call-wave i{ width:3px; height:8px; border-radius:3px; background:var(--accent); animation:vbw 1s ease-in-out infinite; }
+.call-wave i:nth-child(2){animation-delay:.1s} .call-wave i:nth-child(3){animation-delay:.2s} .call-wave i:nth-child(4){animation-delay:.3s} .call-wave i:nth-child(5){animation-delay:.4s} .call-wave i:nth-child(6){animation-delay:.5s} .call-wave i:nth-child(7){animation-delay:.6s} .call-wave i:nth-child(8){animation-delay:.7s} .call-wave i:nth-child(9){animation-delay:.8s}
+.call-controls{ display:flex; justify-content:center; gap:26px; margin-top:26px; }
+.cc-btn{ display:flex; flex-direction:column; align-items:center; gap:7px; border:none; background:none; color:var(--ink-2); cursor:pointer; font:inherit; font-size:12px; }
+.cc-btn .cc-ic{ width:54px; height:54px; display:flex; align-items:center; justify-content:center; border-radius:50%; background:var(--tile); color:var(--ink); transition:.2s; }
+.cc-btn .cc-ic svg{ width:23px; height:23px; }
+.cc-btn:hover .cc-ic{ background:var(--tile-hover); }
+.cc-btn.mic-on .cc-ic{ background:var(--accent-soft); color:var(--accent); }
+.cc-btn.mic-on:hover .cc-ic{ background:var(--accent); color:var(--on-accent); }
+.cc-btn.off .cc-ic{ background:var(--tile-hover); color:var(--ink-3); }
+.cc-btn.shop .cc-ic{ background:var(--accent-soft); color:var(--accent); }
+.cc-btn.shop:hover .cc-ic{ background:var(--accent); color:var(--on-accent); }
+.cc-btn.shop .cc-ic{ position:relative; }
+.call-shop-alert{ position:absolute; right:3px; top:3px; width:16px; height:16px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center; background:#e5484d; color:#fff; border:2px solid var(--surface); font-size:10px; font-weight:800; line-height:1; box-shadow:0 8px 18px rgba(229,72,77,.32); }
+.cc-btn.end .cc-ic{ background:#e5484d; color:#fff; }
+.cc-btn.end:hover .cc-ic{ filter:brightness(1.08); }
+
+/* ============ CALL PRODUCT OVERLAY ============ */
+.call-product-scrim{ position:fixed; inset:0; z-index:122; background:rgba(4,8,6,.34); backdrop-filter:blur(2px); animation:pmFade .2s ease; }
+.call-product-panel{ position:fixed; z-index:123; left:50%; bottom:18px; transform:translateX(-50%); width:min(390px,calc(100vw - 28px)); max-height:min(720px,calc(100vh - 38px)); border:1px solid var(--line); border-radius:22px; background:var(--surface); box-shadow:0 34px 90px rgba(0,0,0,.55); overflow:hidden; animation:callProductRise .24s var(--ease); }
+@keyframes callProductRise{ from{ transform:translate(-50%,24px); opacity:.2 } to{ transform:translate(-50%,0); opacity:1 } }
+.call-product-panel .pp-scroll{ min-width:0; max-height:calc(min(720px,100vh - 38px) - 126px); }
+.call-product-panel .pp-foot{ min-width:0; }
+.call-product-panel .pp-hero{ aspect-ratio:16/11; }
+.call-product-nav{ position:absolute; top:50%; z-index:4; width:34px; height:34px; border-radius:50%; display:grid; place-items:center; background:color-mix(in srgb,var(--surface) 88%,transparent); color:var(--ink); box-shadow:0 12px 26px rgba(0,0,0,.24); cursor:pointer; }
+.call-product-nav svg{ width:18px; height:18px; }
+.call-product-nav.prev{ left:10px; }
+.call-product-nav.next{ right:10px; }
+.call-product-nav.next svg{ transform:rotate(180deg); }
+.call-product-count{ position:absolute; right:14px; top:58px; z-index:4; min-width:38px; height:24px; padding:0 8px; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; background:color-mix(in srgb,var(--surface) 88%,transparent); color:var(--ink); font-size:12px; font-weight:700; }
+
+@media (max-width:640px){
+  .call-product-panel{ bottom:0; width:100%; max-height:calc(100vh - 12px); border-radius:22px 22px 0 0; }
+  .call-product-panel .pp-scroll{ max-height:calc(100vh - 138px); }
+}

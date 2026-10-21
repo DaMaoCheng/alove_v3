@@ -1,0 +1,110 @@
+/* ============================================================
+   ADMIN CHARACTER EDITOR
+   ============================================================ */
+.character-editor-head-row{ display:grid; grid-template-columns:72px auto 1fr; align-items:center; gap:14px; }
+.character-avatar-actions{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-width:0; }
+.character-avatar-actions .btn{ min-height:36px; height:auto; white-space:normal; line-height:1.18; }
+.character-editor-meta{ justify-self:end; display:flex; align-items:center; gap:14px; min-width:0; flex-wrap:wrap; justify-content:flex-end; }
+.character-editor-owner{ display:flex; flex-direction:column; gap:3px; min-width:0; text-align:left; }
+.character-editor-owner b{ color:var(--ink); font-size:13.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.character-editor-owner small{ color:var(--ink-3); font-size:11.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.character-id-tag{ max-width:220px; color:var(--accent); background:var(--accent-soft); border:1px solid color-mix(in srgb,var(--accent) 34%,transparent); border-radius:999px; padding:7px 11px; font-family:var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.character-avatar-remove{ color:#e5704d !important; border-color:rgba(229,72,77,.28) !important; background:rgba(229,72,77,.08) !important; white-space:normal; line-height:1.18; }
+.character-avatar-remove:hover{ background:rgba(229,72,77,.14) !important; }
+.creator-meta{ display:flex; flex-direction:column; gap:2px; min-width:0; }
+.creator-meta b{ color:var(--ink); font-size:13.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.creator-meta small{ color:var(--ink-3); font-size:11.5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.stacked-input{ margin-top:8px; }
+.common-character-modal{ width:min(760px,calc(100vw - 32px)); max-height:calc(100vh - 44px); overflow-y:auto; }
+.common-character-modal.admin-common-create-modal,
+.common-character-modal.admin-common-edit-modal,
+.common-character-modal.admin-creator-create-modal,
+.common-character-modal.admin-creator-edit-modal{ width:min(1100px,calc(100vw - 32px)); }
+.admin-common-create-form{ gap:20px; }
+.admin-common-edit-form{ gap:20px; }
+.admin-creator-create-form{ gap:20px; }
+.admin-creator-edit-form{ gap:20px; }
+.admin-common-create-form .cf-field label{ margin-bottom:9px; }
+.admin-common-edit-form .cf-field label{ margin-bottom:9px; }
+.admin-creator-create-form .cf-field label{ margin-bottom:9px; }
+.admin-creator-edit-form .cf-field label{ margin-bottom:9px; }
+.admin-common-create-form .cf-field input,
+.admin-common-create-form .cf-field textarea,
+.admin-common-edit-form .cf-field input,
+.admin-common-edit-form .cf-field textarea,
+.admin-creator-create-form .cf-field input,
+.admin-creator-create-form .cf-field textarea,
+.admin-creator-edit-form .cf-field input,
+.admin-creator-edit-form .cf-field textarea{ box-sizing:border-box; border:1px solid var(--line); border-radius:12px; background:var(--field); color:var(--ink); padding:13px 15px; font-size:15px; min-height:48px; }
+.admin-common-create-form .cf-field input,
+.admin-common-edit-form .cf-field input,
+.admin-creator-create-form .cf-field input,
+.admin-creator-edit-form .cf-field input{ height:48px; }
+.admin-common-create-form .cf-field input[readonly],
+.admin-common-edit-form .cf-field input[readonly],
+.admin-creator-create-form .cf-field input[readonly],
+.admin-creator-edit-form .cf-field input[readonly]{ background:var(--tile); color:var(--ink-2); cursor:default; }
+.admin-common-create-form .cf-field input:focus,
+.admin-common-create-form .cf-field textarea:focus,
+.admin-common-edit-form .cf-field input:focus,
+.admin-common-edit-form .cf-field textarea:focus,
+.admin-creator-create-form .cf-field input:focus,
+.admin-creator-create-form .cf-field textarea:focus,
+.admin-creator-edit-form .cf-field input:focus,
+.admin-creator-edit-form .cf-field textarea:focus{ outline:none; border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-soft); }
+.admin-common-create-form .agent-status-dd .dd-select-trigger,
+.admin-common-edit-form .agent-status-dd .dd-select-trigger,
+.admin-creator-create-form .agent-status-dd .dd-select-trigger,
+.admin-creator-edit-form .agent-status-dd .dd-select-trigger{ height:48px; min-height:48px; border-radius:12px; font-size:15px; padding:0 15px; }
+.admin-common-create-form .cf-avatar,
+.admin-common-edit-form .cf-avatar,
+.admin-creator-create-form .cf-avatar,
+.admin-creator-edit-form .cf-avatar{ width:72px; height:72px; flex:none; }
+.admin-common-create-form .cf-avatar .avatar-image-placeholder{ width:100%; height:100%; }
+.admin-common-edit-form .cf-avatar .avatar-image-placeholder{ width:100%; height:100%; }
+.admin-creator-create-form .cf-avatar .avatar-image-placeholder{ width:100%; height:100%; }
+.admin-creator-edit-form .cf-avatar .avatar-image-placeholder{ width:100%; height:100%; }
+.admin-common-create-form .cf-avatar-remove,
+.admin-common-edit-form .cf-avatar-remove,
+.admin-creator-create-form .cf-avatar-remove,
+.admin-creator-edit-form .cf-avatar-remove{ display:inline-flex; }
+.admin-common-create-form .pick{ border:1px solid transparent; }
+.admin-common-edit-form .pick{ border:1px solid transparent; }
+.admin-creator-create-form .pick{ border:1px solid transparent; }
+.admin-creator-edit-form .pick{ border:1px solid transparent; }
+.admin-common-create-form .voice-row,
+.admin-common-edit-form .voice-row,
+.admin-creator-create-form .voice-row,
+.admin-creator-edit-form .voice-row{ grid-template-columns:minmax(0,1fr); }
+.admin-common-create-form .vis-options,
+.admin-common-edit-form .vis-options,
+.admin-creator-create-form .vis-options,
+.admin-creator-edit-form .vis-options{ grid-template-columns:repeat(2,minmax(0,1fr)); }
+.admin-common-create-form .dlg-actions,
+.admin-common-edit-form .dlg-actions,
+.admin-creator-create-form .dlg-actions,
+.admin-creator-edit-form .dlg-actions{ margin-top:0; }
+.admin-common-edit-form .cf-avatar-row{ display:grid; grid-template-columns:72px minmax(0,max-content) minmax(240px,1fr); align-items:center; gap:14px; }
+.admin-creator-edit-form .cf-avatar-row{ display:grid; grid-template-columns:72px minmax(0,max-content) minmax(240px,1fr); align-items:center; gap:14px; }
+.admin-common-edit-form .cf-avatar-btns{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-width:0; }
+.admin-creator-edit-form .cf-avatar-btns{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-width:0; }
+.admin-common-edit-form .cf-avatar-actions,
+.admin-creator-edit-form .cf-avatar-actions{ min-width:0; justify-self:start; display:flex; align-items:flex-start; flex-direction:column; gap:8px; flex-wrap:wrap; }
+.admin-common-edit-form .cf-avatar-actions{ justify-self:start; }
+.admin-common-edit-meta{ min-width:0; justify-self:end; }
+.admin-creator-edit-meta{ min-width:0; justify-self:end; }
+
+@media (max-width:920px){
+  .admin-common-create-form .voice-row,
+  .admin-common-edit-form .voice-row,
+  .admin-creator-create-form .voice-row,
+  .admin-creator-edit-form .voice-row,
+  .admin-common-create-form .vis-options,
+  .admin-common-edit-form .vis-options,
+  .admin-creator-create-form .vis-options,
+  .admin-creator-edit-form .vis-options{ grid-template-columns:1fr; }
+  .admin-common-edit-form .cf-avatar-row{ grid-template-columns:72px minmax(0,1fr); align-items:start; }
+  .admin-creator-edit-form .cf-avatar-row{ grid-template-columns:72px minmax(0,1fr); align-items:start; }
+  .admin-common-edit-meta{ grid-column:1 / -1; justify-self:start; justify-content:flex-start; }
+  .admin-creator-edit-meta{ grid-column:1 / -1; justify-self:start; justify-content:flex-start; }
+}
