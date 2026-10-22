@@ -79,8 +79,18 @@ OPENAI_API_MODE=chat_completions
 OPENAI_API_KEY=replace_with_clcl_key
 OPENAI_REASONING_EFFORT=minimal
 OPENAI_TIMEOUT_MS=30000
+# Chat-only budgets; classifier and knowledge-task defaults remain separate.
+CHAT_REPLY_GENERATION_TIMEOUT_MS=60000
+CHAT_REPLY_REVIEW_TIMEOUT_MS=60000
+CHAT_REPLY_LANGUAGE_REVIEW_TIMEOUT_MS=60000
 # Optional secondary chat model: when set, retryable replies use 5 primary attempts then 5 fallback attempts.
 # It always shares OPENAI_BASE_URL, API mode, reasoning effort and timeout with the primary model.
+# Optional overrides inherit the primary endpoint/mode/timeout when empty.
+OPENAI_FALLBACK_BASE_URL=
+OPENAI_FALLBACK_API_MODE=
+OPENAI_FALLBACK_TIMEOUT_MS=
+# Set true only for a fallback Chat Completions channel requiring SSE.
+OPENAI_FALLBACK_STREAM=false
 OPENAI_FALLBACK_MODEL=
 OPENAI_FALLBACK_API_KEY=
 
