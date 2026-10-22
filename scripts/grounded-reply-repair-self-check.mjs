@@ -1,4 +1,3 @@
-process.env.OPENAI_FALLBACK_STREAM = 'false';
 import assert from 'node:assert/strict';
 Object.assign(process.env,{AIOVE_PROVIDER_LOG_WRITE_ENABLED:'false',AI_REPLY_PROVIDER:'venice',
   VENICE_API_KEY:'fixture-venice',VENICE_BASE_URL:'https://venice.fixture.invalid/v1',VENICE_MODEL:'fixture-generator',

@@ -1,5 +1,5 @@
 import { LANGUAGE_CLARIFICATION_QUALITY_CONTRACT } from "./chat-language-clarification-policy.js";
-import { independentLanguageReviewerChain, filterIndependentLanguageReviewers } from './ai-independent-review-config.js';
+import { independentReviewerConfig, independentLanguageReviewerChain, filterIndependentLanguageReviewers } from './ai-independent-review-config.js';
 import { SERVER_CONFIG } from './config.js';
 import { requestAiJsonWithProviderFallback } from "./ai-json-provider-service.js";
 import { recordProviderCallLog } from "./ai-reply-log-service.js";
@@ -18,7 +18,7 @@ const LANGUAGE_REVIEW_FORMAT = { type: "json_schema", json_schema: { name: "repl
     required: ["languageQualitySupported", "retainedLanguageQualitySupported", "languageQualityConfidence", "languageIssues"] } } };
 // Keep this decision local to language checking; never change the shared reply/JSON chain.
 export function languageReviewerConfig(replyResult = {}) {
-  return independentLanguageReviewerChain(replyResult.aiModel);
+  return independentReviewerConfig(replyResult.aiModel);
 }
 
 export function normalizeLanguageAssessment(result, { text = "", speechText = "", retainedText = "" } = {}) {
@@ -52,7 +52,7 @@ export function normalizeLanguageAssessment(result, { text = "", speechText = ""
 }
 
 export async function assessIndependentLanguageQuality({ text = "", speechText = "", retainedText = "", userText = "", language = "en",
-  replyResult = {}, logContext = {}, languageClarification = null, timeoutMs = SERVER_CONFIG.aiReply.chatTimeouts.languageReview, config = languageReviewerConfig(replyResult),
+  replyResult = {}, logContext = {}, languageClarification = null, timeoutMs = SERVER_CONFIG.aiReply.chatTimeouts.languageReview, config = independentLanguageReviewerChain(replyResult.aiModel),
   fetchImpl = fetch, recordLog = recordProviderCallLog } = {}) {
   const configured = Array.isArray(config) ? config : config ? [{ id: 'venice', apiMode: 'chat_completions', ...config }] : [];
   const providers = filterIndependentLanguageReviewers(configured, replyResult.aiModel);

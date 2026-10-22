@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 process.env.AIOVE_PROVIDER_LOG_WRITE_ENABLED='false';
-const {assessIndependentLanguageQuality}=await import('../server/chat-language-quality-service.js');
+const {assessIndependentLanguageQuality,languageReviewerConfig}=await import('../server/chat-language-quality-service.js');
 const {requestAiJsonWithProviderFallback}=await import('../server/ai-json-provider-service.js');
+const legacyReviewer=languageReviewerConfig({aiModel:'generator'});
+assert(legacyReviewer?.model && !Array.isArray(legacyReviewer),'shared reviewer config keeps its single-provider interface for grounded repair');
 const configs=['first','second','third'].map(model=>({id:model,model,apiKey:'fixture',baseUrl:'https://fixture.invalid',apiMode:'chat_completions',timeoutMs:5}));
 const pass={languageQualitySupported:true,retainedLanguageQualitySupported:false,languageQualityConfidence:.99,languageIssues:[]};
 const response=value=>new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(value)}}]}),{headers:{'content-type':'application/json'}});
