@@ -1,3 +1,4 @@
+import { readChatCompletionStream } from './ai-chat-completion-stream.js';
 import { SERVER_CONFIG } from "./config.js";
 import { appendStructuredReplyInstructions } from "./ai-reply-contract-service.js";
 import { recordProviderCallLog } from "./ai-reply-log-service.js";
@@ -70,6 +71,8 @@ async function requestOpenAiTextRequest(promptContext, {
   }, requestTimeoutMs);
 
   try {
+    if (openAiConfig.stream === true && openAiConfig.apiMode !== 'chat_completions')
+      throw createAiReplyTransportError('AI reply streaming requires Chat Completions', { code: 'AI_REPLY_PROTOCOL_ERROR', protocolKind: 'invalid_stream' });
     const response = await fetchImpl(buildOpenAiRequestUrl(openAiConfig), {
       method: "POST",
       headers: {
@@ -80,20 +83,32 @@ async function requestOpenAiTextRequest(promptContext, {
       signal: controller.signal,
     });
 
-    const payload = await response.json().catch((error) => {
-      // Preserve non-2xx HTTP semantics, but a 2xx malformed envelope is not
-      // an answer. This non-streaming adapter also rejects unexpected SSE;
-      // never guess text from usage events or retain an upstream body in logs.
-      if (timedOut) throw error;
-      if (!response.ok) return {};
-      if (error?.name === "SyntaxError") throw createAiReplyTransportError("AI reply provider returned an invalid JSON envelope", {
-        code: "AI_REPLY_PROTOCOL_ERROR",
+    const isStream = /^text\/event-stream(?:;|$)/i.test(String(response.headers?.get?.("content-type") || "").trim());
+    let payload, streamedText;
+    if (response.ok && isStream) {
+      if (openAiConfig.stream !== true) {
+        await response.body?.cancel?.().catch(() => {});
+        throw createAiReplyTransportError("AI reply provider returned an unexpected stream", {
+          code: "AI_REPLY_PROTOCOL_ERROR", protocolKind: "unexpected_stream",
+        });
+      }
+      streamedText = await readChatCompletionStream(response, { signal: controller.signal });
+    } else {
+      payload = await response.json().catch((error) => {
+        // Preserve non-2xx HTTP semantics, but a 2xx malformed envelope is not
+        // an answer. Streaming is accepted only through the explicit branch above;
+        // never guess text from usage events or retain an upstream body in logs.
+        if (timedOut) throw error;
+        if (!response.ok) return {};
+        if (error?.name === "SyntaxError") throw createAiReplyTransportError("AI reply provider returned an invalid JSON envelope", {
+          code: "AI_REPLY_PROTOCOL_ERROR", protocolKind: "invalid_json",
+        });
+        throw createAiReplyTransportError("AI reply response body could not be read", {
+          code: "AI_REPLY_NETWORK_ERROR",
+          retryable: true,
+        });
       });
-      throw createAiReplyTransportError("AI reply response body could not be read", {
-        code: "AI_REPLY_NETWORK_ERROR",
-        retryable: true,
-      });
-    });
+    }
     if (!response.ok) {
       const error = createAiReplyTransportError(normalizeOpenAiError(payload, response.status), {
         statusCode: response.status,
@@ -103,9 +118,9 @@ async function requestOpenAiTextRequest(promptContext, {
       throw error;
     }
 
-    const text = extractResponseText(payload);
+    const text = streamedText ?? extractResponseText(payload);
     if (!text.trim()) throw createAiReplyTransportError("AI reply provider returned no response text", {
-      code: "AI_REPLY_PROTOCOL_ERROR",
+      code: "AI_REPLY_PROTOCOL_ERROR", protocolKind: "empty_answer",
     });
     await recordProviderCallFn({
       provider: openAiConfig.id,
@@ -176,7 +191,7 @@ function buildOpenAiRequestBody(promptContext, openAiConfig, { appendStructuredO
     return {
       ...requestBodyExtras,
       model: openAiConfig.model,
-      stream: false,
+      stream: openAiConfig.stream === true,
       ...(jsonOutput ? { response_format: { type: "json_object" } } : {}),
       messages: [
         {
@@ -302,11 +317,12 @@ function normalizeOpenAiError(payload, status) {
   return message ? `OpenAI ${status}: ${message}` : `OpenAI request failed with status ${status}`;
 }
 
-function createAiReplyTransportError(message, { statusCode = 0, code = "", retryable = false } = {}) {
+function createAiReplyTransportError(message, { statusCode = 0, code = "", retryable = false, protocolKind = "" } = {}) {
   const error = new Error(message || "AI reply request failed");
   error.statusCode = Number(statusCode || 0) || undefined;
   error.code = code || undefined;
   error.retryable = Boolean(retryable);
+  if (["unexpected_stream", "invalid_json", "empty_answer", "invalid_stream", "incomplete_stream", "stream_limit"].includes(protocolKind)) error.protocolKind = protocolKind;
   return error;
 }
 

@@ -64,7 +64,7 @@ for (const regenerateReply of [async()=>null,async()=>{throw Error('fixture');},
 const {generateChatReplyWithRequest}=await import('../server/ai-reply-service.js');
 let attempts=0;
 const generation=await generateChatReplyWithRequest({promptContext:{systemPrompt:'Fixture',messages:[]},userText:'Hi',logContext:{languageCode:'en'},regeneration:true,
- requestReplyText:async(_prompt,options)=>{attempts++;assert.equal(options.timeoutMs,options.modelConfig.timeoutMs);assert.equal(options.sourceRef,'chat-reply-regeneration');return JSON.stringify({displayText:'Hello there.',speechText:'Hello there.'});},recordReplyLogFn:async()=>{}});
+ requestReplyText:async(_prompt,options)=>{attempts++;assert.equal(options.timeoutMs,60000);assert.equal(options.sourceRef,'chat-reply-regeneration');return JSON.stringify({displayText:'Hello there.',speechText:'Hello there.'});},recordReplyLogFn:async()=>{}});
 assert.equal(attempts,1);assert.equal(generation.sourceType,'ai');
 attempts=0;
 await generateChatReplyWithRequest({promptContext:{systemPrompt:'Fixture',messages:[]},userText:'Hi',regeneration:true,requestReplyText:async()=>{attempts++;throw Object.assign(Error('controlled timeout'),{code:'AI_REPLY_TIMEOUT'});},recordReplyLogFn:async()=>{}});
@@ -85,7 +85,7 @@ for(const regenerationUseAlternateProvider of [false,true]) {
  const expected=regenerationUseAlternateProvider?alternate:previous;
  const result=await generateChatReplyWithRequest({promptContext:{systemPrompt:'Fixture',messages:[]},userText:'Hi',regeneration:true,regenerationUseAlternateProvider,
   regenerationProvider:{aiModel:previous.model,aiBaseUrl:previous.baseUrl},requestReplyText:async(_prompt,{modelConfig,timeoutMs,sourceRef})=>{
-   calls++;assert.equal(modelConfig,expected);assert.equal(timeoutMs,expected.timeoutMs || SERVER_CONFIG.aiReply.openai.timeoutMs);assert.equal(sourceRef,'chat-reply-regeneration');return JSON.stringify({displayText:'Hello there.',speechText:'Hello there.'});},recordReplyLogFn:async()=>{}});
+   calls++;assert.equal(modelConfig,expected);assert.equal(timeoutMs,60000);assert.equal(sourceRef,'chat-reply-regeneration');return JSON.stringify({displayText:'Hello there.',speechText:'Hello there.'});},recordReplyLogFn:async()=>{}});
  assert.equal(calls,1,'alternate selection cannot enter the normal provider retry chain');assert.equal(result.aiModel,expected.model);assert.equal(result.aiBaseUrl,expected.baseUrl);
 }
 let alternateFailures=0;

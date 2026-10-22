@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-Object.assign(process.env,{AIOVE_PROVIDER_LOG_WRITE_ENABLED:'false',VENICE_API_KEY:'fixture',OPENAI_API_KEY:'fixture',
+Object.assign(process.env,{OPENAI_FALLBACK_STREAM:'false',AIOVE_PROVIDER_LOG_WRITE_ENABLED:'false',VENICE_API_KEY:'fixture',OPENAI_API_KEY:'fixture',
  VENICE_BASE_URL:'https://primary.example.test',OPENAI_BASE_URL:'https://backup.example.test',OPENAI_API_MODE:'responses',OPENAI_FALLBACK_MODEL:'third-fixture'});
 const {requestAiJsonWithProviderFallback}=await import('../server/ai-json-provider-service.js');
 const {recoverReviewedLanguageReply}=await import('../server/chat-reply-language-recovery-service.js');
@@ -41,7 +41,7 @@ try{
  const r=await recoverReviewedLanguageReply({replyResult:{text:'Before.'},repairLanguageReply:async input=>{repairBudget=input.timeoutMs;clock+=14000;return{text:'After.'}},
   reviewCandidate:async(text,options)=>{reviewOptions=options;clock+=25000;return text},recordReview:async()=>{}});
  check(r.recovered&&r.reply.text==='After.','long correction and full review are not rejected by the former shared twelve-second deadline');
- check(repairBudget===15000&&reviewOptions.reviewTimeoutMs===20000&&!Object.hasOwn(reviewOptions,'languageRecoveryDeadline'),'repair and full primary review receive separate finite budgets');
+ check(repairBudget===15000&&reviewOptions.reviewTimeoutMs===60000&&!Object.hasOwn(reviewOptions,'languageRecoveryDeadline'),'repair and full primary review receive separate finite budgets');
 }finally{Date.now=originalNow}
 const verdict={allowed:true,confidence:.99,boundarySupported:true,factualSupported:true,languageQualitySupported:true};
 const audits=[],reviews=[];let repairs=0;
@@ -52,5 +52,5 @@ const reply=await enforceReplyBoundary({replyResult:{text:'Before.',speechText:'
  assessLanguageQuality:async input=>{audits.push(input.timeoutMs);return audits.length===1?{reviewStatus:'valid',confidence:.99,languageQualitySupported:false,languageIssues:[{type:'grammar',field:'both',severity:'major',span:'Before'}]}:{reviewStatus:'valid',confidence:.99,languageQualitySupported:true,languageIssues:[]}},
  regenerateReply:async()=>{repairs++;return{text:'After.',speechText:'After.',sourceType:'ai',sourceRef:'fixture'}},recordReview:async()=>{}});
 check(reply.text==='After.'&&repairs===1,'one corrected text is approved only by complete original re-review');
-check(reviews.length===2&&reviews.every(x=>x===20000)&&audits.length===2&&audits.every(x=>x===20000),'initial and corrected primary/language stages each keep a complete twenty-second budget');
+check(reviews.length===2&&reviews.every(x=>x===60000)&&audits.length===2&&audits.every(x=>x===60000),'initial and corrected primary/language stages each keep a complete configured sixty-second budget');
 console.log(`independent review budget self-check passed (${checks} checks; actual provider aborts and review/recovery seams, no external network/DB)`);

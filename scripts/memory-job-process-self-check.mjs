@@ -44,7 +44,10 @@ try {
   assert.deepEqual(memoryJobClaimFilter('image').includeTypes, IMAGE_MEMORY_JOB_TYPES);
   assert.deepEqual(memoryJobClaimFilter('background').excludeTypes, IMAGE_MEMORY_JOB_TYPES);
   assert(getMemoryJobExecutionBudgetMs({ jobType: 'generate_chat_image' }) >= 270000, 'image whole-task budget preserves provider time plus I/O margin');
+  const { SERVER_CONFIG } = await import('../server/config.js');
+  const { MAX_AI_REPLY_REQUEST_ATTEMPTS } = await import('../server/ai-reply-request-policy.js');
   const failureBudget = getMemoryJobExecutionBudgetMs({ jobType: 'generate_chat_image_failure_reply' });
+  assert(failureBudget > MAX_AI_REPLY_REQUEST_ATTEMPTS * SERVER_CONFIG.aiReply.chatTimeouts.generation, 'outer failure-reply watchdog must cover every chat-generation attempt');
   assert(getMemoryJobExecutionBudgetMs({ jobType: 'send_proactive_message' }) > failureBudget, 'two proactive candidate rounds preserve a larger window than one failure reply');
   const nearlyExpired = { jobType: 'generate_chat_image', createdAt: new Date(Date.now() - 15 * 60 * 1000 + 2000).toISOString() };
   assert(getMemoryJobExecutionBudgetMs(nearlyExpired) <= 2000, 'request age caps image attempt budget rather than refreshing it');

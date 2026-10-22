@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 
 import { isRetryableAiReplyTransportError, requestOpenAiReply, requestOpenAiText, shouldFallbackAiReplyProvider } from "../server/ai-reply-provider-service.js";
 
+const { buildProviderAttemptLogEvent } = await import("../server/ai-reply-log-service.js");
 const originalFetch = globalThis.fetch;
 const promptContext = { systemPrompt: "Reply briefly.", messages: [{ role: "user", content: "Hello" }] };
 const providerEvents = [];
@@ -48,28 +49,39 @@ try {
   assert.equal(providerEvents.at(-1)?.sourceRef, "chat-reply", "chat reply provider calls must retain their source");
   // HTTP success with no model text is not a successful provider answer.
   // stream:false may still receive an upstream SSE body with usage only.
-  for (const [body, contentType] of [
-    ['<html>private-body-must-not-be-logged</html>', 'text/html'],
-    ['data: {"choices":[],"usage":{"completion_tokens":0}}\n\ndata: [DONE]\n\n', 'text/event-stream'],
-    ['{}', 'application/json'],
-    ['{"choices":[]}', 'application/json'],
-    ['{"choices":[{"message":{"content":null}}]}', 'application/json'],
-    ['{"choices":[{"message":{"content":"  "}}]}', 'application/json'],
-    ['{"output":[]}', 'application/json'],
+  for (const [body, contentType, protocolKind] of [
+    ['<html>private-body-must-not-be-logged</html>', 'text/html', 'invalid_json'],
+    ['data: {"choices":[],"usage":{"completion_tokens":0}}\n\ndata: [DONE]\n\n', 'text/event-stream', 'unexpected_stream'],
+    ['{}', 'application/json', 'empty_answer'],
+    ['{"choices":[]}', 'application/json', 'empty_answer'],
+    ['{"choices":[{"message":{"content":null}}]}', 'application/json', 'empty_answer'],
+    ['{"choices":[{"message":{"content":"  "}}]}', 'application/json', 'empty_answer'],
+    ['{"output":[]}', 'application/json', 'empty_answer'],
+    ['', 'text/event-stream; charset=utf-8', 'unexpected_stream'],
   ]) {
     const events = [];
     await assert.rejects(() => requestOpenAiText(promptContext, {
       modelConfig: fallbackModelConfig, timeoutMs: 1000, recordProviderCallFn: async event => events.push(event),
       fetchImpl: async () => new Response(body, { headers: { 'Content-Type': contentType } }),
-    }), error => error.code === 'AI_REPLY_PROTOCOL_ERROR' && shouldFallbackAiReplyProvider(error)
+    }), error => error.code === 'AI_REPLY_PROTOCOL_ERROR' && error.protocolKind === protocolKind && shouldFallbackAiReplyProvider(error)
       && !isRetryableAiReplyTransportError(error) && !error.message.includes('private-body'));
     assert.deepEqual(events.map(event => event.status), ['error'], 'empty/invalid envelopes never record successful calls');
+    const log = buildProviderAttemptLogEvent({ modelConfig: fallbackModelConfig, error: events[0].error, nextProvider: 'backup' });
+    assert(log.errorMessage.includes(`protocol=${protocolKind}`));
+    assert(!JSON.stringify(log).includes('private-body'));
+    const unsafeLog = buildProviderAttemptLogEvent({ modelConfig: fallbackModelConfig,
+      error: { code: 'AI_REPLY_PROTOCOL_ERROR', protocolKind: 'PRIVATE_SECRET_VALUE' } });
+    assert(!unsafeLog.errorMessage.includes('PRIVATE_SECRET_VALUE'), 'only whitelisted diagnostic kinds persist');
   }
   for (const status of [401, 402, 429, 503]) {
     await assert.rejects(() => requestOpenAiText(promptContext, { modelConfig: fallbackModelConfig, timeoutMs: 1000,
       recordProviderCallFn: async () => {}, fetchImpl: async () => new Response('not JSON', { status }) }),
     error => error.statusCode === status && shouldFallbackAiReplyProvider(error) === (status !== 401));
   }
+  await assert.rejects(() => requestOpenAiText(promptContext, {
+    modelConfig: fallbackModelConfig, recordProviderCallFn: async () => {},
+    fetchImpl: async () => new Response('data: private', { status: 402, headers: { 'Content-Type': 'text/event-stream' } }),
+  }), error => error.statusCode === 402 && !error.protocolKind, 'non-2xx streams retain HTTP failure semantics');
   assert.equal(shouldFallbackAiReplyProvider({ statusCode: 401, code: 'AI_REPLY_PROTOCOL_ERROR' }), false,
     'an HTTP authorization error cannot become a protocol fallback');
   for (const [payload, expected] of [

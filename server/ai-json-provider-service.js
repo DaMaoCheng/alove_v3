@@ -27,11 +27,14 @@ export async function requestAiJsonWithProviderFallback(messages, {
   responseFormat = null,
   fallbackReserveMs = 0,
   perProviderTimeout = false,
+  providerTimeoutMs = null,
   validateParsed = null,
 } = {}) {
   const providers = configuredProviders(config);
   if (!providers.length) throw new Error("AI JSON service is not configured");
   if (typeof perProviderTimeout !== "boolean") throw new Error("Invalid AI JSON timeout policy");
+  if (providerTimeoutMs !== null && (!perProviderTimeout || !Number.isSafeInteger(providerTimeoutMs) || providerTimeoutMs < 1 || providerTimeoutMs > 120000))
+    throw new Error("Invalid AI JSON provider timeout policy");
   const budgetMs = Number(timeoutMs);
   if (!Number.isFinite(budgetMs) || budgetMs <= 0) throw new Error("Invalid AI JSON timeout");
   const deadline = perProviderTimeout ? null : nowFn() + budgetMs;
@@ -52,7 +55,7 @@ export async function requestAiJsonWithProviderFallback(messages, {
   for (const [index, modelConfig] of providers.entries()) {
     const remainingMs = perProviderTimeout ? budgetMs : deadline - nowFn();
     if (remainingMs < 1) break;
-    const providerTimeout = Number(modelConfig.timeoutMs);
+    const providerTimeout = providerTimeoutMs ?? Number(modelConfig.timeoutMs);
     // Caller opt-in only. Preserve the original primary allocation, then divide
     // the remaining reserve among remaining backups so one cannot starve the
     // next. A valid protocol response ends the chain; the deadline never moves.

@@ -22,7 +22,7 @@ export function getMemoryJobExecutionBudgetMs(job = {}) {
   }
   // Preserve the existing ten total reply attempts and proactive's two
   // candidate generations; the outer watchdog must not shrink their budget.
-  const replyTimeout = Math.max(20000, ...(SERVER_CONFIG.aiReply.replyChain || []).map(model => Number(model.timeoutMs) || 20000));
+  const replyTimeout = Math.max(20000, SERVER_CONFIG.aiReply.chatTimeouts.generation, ...(SERVER_CONFIG.aiReply.replyChain || []).map(model => Number(model.timeoutMs) || 20000));
   const replyWindow = MAX_AI_REPLY_REQUEST_ATTEMPTS * replyTimeout + (MAX_AI_REPLY_REQUEST_ATTEMPTS - 1) * AI_REPLY_RETRY_DELAY_MS;
   const voiceWindow = Number(SERVER_CONFIG.elevenLabs?.timeoutMs || 8000) * (1 + Number(SERVER_CONFIG.elevenLabs?.ttsMaxRetries || 0));
   if (job.jobType === 'send_proactive_message') return Math.max(5 * 60 * 1000, 2 * replyWindow + voiceWindow + 120000);

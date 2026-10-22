@@ -1,6 +1,6 @@
 import { resolveDisplayedProductReferences } from './product-displayed-reference-service.js';
 import { applyProductRequestScope, readProductRequestState, normalizeProductRequest, hasPendingProductRequest } from "./product-request-scope-service.js";
-import { buildProductClarificationContext, productClarificationContext, PRODUCT_CLARIFICATION_CONTRACT } from "./chat-reply-purpose-service.js";
+import { buildClosedProductClarificationContext, buildProductClarificationContext, productClarificationContext, PRODUCT_CLARIFICATION_CONTRACT } from "./chat-reply-purpose-service.js";
 import { buildProductSearchIntent, normalizeLooseText, extractRequirementClearFields } from "./product-intent-service.js";
 import { extractProductHandle } from "./product-search-match-service.js";
 import { classifyCommerceIntent, normalizeCommerceAssistance } from "./product-intent-classifier-service.js";
@@ -88,6 +88,9 @@ function primaryConversationPurpose({ decision, jevDecision, searchIntent, recen
 }
 
 export async function resolveCommerceSearchIntent({ userText = "", recentMessages = [], searchIntent = {}, classifyCommerce = classifyCommerceIntent, explicitTrigger = false, siteId = "", siteSlug = "", characterId = "", jevDecision = null, enrichAllTurns = false } = {}) {
+  if (searchIntent.replyBoundaryReason === 'product_action_closed') {
+    searchIntent = { ...searchIntent, replyBoundaryReason: '', replyTopicHint: '', replyClarificationContext: null };
+  }
   // A prior turn or an injected classifier field cannot carry this authority.
   if (Object.prototype.hasOwnProperty.call(searchIntent, 'replyPurposeContext')) {
     const { replyPurposeContext: ignoredPurpose, ...currentIntent } = searchIntent;
@@ -304,7 +307,13 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
   // Primary non-shopping actions keep their existing behavior. Expire an old
   // item scope instead of turning an order, image or service reply into selection.
   if ((primaryBlocksSearch && decision.route !== "product_question") || deterministicNonShopping || (!replyBoundary.salesAllowed && decision.route !== "product_question")) {
-    return clearProductRoutingState(result, { recentMessages, siteId, characterId });
+    const request = readProductRequestState(recentMessages, { siteId, characterId });
+    const candidate = readProductCandidateState(recentMessages, { siteId, characterId });
+    const clarification = buildClosedProductClarificationContext({ decision, jevDecision, searchIntent: result, userText, recentMessages,
+      hasRetainedProduct: ['pending', 'selected'].includes(request?.status) || candidate?.status === 'active'
+        || ['pending', 'selected'].includes(searchIntent.productRequestState?.status) || searchIntent.productCandidateState?.status === 'active' });
+    const cleared = clearProductRoutingState(result, { recentMessages, siteId, characterId });
+    return clarification ? { ...cleared, replyBoundaryReason: 'product_action_closed', replyClarificationContext: clarification } : cleared;
   }
   const candidateIntent = applyProductCandidateState(scope(result), decision, { userText, recentMessages, siteId, characterId, currentRequirement });
   // A validated existing-card reference does not abandon its matched target.

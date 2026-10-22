@@ -199,5 +199,114 @@ await test('Closed clarification can reference an existing USER purpose without 
  assert.equal(reviews,2);assert.equal(generations,1);assert.equal(out.text,fresh);assert.equal(out.speechText,fresh);
  assert.equal(weak.cardAllowed,false);assert.equal(weak.shouldLoadProductContext,false);assert.equal(weak.replyBoundary.contactAllowed,false);assert(!out.verifiedDiscountOffers?.length);
 });
+const {isClosedProductClarification}=await import('../server/chat-reply-purpose-service.js');
+const {buildProductClarificationFallbackReply}=await import('../server/product-request-scope-copy.js');
+const closedText='I would like some shirts';
+const closedJev={ok:true,confident:true,primaryIntent:'product_request',productIntent:'none',productAction:.53,imageIntent:'none',orderIntent:'none',webSearchIntent:false,unsupported:false};
+const closedDecision={route:'product_search',topic:'other',confidence:.85,answerRequired:true,needsLiveProductData:false,
+ replyBoundary:{salesAllowed:true,contactAllowed:true},productRequest:{relation:'single',action:'new',items:[],selectedIndex:null,selectionEvidence:''},
+ productRequirement:{action:'new',evidence:closedText,updates:[{field:'requestedProductType',value:'shirt',evidence:'shirts'}],suspectedTerm:null,priorTargetEvidence:''},
+ candidateResponse:{action:'none',evidence:'',candidateId:''}};
+async function closedFixture({decision={},jev={},intent={},recentMessages=[]}={}){
+ const normalized=normalizeCommerceDecision({...closedDecision,...decision},{userText:closedText,requireBoundaryVerdict:true});
+ const resolved=await resolveCommerceSearchIntent({userText:closedText,searchIntent:{...buildProductSearchIntent(closedText),...intent},enrichAllTurns:true,
+  recentMessages,jevDecision:{...closedJev,...jev},classifyCommerce:async()=>normalized});
+ return {...options,userText:closedText,searchIntent:resolved,language:'en',groundedRepairAttempted:true,
+  knowledgeContext:{ok:true,customerServiceIntent:true,strategy:'business_no_relevant_section',items:[]},
+  replyResult:{sourceType:'ai',text:'OLD_UNAPPROVED: I found your item in stock.',speechText:'OLD_UNAPPROVED: I found your item in stock.'},
+  assess:async()=>({...passed,allowed:false,evidenceSupported:false,businessFactsSupported:false})};
+}
+await test('A current pure category request with closed actions gets a useful final clarification',async()=>{
+ const input=await closedFixture();assert(isClosedProductClarification(input));
+ const output=await enforceReplyBoundary(input);
+ assert.equal(output.text,buildProductClarificationFallbackReply('en'));assert.equal(output.speechText,output.text);
+ assert.equal(output.replyRecoveryState?.productClarification,true);assert.equal(output.partialAnswerRetained,false);
+ assert.equal(input.searchIntent.shouldLoadProductContext,false);assert.equal(input.searchIntent.cardAllowed,false);
+ assert.equal(input.searchIntent.primarySearchBlocked,true);assert.equal(input.searchIntent.knowledgeScope,'business');
+});
+await test('Accepted contextual display and tagged speech remain unchanged',async()=>{
+ const input=await closedFixture();const text='Which team would you like?';const speech='[happy] '+text;
+ const output=await enforceReplyBoundary({...input,replyResult:{sourceType:'ai',text,speechText:speech},assess:async()=>passed});
+ assert.equal(output.text,text);assert(!output.replyRecoveryState?.productClarification);assert(!output.replyRecoveryState?.guardApplied);
+ // This boundary already normalizes speech; the new path must not substitute a fixed question.
+ assert(output.speechText.includes(text));
+});
+await test('Only current complete JEV and pure new category decisions issue clarification authority',async()=>{
+ const changes=[
+  ...['daily_chat','character_photo','new_image','try_on','order_lookup','unclear'].map(primaryIntent=>({jev:{primaryIntent}})),
+  ...[{ok:false},{ok:1},{confident:undefined},{unsupported:undefined},{unsupported:true},{imageIntent:'generate'},{orderIntent:'lookup'},
+   {webSearchIntent:true},{productIntent:undefined},{productAction:undefined},{productAction:NaN},{productAction:1.1}].map(jev=>({jev})),
+  ...[{route:'store_policy'},{route:'product_question'},{route:'chat'},{topic:'price'},{topic:'delivery'},{topic:'sizing'},
+   {knowledgeQuery:'How long does delivery take?'},{needsLiveProductData:true},{confidence:.6},
+   {replyBoundary:{salesAllowed:false,contactAllowed:true}},{replyBoundary:{salesAllowed:true,contactAllowed:false}},
+   {referencedProductId:'existing-product'},
+   {productRequest:{relation:'multiple',action:'new',items:[],selectedIndex:null}},
+   {productRequirement:{...closedDecision.productRequirement,updates:[{field:'requestedTeam',value:'Arsenal',evidence:'shirts'}]}},
+   {productRequirement:{...closedDecision.productRequirement,suspectedTerm:{term:'shirts',evidence:'shirts'}}},
+  ].map(decision=>({decision})),
+  ...[{nonShoppingReason:'sales_refusal'},{requestedTeam:'Arsenal'},{requestedSizes:['M']},{requestedColor:'blue'},
+   {correctionSuggestion:{corrected:true}},{clarificationCount:2},{searchState:'source_error'},{searchState:'clarification_exhausted'},
+   {productRequestState:{status:'pending'}},{productRequestState:{status:'selected'}},{productCandidateState:{status:'active'}}].map(intent=>({intent})),
+  {recentMessages:[{sourceRef:'product-clarification',senderType:'character'},{senderType:'user',text:'more'},
+   {sourceRef:'product-clarification',senderType:'character'}]},
+  {recentMessages:[{senderType:'character',product:{name:'Existing product'}}]},
+ ];
+ for(const change of changes){const input=await closedFixture(change);assert(!isClosedProductClarification(input),JSON.stringify(change));}
+ const authorized=await closedFixture({jev:{productIntent:'search',productAction:.99}});
+ assert.equal(authorized.searchIntent.shouldLoadProductContext,true);assert.equal(authorized.searchIntent.cardAllowed,true);
+ assert(!isClosedProductClarification(authorized));
+});
+await test('Runtime parallel contexts, retrieval failures and real outcomes retain their original fallback',async()=>{
+ const base=await closedFixture();
+ const changes=[
+  {userText:'Another question'}, {orderActionCandidate:{kind:'login_required'}},{feedbackActionCandidate:{kind:'feedback'}},
+  {chatImageContext:{imageStatus:{status:'ready'}}},{guestBenefitContext:{kind:'coupon'}},{checkoutContext:{kind:'checkout'}},
+  {factualContext:{...clock,required:true,status:'unavailable'}},{factualContext:null},
+  {productContext:{products:[{name:'Existing'}]}},{productContext:{searchOutcome:'no_match',products:[]}},
+  {productContext:{searchOutcome:'source_error',products:[]}},{productContext:{searchOutcome:'matched',products:[]}},
+  {knowledgeContext:{ok:true,strategy:'business_no_relevant_section',selectionFailure:{kind:'timeout'},items:[]}},
+  {knowledgeContext:{ok:false,strategy:'business_no_relevant_section',items:[]}},
+  {knowledgeContext:{ok:true,strategy:'business_selection_unavailable',items:[]}},
+  {knowledgeContext:{ok:true,strategy:'business_no_relevant_section',items:[{content:'Policy'}]}},
+  {replyResult:{sourceType:'system',sourceRef:'ai-timeout',text:'Timeout'}},
+  ...[{clarificationCount:2},{clarificationCount:-1},{cardAllowed:true},{shouldLoadProductContext:true},
+   {sourceErrorCode:'source_timeout'},{businessInquiry:{kind:'cooperation'}},{promotionInquiry:{kind:'discount'}},
+   {humanHandoff:{explicitRequest:true}},{checkoutIssue:{kind:'payment'}},{productRequestState:{status:'pending'}},
+   {productCandidateState:{status:'active'}},
+   {replyClarificationContext:JSON.parse(JSON.stringify(base.searchIntent.replyClarificationContext))},
+  ].map(patch=>({searchIntent:{...base.searchIntent,...patch}})),
+ ];
+ for(const change of changes)assert(!isClosedProductClarification({...base,...change}),JSON.stringify(change));
+ const replayed=await closedFixture({intent:base.searchIntent,jev:{primaryIntent:'daily_chat'}});
+ assert(!isClosedProductClarification(replayed));assert.notEqual(replayed.searchIntent.replyBoundaryReason,'product_action_closed');
+ assert(Object.isFrozen(base.searchIntent.replyClarificationContext));
+});
+await test('Language and primary review failures do not acquire a merchandise question',async()=>{
+ const base=await closedFixture();
+ const primary=await enforceReplyBoundary({...base,assess:async()=>({reviewStatus:'invalid_json'})});assert(!primary.replyRecoveryState?.productClarification);
+ const language=await enforceReplyBoundary({...base,assessLanguageQuality:async()=>({reviewStatus:'valid',confidence:.99,languageQualitySupported:false,languageIssues:['unintelligible'],languageSeverity:'major'})});
+ assert(!language.replyRecoveryState?.productClarification);
+});
+await test('Private recovery metadata round-trips and caps consecutive fallback questions without source refs',async()=>{
+ const {mergeReplyRecoveryPayload,readReplyRecoveryState}=await import('../server/chat-reply-recovery-state.js');
+ const first=await enforceReplyBoundary(await closedFixture());
+ const state=readReplyRecoveryState(mergeReplyRecoveryPayload(null,first.replyRecoveryState));assert.equal(state.productClarification,true);
+ const history=[{senderType:'character',replyRecoveryState:state},{senderType:'user',text:closedText}];
+ const second=await closedFixture({recentMessages:history});assert(isClosedProductClarification(second));
+ const secondReply=await enforceReplyBoundary(second);
+ history.push({senderType:'character',replyRecoveryState:readReplyRecoveryState(mergeReplyRecoveryPayload(null,secondReply.replyRecoveryState))});
+ assert(!isClosedProductClarification(await closedFixture({recentMessages:history})));
+ for(const kind of ['language','review']){
+  const normalized=readReplyRecoveryState(mergeReplyRecoveryPayload(null,{...state,kind}));assert(!normalized.productClarification);
+ }
+});
+await test('All supported language fallbacks keep text and speech identical without issuing actions',async()=>{
+ const {SUPPORTED_CHARACTER_LANGUAGES}=await import('../shared/language-library.js');const base=await closedFixture();
+ for(const language of SUPPORTED_CHARACTER_LANGUAGES){const code=language.code;
+  const output=await enforceReplyBoundary({...base,language:code});
+  assert.equal(output.text,buildProductClarificationFallbackReply(code),code);assert.equal(output.speechText,output.text,code);
+  assert.equal(output.replyRecoveryState?.productClarification,true,code);assert.equal(base.searchIntent.shouldLoadProductContext,false);
+ }
+});
 for(const row of results)console.log(JSON.stringify(row));
 assert(results.every(row=>row.pass),'Commerce reply purpose checks did not pass');

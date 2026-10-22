@@ -21,6 +21,12 @@ function formatRateLimitDetails(error) {
   return '; ' + parts.join('; ');
 }
 
+function formatProtocolDetails(error) {
+  return error?.code === "AI_REPLY_PROTOCOL_ERROR"
+    && ["unexpected_stream", "invalid_json", "empty_answer", "invalid_stream", "incomplete_stream", "stream_limit"].includes(error?.protocolKind)
+    ? `; protocol=${error.protocolKind}` : "";
+}
+
 const safeIdentifier = (value) => /^[a-z0-9_:-]{1,80}$/i.test(String(value || "")) ? String(value) : "";
 
 // Only structured diagnostics are persisted: never upstream response bodies,
@@ -51,7 +57,7 @@ export function buildProviderAttemptLogEvent({
     },
     errorMessage: recovered
       ? `fallback_success; previous=${previousProviders.join(",")}; selected=${provider}`
-      : `attempt=${attempt}; reason=${safeReason}; HTTP=${http || "n/a"}; action=${action}${formatRateLimitDetails(error)}`,
+      : `attempt=${attempt}; reason=${safeReason}; HTTP=${http || "n/a"}; action=${action}${formatRateLimitDetails(error)}${formatProtocolDetails(error)}`,
   };
 }
 
@@ -616,7 +622,7 @@ function formatProviderFailureMessage(error = null) {
   const statusCode = Number(error?.statusCode || error?.status || 0);
   const reason = resolveProviderFailureReason(error);
   const retryCount = Math.max(0, Number(error?.retryCount || 0));
-  return `provider_call_failed; reason=${reason}; HTTP=${statusCode || "n/a"}${retryCount ? `; retries=${retryCount}` : ""}${formatRateLimitDetails(error)}`;
+  return `provider_call_failed; reason=${reason}; HTTP=${statusCode || "n/a"}${retryCount ? `; retries=${retryCount}` : ""}${formatRateLimitDetails(error)}${formatProtocolDetails(error)}`;
 }
 
 function normalizePositiveInt(value) {

@@ -1,9 +1,10 @@
-import { REPLY_REVIEW_TIMEOUT_MS, REPLY_REPAIR_TIMEOUT_MS } from "./chat-reply-review-outcome.js";
+import { SERVER_CONFIG } from './config.js';
+import { REPLY_REPAIR_TIMEOUT_MS } from "./chat-reply-review-outcome.js";
 // One text recovery (fresh generation or grounded correction) followed by the caller's COMPLETE original review. The callback
 // receives fresh finite stage budgets; earlier provider latency never subtracts
 // time from correction or the complete original re-review.
 export async function recoverReviewedLanguageReply({ replyResult, assessment, languageDiagnostics = {}, language, userText,
-  logContext, repairLanguageReply, reviewCandidate, recordReview, primaryReviewTimeoutMs = REPLY_REVIEW_TIMEOUT_MS, repairTimeoutMs = REPLY_REPAIR_TIMEOUT_MS } = {}) {
+  logContext, repairLanguageReply, reviewCandidate, recordReview, primaryReviewTimeoutMs = SERVER_CONFIG.aiReply.chatTimeouts.review, repairTimeoutMs = REPLY_REPAIR_TIMEOUT_MS } = {}) {
   const diagnostics = { ...languageDiagnostics, repairState: "failed" };
   let repaired = null;
   try {
@@ -13,7 +14,7 @@ export async function recoverReviewedLanguageReply({ replyResult, assessment, la
   } catch { diagnostics.repairFailureCode = "provider_error"; }
   if (!repaired) return { recovered: false, diagnostics };
   const primaryBudget = Number.isFinite(primaryReviewTimeoutMs) && primaryReviewTimeoutMs > 0
-    ? Math.min(REPLY_REVIEW_TIMEOUT_MS, primaryReviewTimeoutMs) : REPLY_REVIEW_TIMEOUT_MS;
+    ? Math.min(SERVER_CONFIG.aiReply.chatTimeouts.review, primaryReviewTimeoutMs) : SERVER_CONFIG.aiReply.chatTimeouts.review;
   let terminalEvent;
   const output = await reviewCandidate(repaired, {
     languageRepairAttempted: true, languageRepairDiagnostics: { ...diagnostics, repairState: "attempted" },

@@ -72,12 +72,13 @@ export async function generateChatReplyWithRequest({
       || recoveryAlternates[0];
     const recoveryProviders = [regenerationModel, recoveryBackup].filter(Boolean);
     const replyRequest = regeneration ? await requestReplyWithProviderFallback(requestReplyText, promptContext, {
-      providerConfigs: recoveryProviders, maxAttempts: recoveryProviders.length,
+      providerConfigs: recoveryProviders, providerTimeoutMs: SERVER_CONFIG.aiReply.chatTimeouts.generation, maxAttempts: recoveryProviders.length,
       requestOptions: { sourceRef: "chat-reply-regeneration" },
       validateReply: candidateText => validateAiReplyCandidate({ candidateText, userText, voiceFallbackMeta }),
       onProviderEvent: async event => recordReplyLogFn({ requestId, logContext, promptMeta, ...buildProviderAttemptLogEvent(event) }),
     }) : useConfiguredModelFallback
       ? await requestReplyWithProviderFallback(requestReplyText, promptContext, {
+        providerTimeoutMs: SERVER_CONFIG.aiReply.chatTimeouts.generation,
         onProviderEvent: async (event) => recordReplyLogFn({
           requestId, logContext, promptMeta,
           ...buildProviderAttemptLogEvent(event),
@@ -285,10 +286,13 @@ export async function requestReplyWithProviderFallback(requestReplyText, promptC
   nowFn = Date.now,
   validateReply = defaultAiReplyValidation,
   providerConfigs = SERVER_CONFIG.aiReply.replyChain,
+  providerTimeoutMs = null,
   maxAttempts = MAX_AI_REPLY_REQUEST_ATTEMPTS,
   requestOptions = {},
   onProviderEvent = null,
 } = {}) {
+  if (providerTimeoutMs !== null && (!Number.isSafeInteger(providerTimeoutMs) || providerTimeoutMs < 1 || providerTimeoutMs > 120000))
+    throw createReplyError("Invalid AI reply provider timeout policy");
   const startedAt = nowFn();
   const totalAttemptBudget = Math.max(1, Math.min(MAX_AI_REPLY_REQUEST_ATTEMPTS, Math.floor(Number(maxAttempts) || MAX_AI_REPLY_REQUEST_ATTEMPTS)));
   const configuredProviders = (Array.isArray(providerConfigs) ? providerConfigs : [])
@@ -306,7 +310,7 @@ export async function requestReplyWithProviderFallback(requestReplyText, promptC
   for (const [index, modelConfig] of configuredProviders.entries()) {
     try {
       const text = await requestReplyWithRetryBudget(requestReplyText, promptContext, {
-        timeoutMs: modelConfig.timeoutMs || timeoutMs,
+        timeoutMs: providerTimeoutMs ?? (modelConfig.timeoutMs || timeoutMs),
         sleepFn,
         nowFn,
         validateReply,

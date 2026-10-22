@@ -1,8 +1,9 @@
+import { SERVER_CONFIG } from './config.js';
 import { canReviewLanguageClarification, reviewedLanguageClarification, reviewedLanguageClarificationPurpose, withClarificationVoiceLanguage, withLanguageClarificationRecovery, languageClarificationRecoveryProof } from "./chat-language-clarification-policy.js";
 import { independentJsonProviderChain } from './ai-independent-review-config.js';
 import { buildBusinessClaimContext, validateBusinessClaimAudit, isGeneralCommerceExplanation, GENERAL_COMMERCE_EXPLANATION_CONTRACT } from './business-claim-audit-service.js';
 import { recoverReviewedLanguageReply } from "./chat-reply-language-recovery-service.js";
-import { isConversationReplyRecoveryEligible, productClarificationContext, isProductClarificationRecoveryEligible } from "./chat-reply-purpose-service.js";
+import { isClosedProductClarification, isConversationReplyRecoveryEligible, productClarificationContext, isProductClarificationRecoveryEligible } from "./chat-reply-purpose-service.js";
 import { buildTrustedCharacterIdentity } from "./chat-prompt-utils.js";
 import { isImageReplyRecoveryEligible, refreshImageReplyRecoveryContext } from "./chat-image-reply-recovery-service.js";
 import { isGroundedCommerceRepairEligible, repairGroundedCommerceReply } from "./chat-grounded-reply-repair-service.js";
@@ -26,8 +27,8 @@ import { hasUnauthorizedDiscountPolicyClaim } from "./discount-policy-explanatio
 import { toImageStatusReviewContext, getChatImageStatusFallbackCopy, isFulfilledImageOnlyRequest } from "./chat-image-status-context-service.js";
 import { guardLanguageQualityReply, buildLanguageQualityFallbackReply } from "./chat-reply-language-quality.js";
 import { factualReviewRequired, toFactualReviewContext, buildFactualUnavailableCopy, containsFactualUnavailableCopy } from "./chat-factual-policy.js";
-import { activeReviewContracts, reviewOutcomeStatus, reviewErrorStatus, reviewFieldProtocolFailure, REVIEW_CONTRACTS, REPLY_REVIEW_TIMEOUT_MS, REPLY_REPAIR_TIMEOUT_MS, languageReviewConfident } from "./chat-reply-review-outcome.js";
-import { assessIndependentLanguageQuality, LANGUAGE_REVIEW_TIMEOUT_MS } from "./chat-language-quality-service.js";
+import { activeReviewContracts, reviewOutcomeStatus, reviewErrorStatus, reviewFieldProtocolFailure, REVIEW_CONTRACTS, REPLY_REPAIR_TIMEOUT_MS, languageReviewConfident } from "./chat-reply-review-outcome.js";
+import { assessIndependentLanguageQuality } from "./chat-language-quality-service.js";
 import { hasPendingProductRequest, getProductRequestItemText } from "./product-request-scope-service.js";
 import { buildProductRequestScopeCopy, productScopeResultLabel, buildProductScopeUnverifiedResultCopy, buildProductClarificationFallbackReply } from "./product-request-scope-copy.js";
 
@@ -155,7 +156,7 @@ function buildEvidenceFallback(searchIntent, productContext, { languageCode, use
 }
 
 export async function enforceReplyBoundary(options = {}) {
-  const { replyResult: proposedReply = {}, searchIntent = {}, productContext = null, knowledgeContext = null, factualContext = null, character = {}, feedbackActionCandidate = null, orderActionCandidate = null, chatImageContext: initialImageContext = null, guestBenefitContext = null, userText = "", recentMessages = [], language = "en", languageQualityRequired = false, logContext = {}, recordReview = recordReplyReviewLog, assess = assessReplyBoundary, independentLanguageQualityRequired = false, assessLanguageQuality = assessIndependentLanguageQuality, regenerateReply = null, refreshImageStatus = null, languageRepairAttempted = false, languageRepairDiagnostics = null, reviewTimeoutMs = REPLY_REVIEW_TIMEOUT_MS } = options;
+  const { replyResult: proposedReply = {}, searchIntent = {}, productContext = null, knowledgeContext = null, factualContext = null, character = {}, feedbackActionCandidate = null, orderActionCandidate = null, chatImageContext: initialImageContext = null, guestBenefitContext = null, userText = "", recentMessages = [], language = "en", languageQualityRequired = false, logContext = {}, recordReview = recordReplyReviewLog, assess = assessReplyBoundary, independentLanguageQualityRequired = false, assessLanguageQuality = assessIndependentLanguageQuality, regenerateReply = null, refreshImageStatus = null, languageRepairAttempted = false, languageRepairDiagnostics = null, reviewTimeoutMs = SERVER_CONFIG.aiReply.chatTimeouts.review } = options;
   // Preserve the generated contextual question. The existing purpose contract,
   // full review and a single bounded fresh candidate retain closed permissions.
   const replyResult = proposedReply;
@@ -208,7 +209,7 @@ export async function enforceReplyBoundary(options = {}) {
   try {
     if (!accepted && !transportFallback) {
       const primaryBudget = Number.isFinite(reviewTimeoutMs) && reviewTimeoutMs > 0
-        ? Math.min(REPLY_REVIEW_TIMEOUT_MS, reviewTimeoutMs) : REPLY_REVIEW_TIMEOUT_MS;
+        ? Math.min(SERVER_CONFIG.aiReply.chatTimeouts.review, reviewTimeoutMs) : SERVER_CONFIG.aiReply.chatTimeouts.review;
       // No model approval is asserted when there is no non-language contract.
       result = dedicatedLanguageReview && !primaryReviewRequired ? { allowed: true, confidence: 1 }
         : primaryBudget <= 0 ? { allowed: false, confidence: 0, reviewStatus: "timeout" }
@@ -255,7 +256,7 @@ export async function enforceReplyBoundary(options = {}) {
         : result?.allowed === true || result?.languageQualitySupported === false && (!boundaryReviewRequired || result?.boundarySupported === true));
       if (dedicatedLanguageReview && primaryStatus === "valid") {
         const proposedRetained = recoveryLanguagePurpose || languageClarificationPurpose ? "" : verifiedReplyRemainder(text, result);
-        const languageBudget = LANGUAGE_REVIEW_TIMEOUT_MS;
+        const languageBudget = SERVER_CONFIG.aiReply.chatTimeouts.languageReview;
         languageAssessment = languageBudget <= 0 ? { reviewStatus: "timeout" }
           : await assessLanguageQuality({ text: removeTtsControlTags(originalText),
             speechText: removeTtsControlTags(replyResult.speechText || originalText), retainedText: proposedRetained,
@@ -396,7 +397,7 @@ export async function enforceReplyBoundary(options = {}) {
     if (recovery.recovered) return recovery.reply;
     languageDiagnostics = recovery.diagnostics;
   }
-  const finish = async (output, guardApplied = false) => {
+  const finish = async (output, guardApplied = false, productClarification = false) => {
     if (!guardApplied && accepted && languageClarification) output = withClarificationVoiceLanguage(output, languageClarification);
     const kind = !guardApplied ? "none" : containsFactualUnavailableCopy(output.text) ? "factual"
       : !reviewValid ? "review" : languageRejected ? "language" : "boundary";
@@ -406,7 +407,8 @@ export async function enforceReplyBoundary(options = {}) {
       reviewProtocol: languageDiagnostics.reviewProtocol,
       candidateHasFactualTemplate: factualLimitationReviewRequired,
       outputHasFactualTemplate: containsFactualUnavailableCopy(output.text), outputChars: String(output.text || "").length }); } catch {}
-    return guardApplied ? { ...output, replyRecoveryState: { version: 1, kind, reviewStatus, failedContracts, guardApplied: true } } : output;
+    return guardApplied ? { ...output, replyRecoveryState: { version: 1, kind, reviewStatus, failedContracts, guardApplied: true,
+      ...(productClarification ? { productClarification: true } : {}) } } : output;
   };
   // Quality-only acceptance preserves TTS tags and existing commerce metadata.
   if (!boundaryReviewRequired) return finish(accepted ? replyResult : guardLanguageQualityReply(replyResult, language), !accepted);
@@ -434,14 +436,17 @@ export async function enforceReplyBoundary(options = {}) {
   const expressionFailureCopy = (pureQualityFailure || purposeRecoveryAttempted || isGeneralCommerceExplanation(searchIntent)
     || (guidanceRequired || businessFactsRequired) && ["missing_fields", "invalid_fields", "invalid_json"].includes(reviewStatus))
     ? buildLanguageQualityFallbackReply(code) : "";
-  const fallback = evidenceRequired ? buildEvidenceFallback(searchIntent, productContext, { languageCode: code, userText })
+  const closedProductCopy = !accepted && !retained && reviewValid && !languageRejected && !factualFallbackRequired
+    && isClosedProductClarification({ ...options, searchIntent, replyResult, chatImageContext })
+    ? buildProductClarificationFallbackReply(code) : '';
+  const fallback = closedProductCopy || (evidenceRequired ? buildEvidenceFallback(searchIntent, productContext, { languageCode: code, userText })
     : sizingRequired || sizingConversationContext ? buildProductSizingFallback(productContext?.sizingProduct, code)
     : checkoutContext ? buildCheckoutNextStepCopy(searchIntent.checkoutIssue, code)
     : guestBenefitReview ? buildGuestBenefitFallback(guestBenefitContext)
     : orderGuidanceRequired ? getChatOrderEntryCopy(code, orderActionState)
     : imageCopy || scopeCopy || expressionFailureCopy || (guidanceRequired || businessFactsRequired ? buildSupportGuidanceUnavailableCopy(code) : "")
       || ((qualityRequired || factualRequired) && (languageRejected || !reviewValid || failedContracts.includes("factual_limitation") || failedContracts.includes("confidence")) ? buildLanguageQualityFallbackReply(code) : "")
-      || (factualFallbackRequired ? buildFactualUnavailableCopy(code) : "") || ACKNOWLEDGEMENTS[code] || ACKNOWLEDGEMENTS.en;
+      || (factualFallbackRequired ? buildFactualUnavailableCopy(code) : "") || ACKNOWLEDGEMENTS[code] || ACKNOWLEDGEMENTS.en);
   let safeText = accepted && text ? text : retained
     ? (retainedEvidenceApproved ? [retained, fallback, imageStatusRequired && result?.imageStatusSupported === false ? imageCopy : ""]
       : [retained, imageCopy || (businessFactsRequired && result?.businessFactsSupported === false ? expressionFailureCopy || buildSupportGuidanceUnavailableCopy(code) : "")]).filter(Boolean).join("\n\n") : fallback;
@@ -464,13 +469,13 @@ export async function enforceReplyBoundary(options = {}) {
     ...(candidateConfirmationRequired ? { candidateConfirmationVerified: accepted === true && !transportFallback && result?.candidateConfirmationSupported === true } : {}),
     replyBoundary: { ...searchIntent.replyBoundary }, answerRequired: true,
     verifiedDiscountOffers: [], discountOfferReply: false,
-    ...(accepted ? {} : { degraded: true, partialAnswerRetained: Boolean(retained), degradationReason: imageStatusRequired && result?.imageStatusSupported !== true ? "image_status_unverified" : guestBenefitReview ? "guest_benefit_unverified" : evidenceRequired ? "product_evidence_unverified" : businessFactsRequired ? "business_facts_unverified" : guidanceRequired ? "support_guidance_unverified" : productScopeRequired ? "product_scope_unverified" : pureQualityFailure ? replyResult.degradationReason || "quality_guard_block" : (qualityRequired || factualRequired) && !reviewValid ? `review_${reviewStatus}` : languageRejected ? "language_quality_unverified" : factualRejected ? "factual_unverified" : "reply_boundary_unverified", sourceRef: "reply-boundary-guard" }) }, !accepted);
+    ...(accepted ? {} : { degraded: true, partialAnswerRetained: Boolean(retained), degradationReason: imageStatusRequired && result?.imageStatusSupported !== true ? "image_status_unverified" : guestBenefitReview ? "guest_benefit_unverified" : evidenceRequired ? "product_evidence_unverified" : businessFactsRequired ? "business_facts_unverified" : guidanceRequired ? "support_guidance_unverified" : productScopeRequired ? "product_scope_unverified" : pureQualityFailure ? replyResult.degradationReason || "quality_guard_block" : (qualityRequired || factualRequired) && !reviewValid ? `review_${reviewStatus}` : languageRejected ? "language_quality_unverified" : factualRejected ? "factual_unverified" : "reply_boundary_unverified", sourceRef: "reply-boundary-guard" }) }, !accepted, Boolean(closedProductCopy));
 }
 
 // One bounded assessment combines reply boundaries, missing live product facts and scoped support guidance.
 // Production chat opts into language quality; scoped guards share its call.
 // The assessment cannot rewrite text or grant permissions.
-export async function assessReplyBoundary({ text = "", speechText = "", userText = "", language = "en", boundary = {}, languageQualityRequired = false, boundaryReviewRequired = true, independentLanguageReview = false, languageClarificationEligible = false, evidenceRequired = false, businessFactsRequired = false, productScopeRequired = false, candidateConfirmationRequired = false, productScopeContext = null, factualRequired = false, factualContext = null, guidanceRequired = false, sizingRequired = false, sizingConversationContext = null, discountPolicyExplanation = false, feedbackActionAvailable = false, orderActionState = null, imageStatusContext = null, guestBenefitContext = null, identityContext = null, clarificationRequired = false, checkoutContext = null, productContext = null, knowledgeContext = null, searchIntent = null, verifiedDiscountOffers = [], factualLimitationReviewRequired = false, logContext = {}, fetchImpl = fetch, config = null, recordLog = recordProviderCallLog, timeoutMs = REPLY_REVIEW_TIMEOUT_MS } = {}) {
+export async function assessReplyBoundary({ text = "", speechText = "", userText = "", language = "en", boundary = {}, languageQualityRequired = false, boundaryReviewRequired = true, independentLanguageReview = false, languageClarificationEligible = false, evidenceRequired = false, businessFactsRequired = false, productScopeRequired = false, candidateConfirmationRequired = false, productScopeContext = null, factualRequired = false, factualContext = null, guidanceRequired = false, sizingRequired = false, sizingConversationContext = null, discountPolicyExplanation = false, feedbackActionAvailable = false, orderActionState = null, imageStatusContext = null, guestBenefitContext = null, identityContext = null, clarificationRequired = false, checkoutContext = null, productContext = null, knowledgeContext = null, searchIntent = null, verifiedDiscountOffers = [], factualLimitationReviewRequired = false, logContext = {}, fetchImpl = fetch, config = null, recordLog = recordProviderCallLog, timeoutMs = SERVER_CONFIG.aiReply.chatTimeouts.review } = {}) {
   productScopeContext = productScopeRequired ? boundedScopeContext(productScopeContext) : null;
   languageQualityRequired = languageQualityRequired && !independentLanguageReview;
   factualRequired = factualReviewRequired(factualContext);
@@ -505,7 +510,7 @@ export async function assessReplyBoundary({ text = "", speechText = "", userText
     let result;
     try {
       result = await requestAiJsonWithProviderFallback(buildReplyReviewMessages(reviewOptions), { config: assessmentConfig, fetchImpl, timeoutMs,
-      perProviderTimeout: true, validateParsed,
+      perProviderTimeout: true, providerTimeoutMs: timeoutMs, validateParsed,
       responseFormat: buildReplyReviewFormat(reviewOptions), sourceRef: "reply-boundary-policy", recordProviderCallFn: (event) => {
         if (event.error?.code === 'AI_JSON_PARSE_ERROR' && protocolFailures.length < 3) protocolFailures.push('invalid_json');
         return recordLog({ ...event, requestId: logContext.requestId || "", sessionId: logContext.sessionId || "",

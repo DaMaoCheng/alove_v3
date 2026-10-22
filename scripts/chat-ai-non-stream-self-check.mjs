@@ -7,8 +7,8 @@ const knowledgeSource = readFileSync(new URL("../server/knowledge-ai-service.js"
 
 assert.match(
   providerSource,
-  /chat_completions[\s\S]*?return \{[\s\S]*?stream:\s*false,[\s\S]*?messages:/,
-  "chat completions chat reply request must explicitly disable streaming"
+  /chat_completions[\s\S]*?return \{[\s\S]*?stream:\s*openAiConfig\.stream === true,[\s\S]*?messages:/,
+  "chat completions must require explicit per-provider streaming opt-in"
 );
 assert.match(
   providerSource,

@@ -33,15 +33,21 @@ const VENICE_REPLY_CONFIG = Object.freeze({
 
 const DEEPSEEK_FALLBACK_REPLY_CONFIG = Object.freeze({
   id: "deepseek",
+  stream: parseOptionalBoolean(process.env.OPENAI_FALLBACK_STREAM, false),
   apiKey: process.env.OPENAI_FALLBACK_API_KEY || PRIMARY_OPENAI_REPLY_CONFIG.apiKey,
-  baseUrl: PRIMARY_OPENAI_REPLY_CONFIG.baseUrl,
+  baseUrl: String(process.env.OPENAI_FALLBACK_BASE_URL || PRIMARY_OPENAI_REPLY_CONFIG.baseUrl).trim().replace(/\/+$/, ""),
   model: String(process.env.OPENAI_FALLBACK_MODEL || "").trim(),
-  apiMode: PRIMARY_OPENAI_REPLY_CONFIG.apiMode,
+  apiMode: normalizeOpenAiApiMode(process.env.OPENAI_FALLBACK_API_MODE || PRIMARY_OPENAI_REPLY_CONFIG.apiMode),
   reasoningEffort: PRIMARY_OPENAI_REPLY_CONFIG.reasoningEffort,
-  timeoutMs: PRIMARY_OPENAI_REPLY_CONFIG.timeoutMs,
+  timeoutMs: normalizeBoundedTimeout(process.env.OPENAI_FALLBACK_TIMEOUT_MS, PRIMARY_OPENAI_REPLY_CONFIG.timeoutMs),
 });
 
 const AI_REPLY_CONFIG = Object.freeze({
+  chatTimeouts: Object.freeze({
+    generation: normalizeBoundedTimeout(process.env.CHAT_REPLY_GENERATION_TIMEOUT_MS, 60000),
+    review: normalizeBoundedTimeout(process.env.CHAT_REPLY_REVIEW_TIMEOUT_MS, 60000),
+    languageReview: normalizeBoundedTimeout(process.env.CHAT_REPLY_LANGUAGE_REVIEW_TIMEOUT_MS, 60000),
+  }),
   provider: String(process.env.AI_REPLY_PROVIDER || "openai").trim().toLowerCase(),
   venice: VENICE_REPLY_CONFIG,
   openai: PRIMARY_OPENAI_REPLY_CONFIG,
@@ -253,6 +259,11 @@ function isHttpsUrl(value) {
   } catch {
     return false;
   }
+}
+
+function normalizeBoundedTimeout(value, fallback) {
+  const number = Number(String(value ?? "").trim());
+  return Number.isSafeInteger(number) && number >= 1 && number <= 120000 ? number : fallback;
 }
 
 function normalizeOpenAiApiMode(value) {

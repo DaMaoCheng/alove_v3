@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-Object.assign(process.env, { AIOVE_PROVIDER_LOG_WRITE_ENABLED: 'false', VENICE_API_KEY: 'fixture', OPENAI_API_KEY: 'fixture',
+Object.assign(process.env, { OPENAI_FALLBACK_STREAM: 'false', AIOVE_PROVIDER_LOG_WRITE_ENABLED: 'false', VENICE_API_KEY: 'fixture', OPENAI_API_KEY: 'fixture',
   VENICE_BASE_URL: 'https://primary.example.test', OPENAI_BASE_URL: 'https://backup.example.test',
   OPENAI_API_MODE: 'responses', OPENAI_FALLBACK_MODEL: 'fixture-third' });
 const { requestAiJsonWithProviderFallback } = await import('../server/ai-json-provider-service.js');

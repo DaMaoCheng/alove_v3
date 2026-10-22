@@ -53,7 +53,7 @@ assert.equal(JSON.parse(providerBody.messages.at(-1).content).proposedSpeech,cor
 let clock=10000,primary=0,audits=0;const originalNow=Date.now;Date.now=()=>clock;
 try{const output=await enforceReplyBoundary({...business,replyResult:candidate,
  assess:async options=>{primary++;if(primary===2)clock+=1250;return base;},
- assessLanguageQuality:async options=>{audits++;if(audits===1)return bad;assert(options.timeoutMs===20000,'Recovered language review receives its independent complete stage budget');clock+=4000;return auditPass;},
+ assessLanguageQuality:async options=>{audits++;if(audits===1)return bad;assert(options.timeoutMs===60000,'Recovered language review receives its independent complete stage budget');clock+=4000;return auditPass;},
  regenerateReply:async()=>{clock+=2333;return{...candidate,text:'Bonjour !',speechText:'Bonjour !'};}});assert.equal(output.text,'Bonjour !');assert.equal(primary,2);assert.equal(audits,2);
 }finally{Date.now=originalNow;}
 let expiredRequests=0;

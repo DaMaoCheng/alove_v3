@@ -21,3 +21,20 @@ export function independentJsonProviderChain(aiReply = SERVER_CONFIG.aiReply) {
     ...extras, [reviewer.apiMode === 'responses' ? 'max_output_tokens' : 'max_tokens']: 3000,
   } }, ...chain.slice(1).filter(item => item.baseUrl !== reviewer.baseUrl || item.model !== reviewer.model)];
 }
+
+// Language-only opt-in: keep every fallback independent of the generator,
+// without changing the chains used by policy, proactive or repair callers.
+export function independentLanguageReviewerChain(generatorModel, aiReply = SERVER_CONFIG.aiReply) {
+  return filterIndependentLanguageReviewers(independentJsonProviderChain(aiReply) || [], generatorModel);
+}
+
+export function filterIndependentLanguageReviewers(config, generatorModel) {
+  const identity = value => String(value || '').trim().toLowerCase();
+  const seen = new Set([identity(generatorModel)]);
+  return (Array.isArray(config) ? config : config ? [config] : []).filter(provider => {
+    const model = identity(provider?.model);
+    if (!provider?.apiKey || !model || seen.has(model)) return false;
+    seen.add(model);
+    return true;
+  });
+}

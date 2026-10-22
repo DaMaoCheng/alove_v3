@@ -8,7 +8,8 @@ export function normalizeReplyRecoveryState(value) {
     || !REVIEW_STATUSES.has(value.reviewStatus) || !Array.isArray(value.failedContracts)
     || value.failedContracts.length > RECOVERY_FAILURE_CODES.size || value.failedContracts.some(contract => !RECOVERY_FAILURE_CODES.has(contract))) return null;
   return { version: 1, kind: value.kind, reviewStatus: value.reviewStatus,
-    failedContracts: [...new Set(value.failedContracts)], guardApplied: true };
+    failedContracts: [...new Set(value.failedContracts)], guardApplied: true,
+    ...(value.productClarification === true && value.kind === 'boundary' && value.reviewStatus === 'valid' ? { productClarification: true } : {}) };
 }
 
 export function readReplyRecoveryState(payload) {
