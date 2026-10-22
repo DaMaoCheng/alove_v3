@@ -203,8 +203,8 @@ try {
   const clock = { now: 10000 };
   Date.now = () => clock.now;
   const bounded = await run(policy, { clock });
-  check(bounded.repairs.length === 1 && bounded.languages[1].timeoutMs === 20000,
-    'complete language re-review keeps twenty seconds regardless of earlier correction latency');
+  check(bounded.repairs.length === 1 && bounded.languages[1].timeoutMs === 60000,
+    'complete language re-review keeps the configured sixty seconds regardless of earlier correction latency');
 } finally { Date.now = originalNow; }
 for (const [label, repairTimeoutMs, expected] of [['default', undefined, 15000], ['oversized', 99999, 15000],
   ['nonfinite', Infinity, 15000], ['invalid', 0, 15000]]) {
@@ -212,7 +212,7 @@ for (const [label, repairTimeoutMs, expected] of [['default', undefined, 15000],
   const recovery = await recoverReviewedLanguageReply({ replyResult: original, language: 'es', userText: policy.userText,
     ...(repairTimeoutMs === undefined ? {} : { repairTimeoutMs }), recordReview: async () => {},
     repairLanguageReply: async input => { timeout = input.timeoutMs; return { ...original, text: policyText, speechText: policyText }; },
-    reviewCandidate: async (reply, options) => { check(options.reviewTimeoutMs === 20000 && !Object.hasOwn(options, 'languageRecoveryDeadline'), `${label}: re-review gets an independent primary budget without an absolute recovery deadline`); return reply; },
+    reviewCandidate: async (reply, options) => { check(options.reviewTimeoutMs === 60000 && !Object.hasOwn(options, 'languageRecoveryDeadline'), `${label}: re-review gets an independent primary budget without an absolute recovery deadline`); return reply; },
   });
   check(timeout === expected && recovery.recovered, `${label}: engine validates and clamps the allocation with the configured independent correction ceiling`);
 }
