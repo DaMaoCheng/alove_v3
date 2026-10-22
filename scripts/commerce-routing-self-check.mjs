@@ -226,3 +226,38 @@ assert.equal(injectedPurpose.replyPurposeContext,undefined,'neither input intent
 const weakChatPurpose = await resolveCommerceSearchIntent({...purposeBase,classifyCommerce:async()=>({...purposeDecision,route:'chat'})});
 assert.deepEqual(weakChatPurpose.replyPurposeContext,pureConversationMarker,'a weak secondary chat retains the same text purpose without becoming an action permission'); checks++;
 console.log(`commerce routing self-check passed: ${checks} cases; isolated classifier/source/DB, no external calls`);
+
+// Identical elliptical wording must be interpreted from USER facts, not an old
+// assistant diagnostic. The scripted result checks classifier transport/normal-
+// ization and prompt propagation; real model semantics are accepted separately.
+for (const [historyText, expectedCheckout] of [
+ ['now for 6 days it says that awaiting customs clearance', false],
+ ['I cannot complete placing my new order; I do not know which step fails', true],
+]) {
+ const current = 'I tried and it’s says the same';
+ const recentMessages = [{ senderType: 'user', text: historyText },
+  { senderType: 'character', text: 'Try again and tell me what happens.' }];
+ let captured = false;
+ const decision = await classifyCommerceIntent(current, { config, recentMessages,
+  fetchImpl: async (_url, options) => {
+   captured = true;
+   const request = JSON.parse(options.body), packet = JSON.parse(request.messages[1].content);
+   assert(packet.recentConversation.some(row => row.role === 'user' && row.text === historyText));
+   assert.equal(request.messages.at(-1).content, current);
+   assert.match(request.messages[0].content, /an unsubmitted purchase/i);
+   assert.match(request.messages[0].content, /a shipment.*not.*checkout/i);
+   assert.match(request.messages[0].content, /knowledgeQuery.*elliptical/i);
+   return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({
+    route: 'store_policy', topic: expectedCheckout ? 'support' : 'delivery', knowledgeScope: 'business', confidence: .96,
+    knowledgeQuery: historyText, answerRequired: true, needsLiveProductData: false,
+    replyBoundary: { salesAllowed: false, contactAllowed: true }, productRequest: { relation: 'none', action: 'new', items: [], selectedIndex: null, selectionEvidence: '' },
+    checkoutIssue: expectedCheckout ? { active: true, evidence: current, requestScope: 'checkout_only', stage: 'unknown', stageEvidence: '', errorEvidence: '',
+     failedAttempts: [], orderPlaced: null, orderEvidence: '', lookupRequested: null, lookupEvidence: '' } : null,
+   }) } }] }) };
+  },
+ });
+ assert(captured); assert.equal(Boolean(decision.checkoutIssue), expectedCheckout);
+ assert.equal(decision.knowledgeQuery, historyText);
+ if (expectedCheckout) assert.equal(decision.checkoutIssue.stage, 'unknown', 'an established unsubmitted purchase can keep unknown stage');
+}
+console.log('elliptical support classifier USER context, contextual retrieval and checkout distinction contract checks passed');

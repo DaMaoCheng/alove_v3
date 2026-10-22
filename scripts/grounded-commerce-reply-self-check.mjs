@@ -362,3 +362,41 @@ const publicFactRepair=await run({...matchedCaption,factualContext:{...captionCl
   {firstVerdict:{...yes,allowed:false,factualSupported:false,businessFactsSupported:false},replacementText:matchedCaptionText});
 check(publicFactRepair.repairs.length===0 && publicFactRepair.output.text!==matchedCaptionText,'a mixed real public-fact query cannot use the matched-caption exception');
 console.log('matched caption clock-only scope and complete factual review regression passed');
+
+// Simultaneous language + business/clock-review rejection still gets only the
+// existing grounded text correction, then the COMPLETE original review.
+const { repairGroundedCommerceReply } = await import('../server/chat-grounded-reply-repair-service.js');
+let diagnosticReviews = 0, diagnosticLanguages = 0, diagnosticCorrections = 0;
+const diagnosticOriginal = 'The quoted waiting status proves review has started. 它的';
+const diagnosticCorrected = 'That quoted status usually means waiting for review or release; it does not confirm the review has started or an arrival date. Use the supplied order entry to view your order.';
+const diagnosticOrder = { kind: 'ttmall_order_lookup', status: 'login_required', siteSlug: 'shop' };
+const diagnosticOptions = { character, language: 'en', userText: 'The quoted tracking status has not changed for six days.',
+ searchIntent: { commerceRoute: 'store_policy', commerceTopic: 'delivery', knowledgeScope: 'business', answerRequired: true,
+  shouldLoadProductContext: false, cardAllowed: false, needsLiveProductData: false, replyBoundary: { salesAllowed: false, contactAllowed: false } },
+ factualContext: { required: false, status: 'not_required', searched: false, items: [], asOfUtc: '2026-10-22T00:00:00Z' },
+ knowledgeContext: { strategy: 'business_selection_unavailable', items: [], selectionFailure: { stage: 'evidence', kind: 'protocol_shape' } },
+ orderActionCandidate: diagnosticOrder, independentLanguageQualityRequired: true, languageQualityRequired: true,
+ replyResult: { sourceType: 'ai', sourceRef: 'venice-chat-completions', aiModel: 'fixture-generator', text: diagnosticOriginal, speechText: diagnosticOriginal },
+ assess: async () => { diagnosticReviews++; return { ...yes, allowed: diagnosticReviews > 1,
+  factualSupported: diagnosticReviews > 1, guidanceSupported: diagnosticReviews > 1, businessFactsSupported: diagnosticReviews > 1 }; },
+ assessLanguageQuality: async () => { diagnosticLanguages++; return { reviewStatus: 'valid', confidence: .99,
+  languageQualitySupported: diagnosticLanguages > 1, retainedLanguageQualitySupported: false, languageIssues: [] }; },
+ repairGroundedReply: options => repairGroundedCommerceReply({ ...options, config: { apiKey: 'fixture-key', model: 'fixture-reviewer', baseUrl: 'https://fixture.invalid' },
+  requestText: async () => { diagnosticCorrections++; return JSON.stringify({ displayText: diagnosticCorrected }); } }),
+ recordReview: async () => {},
+};
+const diagnosticAccepted = await enforceReplyBoundary(diagnosticOptions);
+check(diagnosticCorrections === 1 && diagnosticReviews === 2 && diagnosticLanguages === 2,
+ 'one new diagnostic text candidate receives original business/clock/guidance and independent-language reviews');
+check(diagnosticAccepted.text === diagnosticCorrected && diagnosticOrder.status === 'login_required',
+ 'accepted correction preserves the existing order entry without a lookup or fabricated result');
+let terminalReviews = 0, terminalCorrections = 0;
+const diagnosticRejected = await enforceReplyBoundary({ ...diagnosticOptions,
+ assess: async () => { terminalReviews++; return { ...yes, allowed: false, factualSupported: false, guidanceSupported: false, businessFactsSupported: false }; },
+ assessLanguageQuality: async () => ({ reviewStatus: 'valid', confidence: .99, languageQualitySupported: false, retainedLanguageQualitySupported: false, languageIssues: [] }),
+ repairGroundedReply: options => repairGroundedCommerceReply({ ...options, config: { apiKey: 'fixture-key', model: 'fixture-reviewer', baseUrl: 'https://fixture.invalid' },
+  requestText: async () => { terminalCorrections++; return JSON.stringify({ displayText: diagnosticCorrected }); } }),
+});
+check(terminalCorrections === 1 && terminalReviews === 2 && diagnosticRejected.text !== diagnosticCorrected,
+ 'a rejected diagnostic correction terminates without another candidate or bypassing either review');
+console.log('order diagnostic simultaneous-rejection one-correction/full-review and terminal-rejection checks passed');

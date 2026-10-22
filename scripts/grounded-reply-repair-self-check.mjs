@@ -143,7 +143,9 @@ const general={...base,searchIntent:{commerceRoute:'chat',knowledgeScope:'genera
 let genericCalls=0;
 const genericFixed=await repairGroundedCommerceReply({...general,config,language:'en',userText:'What does this status mean?',
  requestText:async prompt=>{genericCalls++;assert(prompt.systemPrompt.includes('character location/nationality'));
- assert(prompt.systemPrompt.includes('conditional definition'));return JSON.stringify({displayText:'This status usually means arrival in the destination country; it does not confirm clearance or a delivery date.'});}});
+ assert(prompt.systemPrompt.includes('conditional definition'));
+ assert.match(prompt.systemPrompt, /waiting or pending.*not.*(started|underway)/i);
+ assert.match(prompt.systemPrompt, /in progress.*not.*completed/i);return JSON.stringify({displayText:'This status usually means arrival in the destination country; it does not confirm clearance or a delivery date.'});}});
 check(genericCalls===1&&genericFixed.text.includes('usually means'),'general correction uses one conditional definition candidate, not invented shipment facts');
 console.log('general explanation corrective prompt regression passed');
 
@@ -272,3 +274,40 @@ let injectedOnlyCalls=0;
 const injectedOnly=await repairGroundedCommerceReply({...matched,requestText:async()=>{injectedOnlyCalls++;throw new Error('fetch failed');}});
 check(injectedOnly===null && injectedOnlyCalls===1,'requestText injection alone never reaches configured repair backups');
 console.log('matched repair override isolation and legacy single-provider regression passed');
+
+// A real server order entry is compatible with one read-only diagnostic reply
+// when no product or public-fact search is in play, including unavailable KB.
+const orderDiagnostic = { ...base, userText: 'The quoted tracking status has stayed unchanged for six days.',
+ searchIntent: { ...base.searchIntent, commerceTopic: 'delivery' },
+ orderActionCandidate: { kind: 'ttmall_order_lookup', status: 'login_required', siteSlug: 'shop' },
+ factualContext: { required: false, status: 'not_required', searched: false, items: [], asOfUtc: '2026-10-22T00:00:00Z' },
+ knowledgeContext: { strategy: 'business_selection_unavailable', items: [], selectionFailure: { stage: 'evidence', kind: 'protocol_shape' } },
+ failedContracts: ['language', 'factual', 'guidance', 'business_facts'],
+ reviewResult: { allowed: false, confidence: .99, boundarySupported: true, factualSupported: false, guidanceSupported: false,
+  businessFactsSupported: false, languageQualitySupported: false },
+};
+check(isGroundedCommerceRepairEligible(orderDiagnostic), 'mixed language/business rejection may use the existing one diagnostic correction with a real order entry');
+for (const patch of [
+ { orderActionCandidate: {} }, { orderActionCandidate: { kind: 'ttmall_order_lookup', status: 'completed' } },
+ { factualContext: { ...orderDiagnostic.factualContext, required: true } },
+ { factualContext: { ...orderDiagnostic.factualContext, searched: true } },
+ { factualContext: { ...orderDiagnostic.factualContext, items: [{}] } }, { factualContext: null },
+ { productContext: { products: [{ id: 'one' }] } }, { chatImageContext: {} }, { guestBenefitContext: {} },
+ { feedbackActionCandidate: {} }, { groundedRepairAttempted: true }, { languageRepairAttempted: true },
+]) check(!isGroundedCommerceRepairEligible({ ...orderDiagnostic, ...patch }), 'diagnostic order correction retains original product/action/public-fact and finite-reentry limits');
+let orderDiagnosticCalls = 0;
+const correctedOrderDiagnostic = await repairGroundedCommerceReply({ ...orderDiagnostic, config, language: 'en', requestText: async prompt => {
+ orderDiagnosticCalls++;
+ assert.match(prompt.systemPrompt, /technically unavailable/);
+ assert.match(prompt.systemPrompt, /not a successful empty search/);
+ assert.match(prompt.systemPrompt, /conditional definition/);
+ assert.match(prompt.systemPrompt, /waiting or pending.*not.*(started|underway)/i);
+ assert.match(prompt.systemPrompt, /server will append a real order action/i);
+ const packet = JSON.parse(prompt.messages[0].content);
+ assert.equal(packet.orderActionState, 'login_required');
+ assert.equal(packet.knowledge.length, 0);
+ return JSON.stringify({ displayText: 'That quoted status usually means waiting for review or release; it does not confirm a review has started or a release date. Use the supplied order entry to view your order.' });
+} });
+check(orderDiagnosticCalls === 1 && correctedOrderDiagnostic?.sourceType === 'ai', 'only a fresh unapproved text candidate is created; no order lookup or action mutation');
+assert.equal(orderDiagnostic.orderActionCandidate.status, 'login_required');
+console.log('read-only order diagnostic correction eligibility, bounded evidence, source failure and action-preservation checks passed');

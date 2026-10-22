@@ -111,6 +111,7 @@ const COMMANDS = Object.freeze([
   ["node", ["scripts/product-displayed-reference-self-check.mjs"]],
   ["node", ["scripts/proactive-independent-review-self-check.mjs"]],
   ["node", ["scripts/proactive-paid-attempt-self-check.mjs"]],
+  ["node", ["scripts/loyalty-customs-knowledge-self-check.mjs"]],
   ["node", ["scripts/proactive-review-stage-self-check.mjs"]],
   ["node", ["scripts/proactive-claim-scope-self-check.mjs"]],
   ["node", ["scripts/proactive-scheduler-entrypoint-self-check.mjs"]],

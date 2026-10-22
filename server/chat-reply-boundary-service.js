@@ -187,7 +187,7 @@ export async function enforceReplyBoundary(options = {}) {
   if (!boundaryReviewRequired && !qualityRequired) return replyResult;
   const checkoutContext = boundaryReviewRequired && isStorefrontGuidanceCharacter(character) ? buildCheckoutReviewContext(searchIntent, { userText, recentMessages }) : null;
   const uncertainCheckoutContext = boundaryReviewRequired && isStorefrontGuidanceCharacter(character) && searchIntent.commerceRoute === "unclear"
-    ? { classificationUnavailable: true, recentUserMessages: recentMessages.slice(-6).filter((row) => (row?.senderType || row?.sender_type) === "user").map((row) => String(row.text || row.text_content || "").slice(0, 600)) } : null;
+    ? { classificationUnavailable: true, recentUserMessages: recentMessages.filter((row) => (row?.senderType || row?.sender_type) === "user").slice(-6).map((row) => String(row.text || row.text_content || "").slice(0, 600)) } : null;
   const originalText = String(replyResult.text || "").trim();
   const factualLimitationReviewRequired = containsFactualUnavailableCopy(originalText)
     || containsFactualUnavailableCopy(replyResult.speechText || originalText);

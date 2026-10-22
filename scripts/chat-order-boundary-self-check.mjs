@@ -20,6 +20,7 @@ assert.match(policy, /Never claim to be checking/i);
 assert.match(policy, /never invent order contents or status/i);
 assert.match(policy, /briefly apologize/i);
 assert.match(policy, /cannot check it here/i);
+assert.match(policy, /reported status.*usual meaning/i, 'unavailable lookup cannot erase an answerable status explanation');
 for (const status of ["login_required", "binding_required"]) {
   const candidate = { kind: "ttmall_order_lookup", siteSlug: "pj", status, orderNumber: "PRIVATE_ORDER_REFERENCE" };
   assert.equal(resolveChatFeedbackActionCandidate({ ...feedbackInput, orderActionCandidate: candidate }), null, "Available order entry replaces only the generic unavailable-tracking handoff");
@@ -31,6 +32,10 @@ for (const status of ["login_required", "binding_required"]) {
   const actionPrompt = buildChatReplyPrompt({ character: { categoryId: "mascot" }, userText: "Where is my order?", orderActionCandidate: candidate }).systemPrompt;
   assert.match(actionPrompt, /system will append one real order action/i);
   assert.match(actionPrompt, /not an order lookup result/i);
+  assert.match(actionPrompt, /reported status.*usual meaning/i);
+  assert.match(actionPrompt, /login or binding instructions alone/i);
+  assert.match(actionPrompt, /waiting or pending.*not.*(started|underway)/i);
+  assert.match(actionPrompt, /in progress.*not.*completed/i);
   assert.match(actionPrompt, status === "login_required" ? /sign in/ : /if requested/);
   assert.doesNotMatch(actionPrompt, /direct the user to the store's order page or support/);
   assert.doesNotMatch(actionPrompt, /PRIVATE_ORDER_REFERENCE/);
@@ -82,3 +87,7 @@ assert.match(registered, /product: orderAction,/);
 assert.doesNotMatch(readFileSync("server/chat-voice-message-service.js", "utf8"), /orderLookupSiteSlug|orderActionCandidate/,
   "Voice must not promise an action it does not persist");
 console.log("chat-order-boundary-self-check: PASS");
+
+const { ORDER_CONTRACT } = await import('../server/chat-reply-review-contracts.js');
+assert.match(ORDER_CONTRACT, /waiting or pending.*not.*(started|underway)/i);
+assert.match(ORDER_CONTRACT, /in progress.*not.*completed/i);

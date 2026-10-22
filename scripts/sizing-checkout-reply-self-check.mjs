@@ -84,3 +84,35 @@ for (const checkoutProblem of [true, false, undefined]) {
   assert.equal(result.allowed, checkoutProblem === false, "unclear checkout cannot bypass safe fallback while other classified concerns keep normal review");
 }
 console.log("sizing and checkout reply integration self-check passed (prompt facts, persona scope, combined review, order gate, feedback, voice parity; no network/DB)");
+
+// Same elliptical current turn, different USER-owned contexts. The auxiliary
+// checkout check receives bounded user evidence even after many assistant/action
+// rows; these scripted verdicts test transport/context, not a model simulation.
+for (const [name, historyText, checkoutProblem] of [
+ ['reported shipment', 'now for 6 days it says that awaiting customs clearance', false],
+ ['unsubmitted checkout', 'I cannot submit my new order because the payment step fails', true],
+]) {
+ const recent = [{ senderType: 'user', text: historyText },
+  ...Array.from({ length: 7 }, () => ({ senderType: 'character', text: 'Untrusted assistant advice' }))];
+ let captured;
+ const candidate = 'What result did you see after trying that?';
+ const result = await enforceReplyBoundary({ character, userText: 'I tried and it’s says the same', recentMessages: recent,
+  searchIntent: { commerceRoute: 'unclear', commerceTopic: 'delivery', knowledgeScope: 'business', answerRequired: true,
+   replyBoundary: { salesAllowed: false, contactAllowed: false } }, language: 'en',
+  knowledgeContext: { items: [], strategy: 'business_no_verified_answer' }, replyResult: { text: candidate, speechText: candidate, sourceType: 'ai' },
+  recordReview: async () => {},
+  assess: input => assessReplyBoundary({ ...input, config: { apiKey: 'test', model: 'test', baseUrl: 'https://invalid.test' }, recordLog: async () => {},
+   fetchImpl: async (_url, options) => {
+    captured = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ allowed: true, confidence: .99,
+     boundarySupported: true, evidenceSupported: true, guidanceSupported: true, businessFactsSupported: true, checkoutProblem }) } }] }) };
+   } }),
+ });
+ const evidence = JSON.parse(captured.messages.at(-1).content).checkoutContext.recentUserMessages;
+ assert.deepEqual(evidence, [historyText], name + ': recent USER facts survive assistant/action rows');
+ const contract = captured.messages.map(row => row.content).join('\n');
+ assert.match(contract, /not yet completed.*checkout/i);
+ assert.match(contract, /uncertainty.*not.*true/i);
+ assert.equal(result.text === candidate, !checkoutProblem, name + ': existing true-reject/false-review gate remains');
+}
+console.log('unclear checkout current/recent USER evidence and preserved auxiliary gates passed');

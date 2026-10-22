@@ -20,6 +20,7 @@ for (const failure of ['timeout','provider','parse','missing_fields']) {
   assert.equal(buildCommerceConversationContext([{senderType:'character',text:reply.text,replyRecoveryState:reply.replyRecoveryState}])[0].text,'');
   assert.equal(isAiTransportFallback(reply),true); assert.equal(reply.text,reply.speechText);
   assert.doesNotMatch(reply.text,/no encontr|no puedo verificar|un solo producto/i);
+  assert.doesNotMatch(reply.text, /búsqueda de productos|product search|termékkeresés/i, 'classification failed before any catalogue request');
   assert.equal(reply.productScopeVerified,false); assert.equal(reply.candidateEvidenceVerified,false);
   assert.equal(reply.replyBoundary.salesAllowed,false);
   const event=buildCommerceDecisionLogEvent({searchIntent:intent});
@@ -90,3 +91,42 @@ assert.deepEqual(JSON.parse(diagnostics.errorMessage).classificationFailures,att
 assert(!diagnostics.errorMessage.includes('secret'));
 assert.deepEqual(JSON.parse(buildCommerceDecisionLogEvent({searchIntent:{commerceClassificationFailures:[{provider:'url?key=secret',kind:'timeout'}, {provider:'venice',kind:'raw text secret'}]}}).errorMessage).classificationFailures,[]);
 console.log('classification failure sequence safe routing/log projection checks passed');
+
+// Every supported reply language has its own neutral classification failure;
+// actual catalogue failures retain the existing product-specific copy.
+const { SUPPORTED_CHARACTER_LANGUAGES } = await import('../shared/language-library.js');
+const { buildGuestProductReplyCopy } = await import('../server/guest-product-reply-copy.js');
+const neutralCopies = new Set();
+for (const { code } of SUPPORTED_CHARACTER_LANGUAGES) {
+ const reply = buildCommerceClassificationFailureReply({ commerceClassificationUnavailable: true, commerceClassificationFailure: 'provider' }, { language: code });
+ assert.equal(reply.text, reply.displayText); assert.equal(reply.text, reply.speechText);
+ assert.ok(reply.text.length > 10, code); neutralCopies.add(reply.text);
+ assert.notEqual(reply.text, buildGuestProductReplyCopy('unavailable', { languageCode: code }), code);
+ assert.equal(reply.degradationReason, 'commerce_classification_provider');
+}
+assert.equal(neutralCopies.size, SUPPORTED_CHARACTER_LANGUAGES.length);
+assert.match(buildGuestProductReplyCopy('unavailable', { languageCode: 'en' }), /Product search/);
+
+// A validated FAQ never turns its named reward item into a catalogue action.
+// Keep a separately classified mixed catalogue request under original permissions.
+for (const [route, productIntent, action, expectedSearch] of [
+ ['store_policy', 'none', 0, false], ['product_search', 'search', .95, true],
+]) {
+ const faq = await resolveCommerceSearchIntent({ userText: expectedSearch ? 'How does redemption work? Find a Real Madrid shirt.' : 'How does redemption work?', enrichAllTurns: true,
+  classifyCommerce: async () => ({ confident: true, confidence: .96, route, topic: 'support', knowledgeScope: 'business',
+   knowledgeQuery: 'How does redemption work?', answerRequired: true, needsLiveProductData: false,
+   searchQuery: expectedSearch ? 'Real Madrid shirt' : '',
+   productRequest: { relation: expectedSearch ? 'single' : 'none', action: expectedSearch ? 'new' : 'none', items: [], selectedIndex: null, selectionEvidence: '' },
+   replyBoundary: { salesAllowed: true, contactAllowed: true } }),
+  jevDecision: { ok: true, confident: true, primaryIntent: expectedSearch ? 'product_request' : 'daily_chat', productIntent, productAction: action },
+ });
+ assert.equal(faq.customerServiceKnowledgeRequest, true);
+ assert.equal(faq.answerRequired, true); assert.equal(faq.knowledgeScope, 'business');
+ assert.equal(faq.shouldLoadProductContext, expectedSearch);
+}
+console.log('43-language neutral classification failure and FAQ/mixed route preservation checks passed');
+
+for (const [locale, code] of [['es-MX', 'es'], ['hu_HU', 'hu'], ['Chinese', 'zh']]) {
+ const state = { commerceClassificationUnavailable: true, commerceClassificationFailure: 'parse' };
+ assert.equal(buildCommerceClassificationFailureReply(state, { language: locale }).text, buildCommerceClassificationFailureReply(state, { language: code }).text);
+}
