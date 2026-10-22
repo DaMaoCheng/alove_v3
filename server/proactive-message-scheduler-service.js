@@ -1,3 +1,4 @@
+import { previewProactivePaidAttempt } from "./proactive-paid-attempt-service.js";
 import { SERVER_CONFIG } from "./config.js";
 import { getDbPool } from "./db.js";
 import { MEMORY_JOB_TYPES, enqueueMemoryJob } from "./memory-job-service.js";
@@ -90,6 +91,13 @@ export async function scanAndEnqueueProactiveMessages({ now = new Date(), batchS
     }
 
     const selectedCandidate = plan.selectedCandidate;
+    const paidGate = await previewProactivePaidAttempt({
+      userId: account.userId, characterId: selectedCandidate.characterId, sessionId: selectedCandidate.sessionId,
+    }, { now });
+    if (!paidGate.allowed) {
+      skipped.push({ userId: account.userId, reason: paidGate.reason });
+      continue;
+    }
     const idleGate = selectedCandidate.idleGate || {};
     await enqueueMemoryJob({
       userId: account.userId,

@@ -28,7 +28,7 @@ for (const broken of ['{broken JSON}', {}, { ...valid, commerceConstraints: { ..
   const f = fixture([broken, valid]);
   const result = await classifyCommerceIntent(text, { jevDecision, fetchImpl: f.fetchImpl });
   check(f.models.length === 2 && result.confident && !result.teamConstraintUnverified, 'invalid candidate protocol can recover through one existing backup');
-  check(f.models[0] === 'claude-sonnet-5-5' && f.models[1] === 'protocol-secondary', 'candidate uses the existing independent primary followed by the original configured backup order');
+  check(f.models[0] === 'protocol-primary' && f.models[1] === 'protocol-secondary', 'candidate uses the existing primary followed by the original configured backup order');
 }
 for (const updates of [
   [{ field: 'requestedTeam', value: 'Real Madrid', evidence: 'Real Madrid' }, { field: 'requestedTeam', value: 'Real Madrid', evidence: 'Real Madrid' }],

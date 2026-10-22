@@ -63,7 +63,7 @@ const defaultResult = await classifyCommerceIntent(userText, { jevDecision, fetc
   return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(payload) } }] }));
 } });
 assert.equal(defaultResult.confident, true);
-assert.equal(defaultBody.model, 'claude-sonnet-5-5', 'Default candidate interpretation reuses the existing independent reviewer model');
+assert.equal(defaultBody.model, 'candidate-original-primary', 'Default candidate interpretation reuses the existing configured primary model');
 assert.deepEqual(defaultBody.response_format, { type: 'json_object' }, 'Complex candidate grammar is supplied as a textual contract, not native constrained grammar');
 assert.ok(defaultBody.messages[0].content.includes(JSON.stringify(COMMERCE_INTENT_RESPONSE_FORMAT.json_schema.schema)),
   'The same single classification request contains the complete original schema before USER context');
@@ -77,7 +77,7 @@ await classifyCommerceIntent('What is your shipping policy?', { jevDecision: { o
       commerceConstraints: { edition: null, team: null },
       productRequest: { relation: 'none', action: 'new', items: [], selectedIndex: null, selectionEvidence: '' },
       productRequirement: { action: 'none', evidence: '', priorTargetEvidence: '', updates: [], suspectedTerm: null } }) } }] })); } });
-assert.equal(ordinaryBody.model, 'claude-sonnet-5-5', 'Ordinary interpretation reuses the same existing bounded reasoning model');
+assert.equal(ordinaryBody.model, 'candidate-original-primary', 'Ordinary interpretation reuses the same configured primary model');
 assert.deepEqual(ordinaryBody.response_format, { type: 'json_object' }, 'Ordinary commerce shares complete schema guidance and strict local validation');
 assert.ok(ordinaryBody.messages[0].content.includes(JSON.stringify(COMMERCE_INTENT_RESPONSE_FORMAT.json_schema.schema)));
 assert.equal(ordinaryBody.messages.at(-1).content, 'What is your shipping policy?');

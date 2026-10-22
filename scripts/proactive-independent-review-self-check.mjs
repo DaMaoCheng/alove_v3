@@ -13,7 +13,7 @@ const base={recentMessages:[{id:'user-fixture',senderType:'user',text:'Hello.',s
 const verdict=await classifyProactiveContent(base);
 assert.equal(PROACTIVE_CONTENT_REVIEW_TIMEOUT_MS,20000,'same total review deadline, no added invocation');
 assert.equal(capture.length,1,'one original reviewer request on successful transport, no second independent call');
-assert.notEqual(capture[0].model,primary,'default review must not reuse the default generator');
+assert.equal(capture[0].model,primary,'state classification uses the existing configured primary; candidate review excludes its actual generator');
 assert.equal(verdict.quality.grounded,true,'existing evidence protocol still permits generic nonfactual care');
 const fixtureAi={replyChain:[],venice:{apiKey:'',model:'generator'},openai:{apiKey:''},fallbackOpenai:{apiKey:''}};
 assert.equal(independentJsonProviderChain(fixtureAi),null);

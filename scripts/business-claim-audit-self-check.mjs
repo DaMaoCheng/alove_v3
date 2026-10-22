@@ -27,16 +27,18 @@ const {SERVER_CONFIG}=await import('../server/config.js');
 if(SERVER_CONFIG.aiReply.venice.apiKey){
  let observedModel;
  await assessReplyBoundary({...options,config:null,fetchImpl:async (_url,request)=>{observedModel=JSON.parse(request.body).model;return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({allowed:true,confidence:1,boundarySupported:true,businessFactsSupported:true,businessClaimAudit:ok})}}]}))}});
- assert.equal(observedModel,'claude-sonnet-5-5','policy review replaces primary with existing independent reviewer, no extra call');
+ assert.equal(observedModel,SERVER_CONFIG.aiReply.replyChain.find(provider => provider.apiKey && provider.model).model,'policy review uses the existing configured primary, no extra call');
 }
 const {independentJsonProviderChain,independentReviewerConfig}=await import('../server/ai-independent-review-config.js');
 const primaryFixture={id:'openai',apiKey:'fixture',model:'primary',baseUrl:'https://shared.invalid',apiMode:'responses'};
 const fallbackFixture={...primaryFixture,id:'deepseek',model:'backup',requestBodyExtras:{max_tokens:10,max_output_tokens:20}};
 const reasoningFixture={venice:{apiKey:''},openai:primaryFixture,fallbackOpenai:fallbackFixture,replyChain:[primaryFixture,fallbackFixture]};
 const selected=independentJsonProviderChain(reasoningFixture);
-assert.equal(selected.length,1,'existing backup promoted to reasoning role must not be called twice');
-assert.equal(selected[0].id,'deepseek');assert.equal(selected[0].requestBodyExtras.max_output_tokens,3000);
-assert(!('max_tokens' in selected[0].requestBodyExtras));
+assert.equal(selected.length,2,'ordinary review retains the existing primary and backup order');
+assert.equal(selected[0].model,'primary');
+const selectedBackup=selected[1];
+assert.equal(selectedBackup.id,'deepseek');assert.equal(selectedBackup.requestBodyExtras.max_output_tokens,3000);
+assert(!('max_tokens' in selectedBackup.requestBodyExtras));
 assert.equal(fallbackFixture.requestBodyExtras.max_output_tokens,20,'local reasoning budget must not mutate global provider');
 assert.equal(independentReviewerConfig('primary',reasoningFixture).model,'backup');
 console.log('independent reasoning config checks passed (existing models, attribution, no duplicate, responses budget, no mutation)');
@@ -127,7 +129,7 @@ if(SERVER_CONFIG.aiReply.venice.apiKey){
  const genericAssessment=await assessReplyBoundary({...conceptOptions,knowledgeContext:{items:[]},config:null,
  fetchImpl:async(_url,request)=>{observedGenericModel=JSON.parse(request.body).model;genericModelCalls++;
  return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({allowed:true,confidence:1,boundarySupported:true,businessFactsSupported:true})}}]}));}});
- assert.equal(observedGenericModel,'claude-sonnet-5-5','a no-KB general explanation uses the existing independent reviewer in the same assessment');
+ assert.equal(observedGenericModel,SERVER_CONFIG.aiReply.replyChain.find(provider => provider.apiKey && provider.model).model,'a no-KB general explanation uses the existing configured primary in the same assessment');
  assert.equal(genericModelCalls,1);assert.equal(genericAssessment.reviewStatus,'valid');
 }
 console.log('mixed general/policy strictness and same-call independent reviewer regression passed');

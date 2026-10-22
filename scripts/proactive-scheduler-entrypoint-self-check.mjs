@@ -31,6 +31,7 @@ if (!process.argv.includes('--child')) {
     return [[{ session_id:'fixture_session',user_id:'fixture_user',site_id:'fixture_site',character_id:'fixture_character',category_id:'mascot',time_zone:'UTC' }]];
   } };
   const dependencies = {
+    './proactive-paid-attempt-service.js': { previewProactivePaidAttempt: async () => ({ allowed: true }) },
     './config.js': { SERVER_CONFIG: config },
     './db.js': { getDbPool: () => stubDb },
     './memory-job-service.js': { MEMORY_JOB_TYPES: { SEND_PROACTIVE_MESSAGE:'fixture_proactive' },

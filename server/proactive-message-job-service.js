@@ -1,3 +1,4 @@
+import { runProactivePaidAttempt } from "./proactive-paid-attempt-service.js";
 import { assertMemoryJobLease } from "./memory-job-service.js";
 import { PROACTIVE_GROUNDING_CONTRACT, classifyProactiveContent, allowsProactiveShopping, resolveProactiveCandidate, loadLatestProactiveUserMessageId, assessProactiveContent, inspectProactiveCandidateQuality, areProactiveTextsNearDuplicate } from "./proactive-content-policy-service.js";
 import { generateChatReply } from "./ai-reply-service.js";
@@ -91,6 +92,7 @@ export async function sendProactiveMessageFromJob(job = {}, { classifyContent = 
   const latestUserMessageId = await loadLatestProactiveUserMessageId(db, sessionId);
   const { recentMessages, contextTruncated } = await listRecentMessagesForPrompt(db, sessionId, { includeContextStatus: true });
   const proactiveHistory = await loadRecentProactiveHistory(db, { userId, characterId });
+  return runProactivePaidAttempt({ userId, characterId, sessionId, latestUserMessageId, job }, async () => {
   job.reportStage?.("proactive_content_review");
   const logContext = { userId, sessionId, characterId, requestId: job.id || "" };
   const state = await assessProactiveContent(classifyContent, { recentMessages, contextTruncated, logContext });
@@ -268,6 +270,7 @@ export async function sendProactiveMessageFromJob(job = {}, { classifyContent = 
     }
     throw error;
   }
+  });
 }
 
 // Only the supervisor calls this after proving the previous execution process has exited.
