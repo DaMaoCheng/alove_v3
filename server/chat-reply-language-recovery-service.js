@@ -1,15 +1,15 @@
 import { SERVER_CONFIG } from './config.js';
-import { REPLY_REPAIR_TIMEOUT_MS } from "./chat-reply-review-outcome.js";
+import { REPLY_REPAIR_TIMEOUT_MS, resolveReplyRepairBudget } from "./chat-reply-review-outcome.js";
 // One text recovery (fresh generation or grounded correction) followed by the caller's COMPLETE original review. The callback
 // receives fresh finite stage budgets; earlier provider latency never subtracts
 // time from correction or the complete original re-review.
 export async function recoverReviewedLanguageReply({ replyResult, assessment, languageDiagnostics = {}, language, userText,
-  logContext, repairLanguageReply, reviewCandidate, recordReview, primaryReviewTimeoutMs = SERVER_CONFIG.aiReply.chatTimeouts.review, repairTimeoutMs = REPLY_REPAIR_TIMEOUT_MS } = {}) {
+  logContext, repairLanguageReply, reviewCandidate, recordReview, primaryReviewTimeoutMs = SERVER_CONFIG.aiReply.chatTimeouts.review, repairTimeoutMs = REPLY_REPAIR_TIMEOUT_MS, repairScope = '' } = {}) {
   const diagnostics = { ...languageDiagnostics, repairState: "failed" };
   let repaired = null;
   try {
     repaired = await repairLanguageReply({ replyResult, assessment, language, userText, logContext,
-      timeoutMs: Number.isFinite(repairTimeoutMs) && repairTimeoutMs > 0 ? Math.min(REPLY_REPAIR_TIMEOUT_MS, repairTimeoutMs) : REPLY_REPAIR_TIMEOUT_MS,
+      timeoutMs: resolveReplyRepairBudget(repairTimeoutMs, repairScope), repairScope,
       recordDiagnostic: code => { diagnostics.repairFailureCode = code; } });
   } catch { diagnostics.repairFailureCode = "provider_error"; }
   if (!repaired) return { recovered: false, diagnostics };

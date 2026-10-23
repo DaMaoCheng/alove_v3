@@ -122,18 +122,18 @@ export function isTrackingReference(value = "") {
     || /\b[A-Z]{2,8}[-_ ]?\d{6,18}(?:[-_ ]?[A-Z0-9]{2,8})?\b/i.test(text);
 }
 
-export function appendFeedbackFollowupCopy(text, { character = {}, feedbackAction = null, searchIntent = {} } = {}) {
+export function appendFeedbackFollowupCopy(text, { character = {}, languageCode = "", feedbackAction = null, searchIntent = {} } = {}) {
   const reply = String(text || "").trim();
   if (!feedbackAction || searchIntent?.replyBoundary?.contactAllowed === false) return reply;
-  const suffix = resolveHumanHandoffFollowupCopy(character);
+  const suffix = resolveHumanHandoffFollowupCopy(character, languageCode);
   // A chat email or a vague contact invitation does not submit the real form.
   // Deduplicate only the actual localized submission copy; preserve reviewed text.
   if (!suffix || reply.endsWith(suffix)) return reply;
   return reply ? `${reply}\n\n${suffix}` : suffix;
 }
 
-function resolveHumanHandoffFollowupCopy(character = {}) {
-  const language = resolveCharacterLanguage(character);
+function resolveHumanHandoffFollowupCopy(character = {}, languageCode = "") {
+  const language = normalizeCharacterLanguage(languageCode)?.code || resolveCharacterLanguage(character);
   const copy = {
     en: "Use the feedback button below to open the form, then submit your question or business request for the team to review.",
     zh: "点击下方反馈按钮打开表单，填写并提交你的问题或商务需求，供团队查看。",

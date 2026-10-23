@@ -93,7 +93,8 @@ for (const [kind, base] of [['policy', policy], ['candidate', candidate]]) {
   }
   check(JSON.stringify(result.reviews[1].boundary) === JSON.stringify(base.searchIntent.replyBoundary), `${kind}: original sales/contact permissions preserved`);
   check(result.output.voiceMeta.languageCode === 'es' && result.languageRepairs === 0, `${kind}: voice metadata retained without ordinary language repair`);
-  check(result.repairs[0].timeoutMs === 15000, `${kind}: grounded correction uses its independent fifteen-second allocation`);
+  check(result.repairs[0].timeoutMs === (kind === 'candidate' ? 30000 : 15000), `${kind}: only product correction opts into its independent thirty-second allocation`);
+  if (kind === 'candidate') check(result.repairs[0].repairScope === 'grounded_commerce', 'candidate correction carries its bounded product scope');
   if (kind === 'candidate') check(result.output.candidateEvidenceVerified === true && result.output.candidateConfirmationVerified === true, 'candidate: full re-review grants evidence and confirmation flags');
   for (const firstVerdict of [{ ...initialNo(kind), boundarySupported: false }, { ...yes, allowed: false, boundarySupported: false }]) {
     const correctedBoundary = await run(base, { firstVerdict });

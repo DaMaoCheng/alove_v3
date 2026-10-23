@@ -364,7 +364,7 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
       feedbackActionCandidate,
       searchIntent: productRecommendation.searchIntent,
     });
-    const replyText = appendFeedbackFollowupCopy(reply.text, { character: promptCharacter, feedbackAction, searchIntent: productRecommendation.searchIntent });
+    const replyText = appendFeedbackFollowupCopy(reply.text, { character: promptCharacter, languageCode: resolveReviewedReplyVoiceLanguage(reply, languagePreference).languageCode, feedbackAction, searchIntent: productRecommendation.searchIntent });
     const replyMessage = await insertMessage(db, {
       sessionId: guest.chat_session_id,
       guestSessionId: guest.id,

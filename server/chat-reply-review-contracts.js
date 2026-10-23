@@ -1,6 +1,7 @@
 import { toAlternativeReviewContext, PRODUCT_ALTERNATIVE_CONTRACT, PRODUCT_ALTERNATIVE_AUDIT_SCHEMA, PRODUCT_ALTERNATIVE_AUDIT_CONTRACT } from "./product-alternative-service.js";
 import { LANGUAGE_CLARIFICATION_SCHEMA, LANGUAGE_CLARIFICATION_REVIEW_CONTRACT } from "./chat-language-clarification-policy.js";
 import { buildProductCardDeliveryContext } from "./chat-product-reply-service.js";
+import { getGuestProductEvidence } from "./guest-product-sanitizer.js";
 import { SIZING_CONVERSATION_CONTRACT } from "./product-sizing-guidance-service.js";
 import { TRUSTED_IDENTITY_CONTRACT } from "./chat-prompt-utils.js";
 import { productClarificationContext, PRODUCT_CLARIFICATION_CONTRACT, CLOSED_CLARIFICATION_RECOVERY_CONTRACT } from "./chat-reply-purpose-service.js";
@@ -134,7 +135,12 @@ export function buildReplyReviewMessages(options = {}) {
               clarificationExhausted: productSearchOutcome === "clarification_exhausted", sourceErrorCode: String(productContext?.sourceErrorCode || productSearchIntent.sourceErrorCode || "").slice(0, 80) } : {}),
             verifiedDiscountOffers: (Array.isArray(verifiedDiscountOffers) ? verifiedDiscountOffers : []).slice(0, 5).map((offer) => ({ code: String(offer?.code || "").slice(0, 100), offerDescription: String(offer?.offerDescription || "").slice(0, 1000) })).filter((offer) => offer.code && offer.offerDescription),
             catalogueProducts: (productContext?.products || []).filter(product => !candidateIds || candidateIds.has(String(product.id || product.productId || ""))).slice(0, candidateContext ? 2 : 5).map((product) => {
-              const safe = toClientProduct(product) || {};
+              // Only ordinary live matches may use the private source evidence
+              // retained before guest projection; candidate/alternative proofs
+              // keep their existing finite evidence contracts.
+              const evidenceProduct = !candidateContext && !alternativeContext && productContext?.searchOutcome === 'matched'
+                ? getGuestProductEvidence(product) : product;
+              const safe = toClientProduct(evidenceProduct) || {};
               // Candidate identity/specification comes from the finite evidence
               // above; copied marketing prose must not establish missing specs.
               return { name: safe.name, ...(candidateContext ? {} : { summary: safe.summary, subtitle: safe.subtitle }), price: safe.price, priceNow: safe.priceNow, currency: safe.currency,

@@ -256,6 +256,21 @@ assert.equal(
   "AI transport fallbacks must not create a feedback action"
 );
 
+// Explicit per-turn language wins over the original character default, without
+// changing the character or deriving a preference from the user's wording.
+for (const { code } of SUPPORTED_CHARACTER_LANGUAGES) {
+  const expected = appendFeedbackFollowupCopy("Body", { character: { profile: { languageCode: code } }, feedbackAction: plainFeedback });
+  const options = { character: mascot, languageCode: code, feedbackAction: plainFeedback };
+  const actual = appendFeedbackFollowupCopy("Body", options);
+  assert.equal(actual, expected, `active ${code} must override original English character`);
+  assert.equal(appendFeedbackFollowupCopy(actual, options), actual, `${code} append must stay idempotent`);
+  assert.equal(appendFeedbackFollowupCopy("Body", { ...options, feedbackAction: null }), "Body");
+  assert.equal(appendFeedbackFollowupCopy("Body", { ...options, searchIntent: { replyBoundary: { contactAllowed: false } } }), "Body");
+}
+assert.equal(appendFeedbackFollowupCopy("Body", { character: hungarianMascot, languageCode: "not-a-language", feedbackAction: plainFeedback }),
+  appendFeedbackFollowupCopy("Body", { character: hungarianMascot, feedbackAction: plainFeedback }));
+assert.equal(mascot.profile.language, "English", "per-turn override must not mutate the role default");
+
 const notificationPanel = readFileSync("src/features/notifications/notification-panel.js", "utf8");
 const renderer = readFileSync("src/features/chat/chat-message-renderer.js", "utf8");
 const chatPage = readFileSync("src/features/chat/chat-page.js", "utf8");

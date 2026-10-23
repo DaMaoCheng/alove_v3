@@ -16,6 +16,14 @@ export function replyReviewConfident(result, contracts = []) {
 export const REPLY_REVIEW_TIMEOUT_MS = 20000;
 export const LANGUAGE_REVIEW_TIMEOUT_MS = 20000;
 export const REPLY_REPAIR_TIMEOUT_MS = 15000;
+export const GROUNDED_COMMERCE_REPAIR_TIMEOUT_MS = 30000;
+
+// A caller must explicitly opt into the commerce correction scope. Generic
+// language/image recovery retains its original ceiling.
+export function resolveReplyRepairBudget(timeoutMs, scope = '') {
+  const ceiling = scope === 'grounded_commerce' ? GROUNDED_COMMERCE_REPAIR_TIMEOUT_MS : REPLY_REPAIR_TIMEOUT_MS;
+  return Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(ceiling, timeoutMs) : ceiling;
+}
 
 // Review transport/shape failures are not semantic rejections of a contract.
 export const REVIEW_STATUSES = new Set(["valid", "missing_fields", "invalid_fields", "invalid_json", "timeout", "network_error", "http_error", "unavailable", "not_run"]);

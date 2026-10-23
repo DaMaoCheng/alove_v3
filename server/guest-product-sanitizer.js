@@ -6,8 +6,28 @@ import { normalizeProductEdition } from "./product-edition-service.js";
 
 const MAX_TEXT_LENGTH = 240;
 
-export function toGuestSafeProductSearchResult(result = {}, { includeAttributeEvidence = false } = {}) {
+// Request-local catalogue evidence never enters public JSON or persists across
+// clones. Serialized snapshots isolate it from later mutations of either side.
+const guestProductEvidence = new WeakMap();
+
+export function getGuestProductEvidence(product) {
+  const proof = product && typeof product === "object" && guestProductEvidence.get(product);
+  if (!proof) return product;
+  try {
+    return JSON.stringify(product) === proof.safeSnapshot ? JSON.parse(proof.sourceSnapshot) : product;
+  } catch { return product; }
+}
+
+function bindGuestProductEvidence(product, source) {
+  try {
+    guestProductEvidence.set(product, { safeSnapshot: JSON.stringify(product), sourceSnapshot: JSON.stringify(source) });
+  } catch { /* Non-JSON sources cannot grant private evidence. */ }
+  return product;
+}
+
+export function toGuestSafeProductSearchResult(result = {}, { includeAttributeEvidence = false, sourceItems = result.items } = {}) {
   const allowedOrigins = getServerProductOrigins(result);
+  const sourceObjects = new Set(Array.isArray(result.items) ? result.items : []);
   return {
     ok: result.ok !== false,
     query: safeText(result.query, MAX_TEXT_LENGTH),
@@ -15,8 +35,11 @@ export function toGuestSafeProductSearchResult(result = {}, { includeAttributeEv
     searchOutcome: safeText(result.searchOutcome, 32),
     sourceErrorCode: validateProductSourceErrorCode(result.sourceErrorCode),
     site: toGuestSafeSite(result.site),
-    items: (Array.isArray(result.items) ? result.items : [])
-      .map((item) => toGuestSafeProduct(item, result.site, { allowedOrigins, includeAttributeEvidence }))
+    items: (Array.isArray(sourceItems) ? sourceItems : []).filter(item => sourceObjects.has(item))
+      .map((item) => {
+        const product = toGuestSafeProduct(item, result.site, { allowedOrigins, includeAttributeEvidence });
+        return result.searchOutcome === "matched" ? bindGuestProductEvidence(product, item) : product;
+      })
       .filter((item) => item.name && item.url && !containsGuestPromotionContent(item)),
   };
 }

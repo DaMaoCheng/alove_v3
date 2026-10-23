@@ -7,7 +7,7 @@ import { recoverReviewedLanguageReply } from "./chat-reply-language-recovery-ser
 import { isClosedProductClarification, isConversationReplyRecoveryEligible, productClarificationContext, isProductClarificationRecoveryEligible } from "./chat-reply-purpose-service.js";
 import { buildTrustedCharacterIdentity } from "./chat-prompt-utils.js";
 import { isImageReplyRecoveryEligible, refreshImageReplyRecoveryContext } from "./chat-image-reply-recovery-service.js";
-import { isGroundedCommerceRepairEligible, repairGroundedCommerceReply } from "./chat-grounded-reply-repair-service.js";
+import { hasMatchedCatalogueCaptionContext, isGroundedCommerceRepairEligible, repairGroundedCommerceReply } from "./chat-grounded-reply-repair-service.js";
 import { evaluateReplyReview, approveReplyRemainder, verifiedReplyRemainder } from "./chat-reply-review-decision.js";
 import { buildReplyReviewMessages, buildReplyReviewFormat } from "./chat-reply-review-contracts.js";
 import { buildProductSizingFallback } from "./product-sizing-copy.js";
@@ -28,7 +28,7 @@ import { hasUnauthorizedDiscountPolicyClaim } from "./discount-policy-explanatio
 import { toImageStatusReviewContext, getChatImageStatusFallbackCopy, isFulfilledImageOnlyRequest } from "./chat-image-status-context-service.js";
 import { guardLanguageQualityReply, buildLanguageQualityFallbackReply } from "./chat-reply-language-quality.js";
 import { factualReviewRequired, toFactualReviewContext, buildFactualUnavailableCopy, containsFactualUnavailableCopy } from "./chat-factual-policy.js";
-import { activeReviewContracts, reviewOutcomeStatus, reviewErrorStatus, reviewFieldProtocolFailure, REVIEW_CONTRACTS, REPLY_REPAIR_TIMEOUT_MS, languageReviewConfident } from "./chat-reply-review-outcome.js";
+import { activeReviewContracts, reviewOutcomeStatus, reviewErrorStatus, reviewFieldProtocolFailure, REVIEW_CONTRACTS, REPLY_REPAIR_TIMEOUT_MS, GROUNDED_COMMERCE_REPAIR_TIMEOUT_MS, languageReviewConfident } from "./chat-reply-review-outcome.js";
 import { assessIndependentLanguageQuality } from "./chat-language-quality-service.js";
 import { hasPendingProductRequest, getProductRequestItemText } from "./product-request-scope-service.js";
 import { buildProductRequestScopeCopy, productScopeResultLabel, buildProductScopeUnverifiedResultCopy, buildProductClarificationFallbackReply } from "./product-request-scope-copy.js";
@@ -388,10 +388,13 @@ export async function enforceReplyBoundary(options = {}) {
   const groundedRepairEligible = !regenerationEligible && !imageRecoveryEligible && !accepted
     && (matchedCaptionRepair || isGroundedCommerceRepairEligible(groundedRepairInput));
   if (groundedRepairEligible) {
+    const productCorrection = Boolean(productContext?.candidateContext || hasMatchedCatalogueCaptionContext(groundedRepairInput)
+      || toAlternativeReviewContext(productContext));
     if (groundedRepairEligible) languageDiagnostics = { ...languageDiagnostics, repairKind: "grounded",
       initialFailedContracts: failedContracts, repairSkipReason: undefined };
     const recovery = await recoverReviewedLanguageReply({ replyResult, assessment: languageAssessment, languageDiagnostics,
-      language, userText, logContext, repairTimeoutMs: REPLY_REPAIR_TIMEOUT_MS, repairLanguageReply: input => (options.repairGroundedReply || repairGroundedCommerceReply)({ ...options, ...input,
+      language, userText, logContext, repairScope: productCorrection ? 'grounded_commerce' : '',
+      repairTimeoutMs: productCorrection ? GROUNDED_COMMERCE_REPAIR_TIMEOUT_MS : REPLY_REPAIR_TIMEOUT_MS, repairLanguageReply: input => (options.repairGroundedReply || repairGroundedCommerceReply)({ ...options, ...input,
           searchIntent, productContext, knowledgeContext, character, reviewResult: result, reviewStatus, failedContracts, retained }), recordReview, primaryReviewTimeoutMs: reviewTimeoutMs,
       reviewCandidate: (candidate, reviewOptions) => enforceReplyBoundary({ ...options, replyResult: candidate, ...reviewOptions,
         ...(groundedRepairEligible ? { groundedRepairAttempted: true } : {}) }),
@@ -436,7 +439,7 @@ export async function enforceReplyBoundary(options = {}) {
   const scopeCopy = uncertaintyCopy || (productScopeRequired && searchIntent.replyBoundary?.salesAllowed !== false
     ? pendingProductScope ? buildProductRequestScopeCopy(searchIntent, { languageCode: code })
       : [productScopeResultLabel(searchIntent, { languageCode: code }), buildProductScopeUnverifiedResultCopy(searchIntent, { languageCode: code })].filter(Boolean).join("\n\n") : "");
-  const expressionFailureCopy = (pureQualityFailure || purposeRecoveryAttempted || isGeneralCommerceExplanation(searchIntent)
+  const expressionFailureCopy = (pureQualityFailure || purposeRecoveryAttempted || hasMatchedCatalogueCaptionContext(options) || isGeneralCommerceExplanation(searchIntent)
     || (guidanceRequired || businessFactsRequired) && ["missing_fields", "invalid_fields", "invalid_json"].includes(reviewStatus))
     ? buildLanguageQualityFallbackReply(code) : "";
   const closedProductCopy = !accepted && !retained && reviewValid && !languageRejected && !factualFallbackRequired

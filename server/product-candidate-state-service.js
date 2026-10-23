@@ -88,20 +88,42 @@ export function findDisplayedProductCandidate(state, recentMessages, { siteId, c
     && row.product.name === proposal.name)?.product || null;
 }
 
-function normalizeTargetTransition(delta, previous, decision, current, { sameOwner, recentMessages, siteId, characterId }) {
+function hasOwnedMatchedReference(previous, referencedId, recentMessages, { siteId, characterId }) {
+  if (!string(referencedId, 160)) return false;
+  const ownerIndex = recentMessages.findLastIndex(row => Object.hasOwn(row || {}, 'productCandidateState'));
+  const owner = ownerIndex >= 0 ? readProductCandidateState([recentMessages[ownerIndex]], { siteId, characterId }) : null;
+  if (!owner || JSON.stringify(owner) !== JSON.stringify(previous)) return false;
+  // Only the cards in this owned reply group can explain its follow-up. An
+  // older card across a user turn or target boundary cannot restore conditions.
+  for (let index = ownerIndex - 1; index >= 0; index--) {
+    const row = recentMessages[index];
+    if ((row.senderType || row.sender_type) === 'user' || Object.hasOwn(row || {}, 'productCandidateState')) break;
+    if (row.senderType === 'character' && row.characterId === characterId && row.contentType === 'product'
+      && (!row.deliveryStatus || row.deliveryStatus === 'sent') && (!row.delivery_status || row.delivery_status === 'sent')
+      && row.product?.matchStatus === 'matched' && row.product.siteId === siteId
+      && String(row.product.productId || row.product.id || '') === referencedId) return true;
+  }
+  return false;
+}
+
+function normalizeTargetTransition(delta, previous, decision, current, { sameOwner, recentMessages, siteId, characterId, userText }) {
   if (delta.action !== 'new' || !sameOwner || current.alternativeRequested
-    || ['alternative', 'comparison', 'multiple', 'unclear'].includes(decision.productRequest?.relation)
-    || decision.candidateResponse?.action === 'reject') return delta;
-  const newIdentity = current.requestedTeam
+    || ['alternative', 'comparison', 'multiple', 'unclear'].includes(decision.productRequest?.relation)) return delta;
+  const response = normalizeCandidateResponse(decision.candidateResponse, { userText });
+  if (response?.action === 'reject' && response.candidateId === previous.proposal?.candidateId
+    && findDisplayedProductCandidate(previous, recentMessages, { siteId, characterId })) return delta;
+  const newIdentity = current.requestedTeam && current.requestedTeam !== previous.requirements.requestedTeam
     || current.requestedProductType && current.requestedProductType !== previous.requirements.requestedProductType
-    || delta.updates.some(update => ['requestedTeam', 'requestedProductType'].includes(update.field) && update.value);
+    || delta.updates.some(update => ['requestedTeam', 'requestedProductType'].includes(update.field)
+      && update.value && update.value !== previous.requirements[update.field]);
   const specificationRevision = delta.updates.length > 0
     || current.sleeves.length === 1 && !current.clearFields.includes('requestedFeatures');
   // Repeating a generic garment type is not a new identity, but the additional
   // recovery needs the exact displayed item reference; guesses cannot inherit.
   const sameGarmentReference = !current.requestedProductType
     || decision.referencedProductId === previous.proposal?.candidateId
-      && Boolean(findDisplayedProductCandidate(previous, recentMessages, { siteId, characterId, allowConfirmed: true }));
+      && Boolean(findDisplayedProductCandidate(previous, recentMessages, { siteId, characterId, allowConfirmed: true }))
+    || hasOwnedMatchedReference(previous, decision.referencedProductId, recentMessages, { siteId, characterId });
   return !newIdentity && specificationRevision && sameGarmentReference ? { ...delta, action: 'continue' } : delta;
 }
 
@@ -229,7 +251,7 @@ export function applyProductCandidateState(intent = {}, decision = {}, { userTex
   // Establishing a new identity requires CURRENT identity evidence. An exact
   // specification-only revision of the owned target must not erase its other
   // USER conditions merely because the redundant action label says `new`.
-  delta = normalizeTargetTransition(delta, previous, decision, current, { sameOwner, recentMessages, siteId, characterId });
+  delta = normalizeTargetTransition(delta, previous, decision, current, { sameOwner, recentMessages, siteId, characterId, userText });
   if (delta.action === 'continue' && !sameOwner && !selected) return decision.candidateDecisionRequired
     ? { ...intent, productCandidateInterpretationUnverified: true } : intent;
   if (!string(String(siteId), 160) || !string(String(characterId), 160)) return intent;

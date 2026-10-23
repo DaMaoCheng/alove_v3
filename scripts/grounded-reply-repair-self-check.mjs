@@ -311,3 +311,73 @@ const correctedOrderDiagnostic = await repairGroundedCommerceReply({ ...orderDia
 check(orderDiagnosticCalls === 1 && correctedOrderDiagnostic?.sourceType === 'ai', 'only a fresh unapproved text candidate is created; no order lookup or action mutation');
 assert.equal(orderDiagnostic.orderActionCandidate.status, 'login_required');
 console.log('read-only order diagnostic correction eligibility, bounded evidence, source failure and action-preservation checks passed');
+
+// A source-owned unconfirmed candidate may advance transport/protocol only;
+// explicit test/provider overrides and valid semantic null remain terminal.
+const { markCandidateContextSource } = await import('../server/product-candidate-source-proof.js');
+const transportCandidate = { ...candidate, character: { ...candidate.character, id: 'owned-role', site_id: 'owned-site' },
+ replyResult: { ...candidate.replyResult, aiModel: 'fixture-generator' },
+ productContext: { ...candidate.productContext, siteId: 'owned-site', sourceType: 'product_api', searchIntent: candidate.searchIntent,
+  candidateContext: { ...candidate.productContext.candidateContext } } };
+markCandidateContextSource(transportCandidate.productContext.candidateContext, transportCandidate.searchIntent,
+ transportCandidate.productContext.products, { siteId: 'owned-site', characterId: 'owned-role' });
+const candidateTransport = async (sequence, extra = {}) => {
+ const models = [];
+ const result = await repairGroundedCommerceReply({ ...transportCandidate, language: 'en', userText: 'Show the candidate.',
+  recordLog: async () => {}, ...extra, fetchImpl: async (_url, options) => {
+   models.push(JSON.parse(options.body).model);
+   const output = sequence[Math.min(models.length - 1, sequence.length - 1)];
+   if (output instanceof Error) throw output;
+   return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(output) } }] }));
+  } });
+ return { models, result };
+};
+const freshCandidate = { displayText: 'This could be the shirt you mean, but its sleeve detail remains unconfirmed. Is this the one?' };
+for (const first of [Object.assign(new Error('timeout'), { code: 'AI_REPLY_TIMEOUT' }), {}, { displayText: 12 }]) {
+ const recovered = await candidateTransport([first, freshCandidate]);
+ assert.deepEqual(recovered.models, ['fixture-second', 'fixture-third']);
+ assert.equal(recovered.result.text, freshCandidate.displayText);
+ assert.equal(recovered.result.candidateEvidenceVerified, undefined, 'a correction never inherits card approval');
+}
+const exhaustedCandidate = await candidateTransport([new Error('fetch failed')]);
+assert.equal(exhaustedCandidate.models.length, 2); assert.equal(exhaustedCandidate.result, null);
+const nullCandidate = await candidateTransport([{ displayText: null }, freshCandidate]);
+assert.equal(nullCandidate.models.length, 1); assert.equal(nullCandidate.result, null);
+let explicitCandidateCalls = 0;
+for (const terminalText of ['', transportCandidate.replyResult.text]) {
+ const terminalCandidate = await candidateTransport([{ displayText: terminalText }, freshCandidate]);
+ assert.equal(terminalCandidate.models.length, 1); assert.equal(terminalCandidate.result, null);
+}
+const explicitCandidate = await candidateTransport([{}, freshCandidate], { config, requestText: async () => { explicitCandidateCalls++; return '{}'; } });
+assert.equal(explicitCandidateCalls, 1); assert.equal(explicitCandidate.models.length, 0); assert.equal(explicitCandidate.result, null);
+const unprovedCandidate = await candidateTransport([{}, freshCandidate], { productContext: JSON.parse(JSON.stringify(transportCandidate.productContext)) });
+assert.equal(unprovedCandidate.models.length, 0, 'loss of source proof cannot enter the finite fetchImpl transport chain');
+assert.equal(unprovedCandidate.result, null);
+console.log('Trusted candidate correction finite transport/protocol fallback, original reviewer order and terminal/null/override isolation passed');
+
+const { resolveReplyRepairBudget, GROUNDED_COMMERCE_REPAIR_TIMEOUT_MS } = await import('../server/chat-reply-review-outcome.js');
+const { recoverReviewedLanguageReply } = await import('../server/chat-reply-language-recovery-service.js');
+assert.equal(GROUNDED_COMMERCE_REPAIR_TIMEOUT_MS, 30000);
+assert.equal(resolveReplyRepairBudget(99999), 15000);
+assert.equal(resolveReplyRepairBudget(99999, 'unknown'), 15000);
+assert.equal(resolveReplyRepairBudget(99999, 'grounded_commerce'), 30000);
+assert.equal(resolveReplyRepairBudget(8000, 'grounded_commerce'), 8000);
+for (const [repairScope, expected] of [['',15000], ['grounded_commerce',30000], ['unknown',15000]]) {
+ let actual;
+ await recoverReviewedLanguageReply({ repairScope, repairTimeoutMs: 60000,
+  repairLanguageReply: async input => { actual = input; return null; } });
+ assert.equal(actual.timeoutMs, expected); assert.equal(actual.repairScope, repairScope);
+}
+console.log('Scoped grounded 30s correction and unchanged generic 15s recovery ceilings passed');
+
+for (const options of [{ ...base }, { ...base, repairScope: 'grounded_commerce', timeoutMs: 60000 }]) {
+ let policyTimeout;
+ await repairGroundedCommerceReply({ ...options, config: { ...config, timeoutMs: 120000 }, language: 'en', userText: 'Policy?',
+  requestText: async (_prompt, request) => { policyTimeout = request.timeoutMs; return JSON.stringify({ displayText: 'The estimate applies only to region A.' }); } });
+ assert.equal(policyTimeout, 15000, 'non-product policy correction cannot acquire the product budget, even with an explicit scope');
+}
+let scopedCandidateTimeout;
+await repairGroundedCommerceReply({ ...transportCandidate, config: { ...config, timeoutMs: 120000 }, language: 'en', userText: 'Show the candidate.',
+ requestText: async (_prompt, request) => { scopedCandidateTimeout = request.timeoutMs; return JSON.stringify(freshCandidate); } });
+assert.equal(scopedCandidateTimeout, 30000, 'direct eligible candidate correction defaults to product budget');
+console.log('Direct policy corrections retain 15s and eligible candidate corrections use 30s without global expansion');

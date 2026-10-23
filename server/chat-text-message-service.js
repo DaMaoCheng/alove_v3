@@ -1,3 +1,4 @@
+import { resolveReviewedReplyVoiceLanguage } from "./chat-language-clarification-policy.js";
 import { prepareChatIntentTurn } from "./chat-intent-turn-service.js";
 import { applySessionLanguagePreference } from "./chat-language-preference-service.js";
 import { indexChatMessage } from "./chat-memory-service.js";
@@ -305,6 +306,7 @@ export async function createUserReply({ characterId, userId, sinceMessageId, voi
       });
       const response = await persistCharacterReplyForDb(db, {
         character,
+        languageCode: resolveReviewedReplyVoiceLanguage(replyResult, languagePreference).languageCode,
         session,
         userId: normalizedUserId,
         characterId: normalizedCharacterId,

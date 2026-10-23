@@ -145,13 +145,20 @@ export async function resolveGuestProductRecommendation(db, {
       allowNearestAgeFallback: true,
       allowCandidateSearch: searchIntent.candidateSearchAllowed === true,
     });
-    const safeResult = toGuestSafeProductSearchResult(result, { includeAttributeEvidence: true });
-    // Enforce the requested garment/audience/team even if a source returns a loose match.
+    // Match on complete server evidence before the public projection removes
+    // descriptions. Pass the original objects directly, never reconnect by ID.
+    const ordinaryMatch = result.searchOutcome !== "alternative"
+      && !(result.searchOutcome === "candidate" && searchIntent.candidateSearchAllowed === true);
+    const sourceItems = ordinaryMatch
+      ? filterProductsByIntent(Array.isArray(result.items) ? result.items : [], searchIntent, { allowNearestAgeFallback: true })
+      : result.items;
+    const safeResult = toGuestSafeProductSearchResult(result, { includeAttributeEvidence: true, sourceItems });
+    // Candidate/alternative retain their existing proof and permission checks.
     let products = safeResult.searchOutcome === "alternative"
       ? alternativeProductsForSearch(result, searchIntent, safeResult.items)
       : safeResult.searchOutcome === "candidate" && searchIntent.candidateSearchAllowed === true
       ? safeResult.items.filter(product => product.matchStatus === "candidate")
-      : filterProductsByIntent(safeResult.items, searchIntent, { allowNearestAgeFallback: true });
+      : safeResult.items;
     if (searchIntent.referencedProductId) products = products.filter((product) => String(product.productId || product.id || "") === searchIntent.referencedProductId);
     if (safeResult.searchState === "source_error" || safeResult.searchOutcome === "source_error") {
       const sourceErrorIntent = { ...searchIntent, searchState: "source_error", sourceErrorCode: safeResult.sourceErrorCode || "source_internal" };

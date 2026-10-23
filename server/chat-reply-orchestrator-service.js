@@ -235,6 +235,7 @@ export async function buildCharacterReplyGenerationForDb(db, {
 
 export async function persistCharacterReplyForDb(db, {
   character,
+  languageCode = "",
   session,
   userId,
   characterId,
@@ -261,7 +262,7 @@ export async function persistCharacterReplyForDb(db, {
       : [],
   }) : null;
   if (replyResult.replyBoundary?.contactAllowed === false) feedbackAction = null;
-  const replyText = appendFeedbackFollowupCopy(productFollowup?.displayText || replyResult.text, { character, feedbackAction, searchIntent: replyResult });
+  const replyText = appendFeedbackFollowupCopy(productFollowup?.displayText || replyResult.text, { character, languageCode, feedbackAction, searchIntent: replyResult });
   const speechText = hasReplyBoundary(replyResult) || feedbackAction
     ? resolveReplySpeechText({ ...replyResult, speechText: replyText }, replyText, userText, replyResult.sourceType)
     : productFollowup?.speechText || resolveReplySpeechText(replyResult, replyText, userText, replyResult.sourceType);
