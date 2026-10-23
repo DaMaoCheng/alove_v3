@@ -1,3 +1,4 @@
+import { toAlternativeReviewContext, validateProductAlternativeAudit } from "./product-alternative-service.js";
 import { SERVER_CONFIG } from './config.js';
 import { canReviewLanguageClarification, reviewedLanguageClarification, reviewedLanguageClarificationPurpose, withClarificationVoiceLanguage, withLanguageClarificationRecovery, languageClarificationRecoveryProof } from "./chat-language-clarification-policy.js";
 import { independentJsonProviderChain } from './ai-independent-review-config.js';
@@ -162,7 +163,7 @@ export async function enforceReplyBoundary(options = {}) {
   const replyResult = proposedReply;
   let chatImageContext = initialImageContext;
   const candidateConfirmationRequired = productContext?.candidateContext?.requiresConfirmation === true;
-  const evidenceRequired = Boolean(productContext?.candidateContext) || needsProductEvidenceReview(searchIntent, productContext);
+  const evidenceRequired = productContext?.searchOutcome === "alternative" || Boolean(productContext?.candidateContext) || needsProductEvidenceReview(searchIntent, productContext);
   const productScopeRequired = scopeReviewRequired(searchIntent);
   const pendingProductScope = hasPendingProductRequest(searchIntent);
   const productScopeContext = productScopeRequired ? productScopeContextFor(searchIntent) : null;
@@ -220,6 +221,7 @@ export async function enforceReplyBoundary(options = {}) {
         orderActionState, imageStatusContext, guestBenefitContext: guestBenefitReview, verifiedDiscountOffers: replyResult.verifiedDiscountOffers,
         evidenceRequired, businessFactsRequired, productScopeRequired, candidateConfirmationRequired, productScopeContext, factualRequired, factualContext: factualReviewContext, guidanceRequired, sizingRequired, sizingConversationContext, checkoutContext: checkoutContext || uncertainCheckoutContext, discountPolicyExplanation: searchIntent.discountExplanationRequired === true, productContext, knowledgeContext, searchIntent,
         feedbackActionAvailable: Boolean(feedbackActionCandidate && searchIntent.replyBoundary?.contactAllowed !== false) });
+      if (productContext?.searchOutcome === "alternative" && !toAlternativeReviewContext(productContext)) result = { ...result, allowed: false, evidenceSupported: false, boundarySupported: false };
       if (result?.protocolFailures?.length) languageDiagnostics = { ...languageDiagnostics,
         reviewProtocol: { ...languageDiagnostics.reviewProtocol,
           [languageRepairAttempted ? 'corrected' : 'initial']: result.protocolFailures } };
@@ -398,6 +400,7 @@ export async function enforceReplyBoundary(options = {}) {
     languageDiagnostics = recovery.diagnostics;
   }
   const finish = async (output, guardApplied = false, productClarification = false) => {
+    if (productContext?.searchOutcome === "alternative") output = { ...output, alternativeEvidenceVerified: !guardApplied && accepted === true && Boolean(toAlternativeReviewContext(productContext)) };
     if (!guardApplied && accepted && languageClarification) output = withClarificationVoiceLanguage(output, languageClarification);
     const kind = !guardApplied ? "none" : containsFactualUnavailableCopy(output.text) ? "factual"
       : !reviewValid ? "review" : languageRejected ? "language" : "boundary";
@@ -492,6 +495,8 @@ export async function assessReplyBoundary({ text = "", speechText = "", userText
   try {
     const reviewOptions = { text, speechText, userText, language, boundary, languageQualityRequired, boundaryReviewRequired, independentLanguageReview, languageClarificationEligible, evidenceRequired, businessFactsRequired, productScopeRequired, candidateConfirmationRequired, productScopeContext, factualRequired, factualContext, factualLimitationReviewRequired, guidanceRequired, sizingRequired, sizingConversationContext, discountPolicyExplanation, feedbackActionAvailable, orderActionState, imageStatusContext, guestBenefitContext, identityContext, clarificationRequired, checkoutContext, productContext, knowledgeContext, searchIntent, verifiedDiscountOffers };
     const plannedClaimContext = buildBusinessClaimContext(reviewOptions);
+    const plannedAlternativeContext = toAlternativeReviewContext(productContext);
+    const alternativeAuditOptions = { text: stripTtsControlTags(text), speechText: stripTtsControlTags(speechText || text), context: plannedAlternativeContext };
     if (plannedClaimContext && (!plannedClaimContext.bounded || !plannedClaimContext.references.length && !plannedClaimContext.sizingConversation)) return { allowed: false, confidence: 0, reviewStatus: 'unavailable' };
     // Reuse the existing independent reviewer for trusted identity and scoped
     // factual chat as well as evidence-led policy reasoning, rather than self-review. Only malformed protocol may advance the existing
@@ -503,7 +508,8 @@ export async function assessReplyBoundary({ text = "", speechText = "", userText
       const fieldFailure = reviewFieldProtocolFailure(raw, contracts, { independentLanguageReview,
         classificationUnavailable: checkoutContext?.classificationUnavailable });
       const audit = fieldFailure ? null : validateBusinessClaimAudit(raw?.businessClaimAudit, plannedClaimContext);
-      const reason = fieldFailure || (audit?.valid === false ? audit.reason : '');
+      const alternativeAudit = plannedAlternativeContext ? validateProductAlternativeAudit(raw?.alternativeAudit, alternativeAuditOptions) : null;
+      const reason = fieldFailure || (audit?.valid === false ? audit.reason : '') || (alternativeAudit?.valid === false ? 'invalid_fields' : '');
       if (reason && protocolFailures.length < 3) protocolFailures.push(reason);
       return { valid: !reason, reason: 'shape' };
     };
@@ -527,6 +533,8 @@ export async function assessReplyBoundary({ text = "", speechText = "", userText
     // terminal. Apply its semantic vote without a second classification path.
     const reviewStatus = 'valid';
     const claimAudit = validateBusinessClaimAudit(result?.businessClaimAudit, plannedClaimContext);
+    if (plannedAlternativeContext && !validateProductAlternativeAudit(result?.alternativeAudit, alternativeAuditOptions).accepted) result = { ...result, allowed: false, evidenceSupported: false,
+      retainedText: '', retainedTextAllowed: false, retainedEvidenceSupported: false };
     if (plannedClaimContext && !claimAudit.accepted) result = { ...result, allowed: false, businessFactsSupported: false,
       retainedText: '', retainedTextAllowed: false, retainedBusinessFactsSupported: false };
     const bool = (key) => typeof result?.[key] === "boolean" ? result[key] : undefined;

@@ -1,0 +1,77 @@
+import assert from 'node:assert/strict';
+process.env.AIOVE_PROVIDER_LOG_WRITE_ENABLED='false';
+globalThis.fetch=async()=>{throw Error('No external calls');};
+const {executeProductSearchDetailed}=await import('../server/product-search-execution-service.js');
+const {bindProductAlternativeContext,PRODUCT_ALTERNATIVE_CONTRACT}=await import('../server/product-alternative-service.js');
+const {selectProductsForReply,buildProductCardDeliveryContext}=await import('../server/chat-product-reply-service.js');
+const {buildProductContextLayer}=await import('../server/chat-prompt-layers.js');
+const {buildReplyReviewMessages}=await import('../server/chat-reply-review-contracts.js');
+const {enforceReplyBoundary}=await import('../server/chat-reply-boundary-service.js');
+const {toClientProduct}=await import('../server/product-response-sanitizer.js');
+const {sanitizeProductAlternative}=await import('../shared/product-candidate-fields.js');
+const intent={shouldLoadProductContext:true,cardAllowed:true,candidateSearchAllowed:true,requestedTeam:'Barcelona',requestedProductType:'shirt',requestedSeason:'2022',requestedVariant:'home',query:'Barcelona home jersey 2022',requestedKeywords:[],commerceRoute:'product_search',knowledgeScope:'business',replyBoundary:{salesAllowed:true,contactAllowed:false},searchState:'ready_to_search'};
+const product={productId:'alt-test',id:'alt-test',name:'Barcelona 2026/27 Home Jersey',url:'https://shop.example/products/alt-test',imageUrl:'https://shop.example/image.jpg',available:true,price:'40'};
+const detailed=await executeProductSearchDetailed({searchIntent:intent,query:intent.query,fetchProducts:async(_url,i)=>i.requestedSeason?[]:[product]});
+const context=bindProductAlternativeContext({siteId:'shop',searchIntent:intent,searchOutcome:'alternative',cardAllowed:true,products:detailed.alternatives},detailed);
+const character={id:'mascot_fixture',category_id:'mascot',name:'Fixture',site_id:'shop'};
+assert.equal(buildProductCardDeliveryContext(context).count,1);
+assert.equal(selectProductsForReply(context,{}).length,0,'generation is never approval');
+assert.equal(selectProductsForReply(context,{alternativeEvidenceVerified:true}).length,1);
+const forged=JSON.parse(JSON.stringify(context));
+assert.equal(selectProductsForReply(forged,{alternativeEvidenceVerified:true}).length,0,'JSON cannot restore permission');
+assert.equal(selectProductsForReply(context,{alternativeEvidenceVerified:true,replyBoundary:{salesAllowed:false}}).length,0);
+const card=selectProductsForReply(context,{alternativeEvidenceVerified:true})[0];
+assert.equal(card.matchStatus,"alternative");
+assert.equal(toClientProduct(card).matchStatus,"alternative");
+assert.deepEqual(card.alternative,{kind:'season_alternative',requestedSeason:'2022',alternativeSeason:'2026/27'});
+assert.deepEqual(toClientProduct(card).alternative,card.alternative);
+assert.equal(card.subtitle,"","alternative must not repeat the original year as its subtitle");
+const resend={sourceRef:"displayed-product-reference",snapshotOnly:true,products:[card],searchIntent:{commerceRoute:"product_search",shouldLoadProductContext:true,cardAllowed:true,referencedProductIds:["alt-test"]}};
+assert.deepEqual(selectProductsForReply(resend,{})[0].alternative,card.alternative,"owned snapshot resend retains identity without creating new alternative permission");
+assert.equal(sanitizeProductAlternative({...card.alternative,alternativeSeason:'fake'}),null);
+assert(buildProductContextLayer(character,context).content.includes(PRODUCT_ALTERNATIVE_CONTRACT));
+const messages=buildReplyReviewMessages({character,productContext:context,searchIntent:intent,evidenceRequired:true,boundaryReviewRequired:true,text:'Sorry, not found. This alternative is from 2026/27.',speechText:'Sorry, not found. This alternative is from 2026/27.'});
+assert(messages.some(m=>m.content.includes(PRODUCT_ALTERNATIVE_CONTRACT)));
+assert.equal(JSON.parse(messages.at(-1).content).alternativeContext.requestedSeason,'2022');
+assert.equal(JSON.parse(messages.at(-1).content).evidence.searchOutcome,'alternative','verified alternative must not be described to review as an unperformed search');
+const yes={allowed:true,confidence:.99,boundarySupported:true,evidenceSupported:true,businessFactsSupported:true,guidanceSupported:true,factualSupported:true,productScopeSupported:true,languageQualitySupported:true};
+const base={character,searchIntent:intent,productContext:context,language:'en',userText:'Barcelona home jersey 2022',replyResult:{text:'Sorry, I could not find that season. This is a Barcelona home alternative from 2026/27.',speechText:'Sorry, I could not find that season. This is a Barcelona home alternative from 2026/27.',sourceType:'ai'},recordReview:async()=>{}};
+const passed=await enforceReplyBoundary({...base,assess:async()=>yes});
+assert.equal(passed.alternativeEvidenceVerified,true);
+assert.equal(selectProductsForReply(context,passed).length,1);
+const rejected=await enforceReplyBoundary({...base,assess:async()=>({...yes,allowed:false,evidenceSupported:false})});
+assert.equal(rejected.alternativeEvidenceVerified,false);assert.equal(selectProductsForReply(context,rejected).length,0);
+const forgedPassed=await enforceReplyBoundary({...base,productContext:forged,assess:async()=>yes});
+assert.equal(forgedPassed.alternativeEvidenceVerified,false);
+console.log('Alternative full-review, proof, one-card and bounded public history checks passed (isolated, no network/DB).');
+
+const {buildCommerceDecisionLogEvent}=await import("../server/ai-reply-log-service.js");
+assert.equal(JSON.parse(buildCommerceDecisionLogEvent({searchIntent:intent,productContext:context}).errorMessage).outcome,"alternative");
+
+const {buildChatReplyPrompt}=await import('../server/chat-prompt-service.js');
+assert.equal(buildChatReplyPrompt({character,productContext:context,userText:'Barcelona home jersey 2022'}).structuredOutput,true);
+assert.equal(buildChatReplyPrompt({character,productContext:forged,userText:'Barcelona home jersey 2022'}).structuredOutput,false);
+const {assessReplyBoundary}=await import('../server/chat-reply-boundary-service.js');
+const {buildReplyReviewFormat}=await import('../server/chat-reply-review-contracts.js');
+assert(buildReplyReviewFormat({productContext:context}).json_schema.schema.properties.alternativeAudit);
+assert(!buildReplyReviewFormat({productContext:null}).json_schema.schema.properties.alternativeAudit);
+const auditText='Sorry, I could not find Barcelona 2022. This alternative is Barcelona 2026/27.';
+const auditQuotes={apologyQuote:'Sorry',originalSearchQuote:'I could not find Barcelona 2022.',differenceQuote:'This alternative is Barcelona 2026/27.'};
+const auditVote={...yes,retainedText:'',retainedTextAllowed:false,retainedBoundarySupported:false,retainedEvidenceSupported:false,retainedLanguageQualitySupported:false,alternativeAudit:{boundedSearchOnly:true,display:auditQuotes,speech:auditQuotes}};
+const actualAssessment=async vote=>assessReplyBoundary({productContext:context,searchIntent:intent,text:auditText,speechText:auditText,userText:'Barcelona home jersey 2022',evidenceRequired:true,boundaryReviewRequired:true,config:{apiKey:'fixture',baseUrl:'https://fixture.invalid',model:'fixture'},recordLog:async()=>{},fetchImpl:async()=>({ok:true,json:async()=>({choices:[{message:{content:JSON.stringify(vote)}}]})})});
+assert.equal((await actualAssessment(auditVote)).allowed,true);
+assert.equal((await actualAssessment({...auditVote,alternativeAudit:{...auditVote.alternativeAudit,display:{...auditQuotes,apologyQuote:''}}})).evidenceSupported,false,'semantic omission cannot hide behind generic approval');
+assert.equal((await actualAssessment({...auditVote,alternativeAudit:{...auditVote.alternativeAudit,speech:{...auditQuotes,differenceQuote:'Barcelona 2022'}}})).allowed,false,'quote must exist and identify the actual different season');
+console.log('Alternative real assessment protocol and conditional structured generation passed (fixture model only).');
+const repairableContext=bindProductAlternativeContext({...context,sourceType:'product_api'},detailed);
+let reviewAttempts=0,wordingAttempts=0;
+const recovered=await enforceReplyBoundary({...base,productContext:repairableContext,
+ assess:async()=>++reviewAttempts===1?{...yes,allowed:false,evidenceSupported:false}:yes,
+ repairGroundedReply:async()=>{wordingAttempts++;return {...base.replyResult,text:'Sorry, I could not find Barcelona 2022. This is a 2026/27 alternative.',speechText:'Sorry, I could not find Barcelona 2022. This is a 2026/27 alternative.'};}});
+assert.equal(wordingAttempts,1);assert.equal(reviewAttempts,2);assert.equal(recovered.alternativeEvidenceVerified,true);
+reviewAttempts=0;wordingAttempts=0;
+const stillRejected=await enforceReplyBoundary({...base,productContext:repairableContext,
+ assess:async()=>{reviewAttempts++;return {...yes,allowed:false,evidenceSupported:false};},
+ repairGroundedReply:async()=>{wordingAttempts++;return {...base.replyResult};}});
+assert.equal(wordingAttempts,1);assert.equal(reviewAttempts,2);assert.equal(selectProductsForReply(repairableContext,stillRejected).length,0);
+console.log('Alternative actual boundary recovery: one new wording candidate, full re-review, no repeat or card after rejection passed.');

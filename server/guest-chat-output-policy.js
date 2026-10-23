@@ -238,7 +238,7 @@ export function normalizeGuestReplyText({ text = "", product = null, productRequ
   const sanitizedText = sanitizeGuestReplyText(text, { userText, productSearchIntent, guestBenefitContext });
   if (!product || !productCardShown) return sanitizedText;
   const productFollowup = normalizeProductFollowupReply({
-    preserveAnswer: productSearchIntent?.answerRequired === true || product?.matchStatus === "candidate"
+    preserveAnswer: Boolean(product?.alternative) || productSearchIntent?.answerRequired === true || product?.matchStatus === "candidate"
       || (productContextSourceRef === "displayed-product-reference" && productSearchIntent?.commerceRoute === "product_search"
         && productSearchIntent?.cardAllowed === true && productSearchIntent?.referencedProductIds?.includes(String(product.productId || product.id || ""))),
     text: sanitizedText,

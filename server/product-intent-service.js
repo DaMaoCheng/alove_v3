@@ -777,6 +777,9 @@ function extractRequestedSeason(text = "", { requestedTeam = "" } = {}) {
   const currentSeason = currentFootballSeason();
   const shortYears = [String(currentSeason.startYear), String(currentSeason.endYear), String(currentSeason.startYear).slice(-2), String(currentSeason.endYear).slice(-2)];
   if (shortYears.some((year) => new RegExp(`\\b${year}\\b`).test(value))) return currentSeason.value;
+  // Preserve current-season inference; only recover otherwise lost historical years.
+  const historicalYear = value.match(/\b((?:19|20)\d{2})\b/);
+  if (historicalYear && Number(historicalYear[1]) < currentSeason.startYear) return historicalYear[1];
   return "";
 }
 
@@ -1099,6 +1102,14 @@ export function productMatchesVariant(product = {}, variant = "") {
   });
 }
 
+// Narrow evidence gate for automatic alternatives; ordinary catalogue matching stays unchanged.
+export function hasExplicitProductTypeEvidence(product = {}, productType = "") {
+  if (productType !== "shirt") return productMatchesProductType(product, productType);
+  const title = normalizeLooseText([product.name, product.title].filter(Boolean).join(" "));
+  return EXPLICIT_SHIRT_GARMENT_PATTERN.test(title) && !NON_SHIRT_GARMENT_PATTERN.test(title)
+    && !/\b(?:sets?|conjunto|miniconjunto|complete kit|full kit)\b|套装|整套|全套/.test(title);
+}
+
 function productMatchesProductType(product = {}, productType = "") {
   const normalizedType = safeString(productType).toLowerCase();
   if (!normalizedType) return false;
@@ -1238,6 +1249,12 @@ function normalizeAgeRange(value = "") {
 }
 
 function productMatchesSeason(product = {}, requestedSeason = "") {
+  if (/^(?:19|20)\d{2}$/.test(safeString(requestedSeason))) {
+    const year = Number(requestedSeason);
+    return productMatchesSeason(product, `${year - 1}/${String(year).slice(-2)}`)
+      || productMatchesSeason(product, `${year}/${String(year + 1).slice(-2)}`)
+      || new RegExp(`\\b${year}\\b`).test(productSearchText(product));
+  }
   const match = safeString(requestedSeason).match(/^(\d{4})\/(\d{2})$/);
   if (!match) return false;
   const text = productSearchText(product);

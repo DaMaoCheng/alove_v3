@@ -7,8 +7,16 @@ export function sanitizeCandidateUnknownFields(value) {
 
 export function publicProductCandidateFields(product = {}) {
   return {
-    ...(product.matchStatus === "candidate" || product.matchStatus === "matched" ? { matchStatus: product.matchStatus } : {}),
+    ...(["candidate", "matched", "alternative"].includes(product.matchStatus) ? { matchStatus: product.matchStatus } : {}),
     candidateUnknownFields: sanitizeCandidateUnknownFields(product.candidateUnknownFields),
+    ...(sanitizeProductAlternative(product.alternative) ? { alternative: sanitizeProductAlternative(product.alternative) } : {}),
     giveaway: product.giveaway === true ? true : product.giveaway === false ? false : null,
   };
+}
+
+// Display history only; this public metadata never grants search/card permission.
+export function sanitizeProductAlternative(value) {
+  const validSeason = x => typeof x === "string" && /^(?:19|20)\d{2}(?:\s*[/-]\s*(?:\d{2}|(?:19|20)\d{2}))?$/.test(x) && x.length <= 16;
+  return value?.kind === "season_alternative" && validSeason(value.requestedSeason) && validSeason(value.alternativeSeason)
+    ? { kind: "season_alternative", requestedSeason: value.requestedSeason, alternativeSeason: value.alternativeSeason } : null;
 }

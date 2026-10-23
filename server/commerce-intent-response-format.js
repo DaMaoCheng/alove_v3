@@ -25,7 +25,7 @@ const update = { anyOf: [
   scalarUpdate('requestedProductType', values(['', ...PRODUCT_REQUIREMENT_SCALAR_VALUES.requestedProductType])),
   scalarUpdate('requestedAudience', values(['', ...PRODUCT_REQUIREMENT_SCALAR_VALUES.requestedAudience])),
   scalarUpdate('requestedColor', values(['', ...PRODUCT_REQUIREMENT_SCALAR_VALUES.requestedColor])),
-  scalarUpdate('requestedSeason', { type: 'string', pattern: '^$|^[0-9]{4}/[0-9]{2}$', maxLength: 7 }),
+  scalarUpdate('requestedSeason', { type: 'string', pattern: '^$|^[0-9]{4}(?:/[0-9]{2})?$', maxLength: 7 }),
   scalarUpdate('requestedEdition', values(['', ...PRODUCT_REQUIREMENT_SCALAR_VALUES.requestedEdition])),
   scalarUpdate('requestedPrinting', values(['', ...PRODUCT_REQUIREMENT_SCALAR_VALUES.requestedPrinting])),
   scalarUpdate('requestedFeatures', list(values(PRODUCT_REQUIREMENT_ARRAY_VALUES.requestedFeatures))),

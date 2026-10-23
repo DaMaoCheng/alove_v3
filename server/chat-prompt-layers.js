@@ -1,3 +1,4 @@
+import { toAlternativeReviewContext, PRODUCT_ALTERNATIVE_CONTRACT } from "./product-alternative-service.js";
 import { buildProductCardDeliveryContext } from "./chat-product-reply-service.js";
 import { toCandidateReviewContext, PRODUCT_CANDIDATE_CONDITIONS_CONTRACT } from "./product-candidate-context-service.js";
 import { buildChatImageStatusInstruction } from "./chat-image-status-context-service.js";
@@ -256,6 +257,8 @@ export function buildProductContextLayer(character, productContext = null, userT
     : "";
   if (!products.length && productClarificationContext(searchIntent, userText)) return { id: "site_product_context", title: "Site Product Context",
     content: "No catalogue operation is authorized or confirmed. The current task is clarification of the user-stated merchandise criteria, not a request to verify catalogue facts. Follow the shared Commerce Clarification contract; do not replace it with a no-results or unavailable-fact answer." };
+  const alternative = toAlternativeReviewContext(productContext);
+  if (alternative) return { id: "site_product_context", title: "Site Product Context", content: [PRODUCT_ALTERNATIVE_CONTRACT, deliveryInstruction, JSON.stringify({ alternative, products })].join("\n") };
   const requestedSizeProfile = safeString(searchIntent.requestedSizeProfile);
   const sizingQuestion = searchIntent.intent === "sizing" || searchIntent.commerceTopic === "sizing" || isCurrentProductSizingContext(productContext);
   if (productContext?.searchOutcome === "candidate" && products.length && productContext?.candidateContext) {

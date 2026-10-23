@@ -1,3 +1,4 @@
+import { transferAlternativeSearch } from './product-alternative-service.js';
 import { normalizeProductSourceError, PRODUCT_SOURCE_ERROR_CODE } from "./product-source-error-service.js";
 import { buildProductSearchIntent } from "./product-intent-service.js";
 import { normalizeCurrency } from "./product-normalizer.js";
@@ -56,6 +57,7 @@ export async function searchSiteProducts({ siteSlug = "", query = "", limit = DE
     };
   }
   let products = [];
+  let detailedResult = null;
   try {
     const options = {
       productApiUrl,
@@ -68,7 +70,8 @@ export async function searchSiteProducts({ siteSlug = "", query = "", limit = DE
     };
     if (allowCandidateSearch) {
       const detailed = await executeProductSearchDetailed(options);
-      products = detailed.matches.length ? detailed.matches : detailed.candidates;
+      detailedResult = detailed;
+      products = detailed.matches.length ? detailed.matches : detailed.candidates.length ? detailed.candidates : (detailed.alternatives || []);
     } else products = await executeProductSearch(options);
   } catch (error) {
     const sourceError = normalizeProductSourceError(error, {
@@ -88,12 +91,12 @@ export async function searchSiteProducts({ siteSlug = "", query = "", limit = DE
     };
   }
 
-  return markServerProductOrigins({
+  return transferAlternativeSearch(detailedResult, markServerProductOrigins({
     ok: true,
     query: normalizedQuery,
     site: mappedSite,
     searchState,
-    searchOutcome: products.some(product => product.matchStatus === "candidate") ? "candidate" : resolveProductSearchState(originalSearchIntent, products).status,
+    searchOutcome: products.some(product => product.matchStatus === "alternative") ? "alternative" : products.some(product => product.matchStatus === "candidate") ? "candidate" : resolveProductSearchState(originalSearchIntent, products).status,
     items: products.map((product, index) => ({
       ...product,
       paymentMethods: mappedSite?.paymentMethods || [],
@@ -106,7 +109,7 @@ export async function searchSiteProducts({ siteSlug = "", query = "", limit = DE
         position: index + 1,
       },
     })),
-  }, products);
+  }, products));
 }
 
 function safeString(value) {

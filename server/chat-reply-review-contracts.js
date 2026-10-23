@@ -1,3 +1,4 @@
+import { toAlternativeReviewContext, PRODUCT_ALTERNATIVE_CONTRACT, PRODUCT_ALTERNATIVE_AUDIT_SCHEMA, PRODUCT_ALTERNATIVE_AUDIT_CONTRACT } from "./product-alternative-service.js";
 import { LANGUAGE_CLARIFICATION_SCHEMA, LANGUAGE_CLARIFICATION_REVIEW_CONTRACT } from "./chat-language-clarification-policy.js";
 import { buildProductCardDeliveryContext } from "./chat-product-reply-service.js";
 import { SIZING_CONVERSATION_CONTRACT } from "./product-sizing-guidance-service.js";
@@ -54,6 +55,7 @@ export function buildReplyReviewFormat(options = {}) {
   // The configured independent review provider rejects native number bounds
   // (observed HTTP 400); retain the strict [0,1] check in the local protocol validator.
   const properties = { allowed: { type: "boolean" }, confidence: { type: "number" } };
+  if (toAlternativeReviewContext(options.productContext)) properties.alternativeAudit = PRODUCT_ALTERNATIVE_AUDIT_SCHEMA;
   if (claimContext) properties.businessClaimAudit = businessClaimAuditSchema(claimContext);
   if (options.languageClarificationEligible === true && options.independentLanguageReview === true) properties.languageClarification = LANGUAGE_CLARIFICATION_SCHEMA;
   const bool = field => { properties[field] = { type: "boolean" }; };
@@ -86,8 +88,9 @@ export function buildReplyReviewMessages(options = {}) {
   const productSearchIntent = searchIntent || productContext?.searchIntent || {};
   const productCardDelivery = buildProductCardDeliveryContext(productContext);
   const candidateContext = toCandidateReviewContext(productContext);
+  const alternativeContext = toAlternativeReviewContext(productContext);
   const candidateIds = candidateContext ? new Set(candidateContext.products.map(product => product.id)) : null;
-  const productSearchOutcome = evidenceRequired ? resolveUnconfirmedProductSearchOutcome(productSearchIntent, productContext?.searchOutcome) : "";
+  const productSearchOutcome = alternativeContext ? "alternative" : evidenceRequired ? resolveUnconfirmedProductSearchOutcome(productSearchIntent, productContext?.searchOutcome) : "";
   const messages = [], system = content => { if (content) messages.push({ role: "system", content }); };
   if (independentLanguageReview) system("A dedicated language reviewer handles language form separately. Evaluate only meaning, facts, evidence, permissions and actions under the active NON-language contracts; do not base allowed or their votes solely on spelling, grammar, typography or active-language correctness. Return JSON with allowed:boolean,confidence:number,boundarySupported:boolean and the required non-language fields. Evaluate both supplied outputs; this cannot approve an unverified claim or grant permissions.");
   if (options.languageClarificationEligible === true && independentLanguageReview) system(LANGUAGE_CLARIFICATION_REVIEW_CONTRACT);
@@ -115,7 +118,7 @@ export function buildReplyReviewMessages(options = {}) {
   if (sizingRequired) system(SIZING_CONTRACT);
   if (sizingConversationContext) system(SIZING_CONVERSATION_CONTRACT);
   if (checkoutContext) system(`${checkoutContext.classificationUnavailable ? "Commerce classification was unavailable. Apply the following checkout rules ONLY when checkoutProblem=true is established under the explicit unsubmitted-purchase definition above; otherwise keep the actual general, policy, product or existing-order concern and its original contracts. Never manufacture checkout state from ambiguity or an old topic. " : ""}${CHECKOUT_REVIEW_CONTRACT}`);
-  if (evidenceRequired) system(candidateContext ? CANDIDATE_EVIDENCE_CONTRACT : PRODUCT_EVIDENCE_CONTRACT);
+  if (evidenceRequired) system(alternativeContext ? PRODUCT_ALTERNATIVE_CONTRACT + " Review BOTH complete outputs. Any missing apology, concealed difference, original-match claim, unsupported product claim or erased supported parallel answer requires evidenceSupported=false and allowed=false. A retained paragraph never approves a card. " + PRODUCT_ALTERNATIVE_AUDIT_CONTRACT : candidateContext ? CANDIDATE_EVIDENCE_CONTRACT : PRODUCT_EVIDENCE_CONTRACT);
   if (candidateContext) system(PRODUCT_CANDIDATE_CONDITIONS_CONTRACT);
   if (options.candidateConfirmationRequired) system(CANDIDATE_CONFIRMATION_CONTRACT);
   system(retainedReviewContract(options));
@@ -125,7 +128,7 @@ export function buildReplyReviewMessages(options = {}) {
     + (options.candidateConfirmationRequired ? "Evaluate the whole reply only. Paragraph retention is disabled; omit all retained fields. "
       : "When allowed=true, the whole reply is approved: retainedText MUST be empty and ALL retained approvals MUST be false; never echo the approved reply in retainedText. Only allowed=false may propose a retained paragraph. If no paragraph is retained, use empty retainedText and false for retained approvals. ")
     + "Never infer approval from a field default.");
-  messages.push({ role: "user", content: JSON.stringify({ ...(businessClaimContext ? { businessClaimContext } : {}), checkoutContext, boundary, productCardDelivery, ...(options.languageClarificationEligible === true && independentLanguageReview ? { languageClarificationEligible: true } : {}), activeLanguage: language, latestUserMessage: userText, proposedResponse: text, ...(independentLanguageReview || evidenceRequired || languageQualityRequired || businessFactsRequired || factualRequired || productScopeRequired ? { proposedSpeech: speechText || text } : {}), evidenceRequired, candidateConfirmationRequired: options.candidateConfirmationRequired, candidateContext, businessFactsRequired, productScopeRequired, productScopeContext, factualRequired, factualContext, factualLimitationReviewRequired, guidanceRequired, sizingRequired, sizingConversationContext, discountPolicyExplanation, feedbackActionAvailable, imageStatusContext, guestBenefitContext, identityContext, orderActionState: ["login_required", "binding_required"].includes(orderActionState) ? orderActionState : null,
+  messages.push({ role: "user", content: JSON.stringify({ ...(businessClaimContext ? { businessClaimContext } : {}), checkoutContext, boundary, productCardDelivery, alternativeContext, ...(options.languageClarificationEligible === true && independentLanguageReview ? { languageClarificationEligible: true } : {}), activeLanguage: language, latestUserMessage: userText, proposedResponse: text, ...(independentLanguageReview || evidenceRequired || languageQualityRequired || businessFactsRequired || factualRequired || productScopeRequired ? { proposedSpeech: speechText || text } : {}), evidenceRequired, candidateConfirmationRequired: options.candidateConfirmationRequired, candidateContext, businessFactsRequired, productScopeRequired, productScopeContext, factualRequired, factualContext, factualLimitationReviewRequired, guidanceRequired, sizingRequired, sizingConversationContext, discountPolicyExplanation, feedbackActionAvailable, imageStatusContext, guestBenefitContext, identityContext, orderActionState: ["login_required", "binding_required"].includes(orderActionState) ? orderActionState : null,
           evidence: evidenceRequired || businessFactsRequired || productScopeRequired || guidanceRequired || imageStatusContext ? {
             ...(evidenceRequired ? { searchOutcome: productSearchOutcome, searchState: String(productSearchIntent.searchState || "").slice(0, 64),
               clarificationExhausted: productSearchOutcome === "clarification_exhausted", sourceErrorCode: String(productContext?.sourceErrorCode || productSearchIntent.sourceErrorCode || "").slice(0, 80) } : {}),

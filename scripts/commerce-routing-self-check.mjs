@@ -261,3 +261,21 @@ for (const [historyText, expectedCheckout] of [
  if (expectedCheckout) assert.equal(decision.checkoutIssue.stage, 'unknown', 'an established unsubmitted purchase can keep unknown stage');
 }
 console.log('elliptical support classifier USER context, contextual retrieval and checkout distinction contract checks passed');
+
+const safeAlternative = { kind: 'season_alternative', requestedSeason: '2022', alternativeSeason: '2024/25' };
+const alternativeHistory = [{ senderType: 'character', characterId: 'fixture-character', contentType: 'product', sessionId: 'fixture-session',
+ product: { id: 'alternative-shirt', name: 'Real Madrid Home 2024/25', siteId: 'fixture-site', alternative: { ...safeAlternative, unsafe: 'must-not-pass' } } }];
+let alternativePacket;
+await classifyCommerceIntent('Does this mean the original 2022 shirt was found?', { config, recentMessages: alternativeHistory,
+ siteId: 'fixture-site', characterId: 'fixture-character', fetchImpl: async (_url, options) => {
+  const body = JSON.parse(options.body); alternativePacket = JSON.parse(body.messages[1].content);
+  assert.match(body.messages[0].content, /alternative.*does not.*original/i);
+  return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ route: 'chat', confidence: .95,
+   replyBoundary: { salesAllowed: false, contactAllowed: true } }) } }] }) };
+ } });
+assert.deepEqual(alternativePacket.recentConversation[0].productCard.alternative, safeAlternative);
+assert.deepEqual(alternativePacket.displayedProductGroup[0].alternative, safeAlternative);
+const { buildCommerceConversationContext } = await import('../server/product-intent-classifier-service.js');
+assert(!Object.hasOwn(buildCommerceConversationContext([{ ...alternativeHistory[0], product: { ...alternativeHistory[0].product,
+ alternative: { ...safeAlternative, requestedSeason: 'invented' } } }])[0].productCard, 'alternative'));
+console.log('sanitized season-alternative history retained without authorizing original-target match');

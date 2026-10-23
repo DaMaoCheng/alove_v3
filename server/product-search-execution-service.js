@@ -1,7 +1,9 @@
+import { productAlternativeIntent, markAlternativeSearch, hasProductAlternativeSearch } from './product-alternative-service.js';
 import { originalProductRequestContext } from "./product-request-scope-service.js";
 import { markCandidateContextSource } from "./product-candidate-source-proof.js";
 import {
   filterProductsByIntent,
+  hasExplicitProductTypeEvidence,
   buildProductCandidateConstraintIntent,
   normalizeProductQueryTeamAlias,
 } from "./product-intent-service.js";
@@ -54,7 +56,10 @@ export async function executeProductSearchDetailed(options = {}) {
   const requestedVariants = selectProductsForRequestedVariants([], intent).unfulfilledVariants;
   const variantAnchors = requestedVariants.length > 1
     ? requestedVariants.map(variant => [intent.requestedTeam, variant, intent.requestedSeason].filter(Boolean).join(" ")) : [];
-  const queries = uniqueQueries([query, nameQuery, anchor, ...variantAnchors]).slice(0, 3);
+  const year = /^\d{4}$/.test(String(intent.requestedSeason || '')) ? Number(intent.requestedSeason) : 0;
+  const seasonAnchors = year ? [year - 1, year].map(start => [intent.requestedTeam, intent.requestedVariant,
+    `${start}/${String(start + 1).slice(-2)}`].filter(Boolean).join(' ')) : [];
+  const queries = uniqueQueries([query, ...seasonAnchors, nameQuery, anchor, ...variantAnchors]).slice(0, 3);
   const collected = [], identities = new Set();
   let partialMatches = [];
   for (let queryIndex = 0; queryIndex < queries.length; queryIndex++) {
@@ -108,6 +113,32 @@ export async function executeProductSearchDetailed(options = {}) {
     if (assessment.status === "mismatch") continue;
     return { matches: [], candidates: [{ ...detail, matchStatus: "candidate", candidateUnknownFields: assessment.unknownFields,
       giveaway: detail.attributeEvidence?.giveaway ?? null, unmatchedSearchTerms: candidate.unmatchedSearchTerms }] };
+  }
+  const alternativeIntent = productAlternativeIntent(intent);
+  if (alternativeIntent) {
+    const selectAlternative = async rows => {
+      const alternatives = (await prepareCollectedProducts(rows.filter(product => hasExplicitProductTypeEvidence(product, intent.requestedProductType)), {
+        originalQuery: '', searchIntent: alternativeIntent, limit: 5, allowNearestAgeFallback: false,
+        editionAssessment: { remaining: 0, cache: new Map() },
+      })).filter(product => product?.url && product.available !== false && !product.attributeEvidence?.giveaway
+        && !filterProductsByIntent([product], intent).length);
+      for (const product of alternatives) {
+        const result = markAlternativeSearch({ matches: [], candidates: [], alternatives: [{ ...product, matchStatus: 'alternative' }] }, intent, queries);
+        if (hasProductAlternativeSearch(result)) return result;
+      }
+      return null;
+    };
+    // Successful original recalls may already contain a known different-season
+    // garment. Reuse those real facts before spending the one extra recall.
+    const fromOriginalPool = await selectAlternative(collected);
+    if (fromOriginalPool) return fromOriginalPool;
+    const rows = await fetchProducts(options.productApiUrl, { ...alternativeIntent,
+      query: [intent.requestedTeam, intent.requestedVariant].filter(Boolean).join(' ') }, {
+      currency: options.currency, encryptedAccessToken: options.encryptedAccessToken,
+      maxProducts: PRODUCT_CANDIDATE_FETCH_LIMIT, throwOnError: true,
+    });
+    const fromAdditionalRecall = await selectAlternative(rows);
+    if (fromAdditionalRecall) return fromAdditionalRecall;
   }
   return { matches: [], candidates: [] };
 }

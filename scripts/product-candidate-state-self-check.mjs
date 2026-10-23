@@ -365,3 +365,6 @@ assert.equal(selectedUnavailable.productCandidateState.status, 'active');
 assert.equal(selectedUnavailable.productCandidateState.proposal, null);
 assert.equal(selectedUnavailable.productCandidateState.ownerEvidence, selectedDisplay.ownerEvidence);
 console.log('product candidate state self-check passed: retained user constraints, multilingual semantic confirmation, rejected/hidden proposals, owner/site boundaries; no network/DB/model calls');
+const historicalYearText = 'Real Madrid jersey 2022';
+assert.equal(normalizeProductRequirementDecision({ action: 'new', evidence: historicalYearText,
+ updates: [{ field: 'requestedSeason', value: '2022', evidence: '2022' }], suspectedTerm: null }, { userText: historicalYearText })?.updates[0].value, '2022');

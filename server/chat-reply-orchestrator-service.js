@@ -249,7 +249,7 @@ export async function persistCharacterReplyForDb(db, {
   const selectedProducts = selectProductsForReply(productContext, replyResult);
   const selectedProduct = selectedProducts[0] || null;
   const productFollowup = selectedProduct && !isAiTransportFallback(replyResult) ? normalizeProductFollowupReply({
-    preserveAnswer: Boolean(productContext?.candidateContext) || replyResult.answerRequired === true || productContext?.searchIntent?.answerRequired === true
+    preserveAnswer: productContext?.searchOutcome === "alternative" || Boolean(productContext?.candidateContext) || replyResult.answerRequired === true || productContext?.searchIntent?.answerRequired === true
       || (productContext?.sourceRef === "displayed-product-reference" && productContext.snapshotOnly === true),
     text: replyResult.text,
     speechText: replyResult.speechText,

@@ -1,3 +1,4 @@
+import { bindProductAlternativeContext } from './product-alternative-service.js';
 import { buildDisplayedProductReferenceContext } from './product-displayed-reference-service.js';
 import { mergeReplyCommerceContext } from "./chat-reply-boundary-service.js";
 import { buildCandidateConfirmationContext } from './product-candidate-confirmation-service.js';
@@ -226,6 +227,7 @@ export async function buildChatProductRecommendationContext(db, {
     ? await loadProductPopularityScores(db, { siteId: site.id, siteSlug: site.slug })
     : null;
   let products = [];
+  let detailedResult = null;
   try {
     const detailed = await executeProductSearchDetailed({
       productApiUrl: site.product_api_url,
@@ -241,7 +243,8 @@ export async function buildChatProductRecommendationContext(db, {
       // explicit user requirement, its memory-derived query is not a hard title filter.
       trustSourceResults: Boolean(preferenceFallback?.query),
     });
-    products = detailed.matches.length ? detailed.matches : detailed.candidates;
+    detailedResult = detailed;
+    products = detailed.matches.length ? detailed.matches : detailed.candidates.length ? detailed.candidates : (detailed.alternatives || []);
   } catch (error) {
     const failure = normalizeProductSourceError(error, {
       provider: isTtmallProductSource(site.product_api_url) ? "ttmall" : "http",
@@ -286,7 +289,7 @@ export async function buildChatProductRecommendationContext(db, {
   }
   if (!products.length) return buildEmptyProductContext(site, fallbackSearchIntent, "site-product-no-match");
 
-  return {
+  return bindProductAlternativeContext({
     sourceType: "product_api",
     sourceRef: isExplicitProductSizingSearch(fallbackSearchIntent) ? "site-product-sizing-match" : "site-product-context",
     siteId: site.id || "",
@@ -297,11 +300,11 @@ export async function buildChatProductRecommendationContext(db, {
     productApiUrl: site.product_api_url || "",
     searchIntent: fallbackSearchIntent,
     cardAllowed: fallbackSearchIntent.cardAllowed !== false,
-    searchOutcome: products.some(product => product.matchStatus === "candidate") ? "candidate" : resolveProductSearchState(fallbackSearchIntent, products).status,
+    searchOutcome: products.some(product => product.matchStatus === "alternative") ? "alternative" : products.some(product => product.matchStatus === "candidate") ? "candidate" : resolveProductSearchState(fallbackSearchIntent, products).status,
     candidateContext: productCandidateContext(products, fallbackSearchIntent, { siteId: site.id, characterId: character.id || character.characterId || '' }),
     sizingProduct: isExplicitProductSizingSearch(fallbackSearchIntent) ? products[0] : null,
     products: attachPaymentMethods(products, sitePaymentMethods),
-  };
+  }, detailedResult);
 }
 
 function buildProductContextFromProducts(site, searchIntent, products, sitePaymentMethods, {
@@ -546,7 +549,12 @@ async function loadRecentSessionProductState(db, { sessionId = "", siteId = "", 
       const productSiteSlug = safeString(product.siteSlug || product.site_slug);
       return (!siteId || !productSiteId || productSiteId === siteId) && (!siteSlug || !productSiteSlug || productSiteSlug === siteSlug);
     });
-  const lastSearchIntent = products.find((product) => product.searchIntent && typeof product.searchIntent === "object")?.searchIntent || null;
+  const lastSearchProduct = products.find((product) => product.searchIntent && typeof product.searchIntent === "object");
+  // The old requested year describes the unsuccessful original search, not the
+  // alternative card. Keep history intact and resolve explicit card references
+  // through their real catalogue facts instead of inheriting that old year.
+  const lastSearchIntent = lastSearchProduct?.alternative?.kind === 'season_alternative'
+    ? null : lastSearchProduct?.searchIntent || null;
   const excludedIdentities = new Set(products.flatMap(productIdentityKeys));
   return {
     excludedIdentities,

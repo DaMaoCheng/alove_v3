@@ -1,3 +1,4 @@
+import { isProductAlternativeContext } from "./product-alternative-service.js";
 const RECENT_MESSAGE_LIMIT = 50;
 import {
   buildBoundaryLayer,
@@ -41,7 +42,7 @@ export function buildChatReplyPrompt({ character, trustedSite = null, recentMess
     buildBoundaryLayer(),
   ].filter((layer) => layer?.content).map((layer) => ({ ...layer, content: mapPromptMessage({ senderType: "system", text: layer.content }).content }));
   return {
-    structuredOutput: Boolean(productContext?.candidateContext) || knowledgeContext?.customerServiceIntent === true,
+    structuredOutput: isProductAlternativeContext(productContext) || Boolean(productContext?.candidateContext) || knowledgeContext?.customerServiceIntent === true,
     systemPrompt: layers.map((layer) => `## ${layer.title}\n${layer.content}`).join("\n\n"),
     messages: [
       ...normalizedMessages.map(mapPromptMessage),

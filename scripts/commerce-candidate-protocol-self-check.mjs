@@ -169,3 +169,68 @@ await assert.rejects(requestAiJsonWithProviderFallback([{ role: 'user', content:
   return error.code === 'AI_REPLY_TIMEOUT';
 });
 console.log(`commerce candidate protocol self-check passed (${checks} checks; fixture providers only)`);
+
+// Legacy explicit configurations keep their smaller response contract, but the
+// mandatory route/confidence/boundary protocol must fail INSIDE finite fallback.
+const explicitProviders = ['one', 'two', 'three'].map(name => ({ id: name, apiKey: 'fixture', model: name,
+ baseUrl: 'https://explicit.invalid/v1', apiMode: 'chat_completions' }));
+const minimal = { route: 'store_policy', confidence: .95, replyBoundary: { salesAllowed: false, contactAllowed: true } };
+for (const malformed of [
+ { ...minimal, replyBoundary: undefined }, { ...minimal, replyBoundary: { salesAllowed: false } },
+ { ...minimal, replyBoundary: { salesAllowed: 'false', contactAllowed: true } },
+ { ...minimal, route: 'invented' }, { ...minimal, confidence: '0.95' },
+]) {
+ const f = fixture([malformed, minimal]);
+ const recovered = await classifyCommerceIntent('A general store-policy question', { config: explicitProviders, fetchImpl: f.fetchImpl });
+ check(f.models.length === 2 && recovered.boundaryVerified && !recovered.commerceClassificationFailure,
+  'missing mandatory legacy protocol advances only the supplied finite provider chain');
+}
+for (const terminal of [{ ...minimal, confidence: .4 }, { ...minimal, replyBoundary: { salesAllowed: false, contactAllowed: false } }]) {
+ const f = fixture([terminal, minimal]);
+ await classifyCommerceIntent('A general store-policy question', { config: explicitProviders, fetchImpl: f.fetchImpl });
+ check(f.models.length === 1, 'valid low confidence and closed boundaries are terminal semantic decisions');
+}
+const legacyExhausted = fixture([{ route: 'store_policy', confidence: .95 }]);
+const legacyFailure = await classifyCommerceIntent('A general store-policy question', { config: explicitProviders, fetchImpl: legacyExhausted.fetchImpl });
+check(legacyExhausted.models.length === 3 && legacyFailure.commerceClassificationFailure === 'missing_fields', 'all-invalid legacy protocol stops after each configured provider once');
+check(legacyFailure.commerceClassificationFailures.length === 3, 'finite protocol exhaustion retains sanitized provider diagnostics');
+console.log('legacy mandatory classification protocol finite fallback and terminal semantic votes passed');
+// Default strict validation also applies without a confident JEV product label.
+const defaultBoundaryMissing = structuredClone(valid);
+delete defaultBoundaryMissing.replyBoundary;
+const defaultBoundaryRecovery = fixture([defaultBoundaryMissing, valid]);
+const defaultRecovered = await classifyCommerceIntent(text, { fetchImpl: defaultBoundaryRecovery.fetchImpl });
+check(defaultBoundaryRecovery.models.length === 2 && defaultRecovered.boundaryVerified && !defaultRecovered.commerceClassificationFailure,
+ 'default non-candidate strict task rejects missing boundary before selecting a provider');
+const defaultLowConfidence = fixture([{ ...valid, confidence: .4 }, valid]);
+const lowConfidenceDecision = await classifyCommerceIntent(text, { fetchImpl: defaultLowConfidence.fetchImpl });
+check(defaultLowConfidence.models.length === 1 && lowConfidenceDecision.boundaryVerified && !lowConfidenceDecision.confident
+ && !lowConfidenceDecision.commerceClassificationFailure, 'default valid low confidence is uncertainty rather than missing fields');
+const historicalText = 'Real Madrid jersey 2022';
+const historical = { ...valid, productRequirement: { action: 'new', evidence: historicalText, priorTargetEvidence: '',
+ updates: [{ field: 'requestedSeason', value: '2022', evidence: '2022' }], suspectedTerm: null } };
+const historicalValid = fixture([historical]);
+const historicalResult = await classifyCommerceIntent(historicalText, { jevDecision, fetchImpl: historicalValid.fetchImpl });
+check(historicalValid.models.length === 1 && historicalResult.productRequirement?.updates[0]?.value === '2022', 'historical single year survives strict protocol and requirement normalization');
+const inventedPair = fixture([{ ...historical, productRequirement: { ...historical.productRequirement,
+ updates: [{ field: 'requestedSeason', value: '2022/23', evidence: '2022' }] } }, historical]);
+const pairResult = await classifyCommerceIntent(historicalText, { jevDecision, fetchImpl: inventedPair.fetchImpl });
+check(inventedPair.models.length === 2 && pairResult.productRequirement?.updates[0]?.value === '2022', 'a quoted year cannot manufacture an adjacent full season');
+const historicalUncertain = fixture([{ ...historical, confidence: .4 }, historical]);
+await classifyCommerceIntent(historicalText, { jevDecision, fetchImpl: historicalUncertain.fetchImpl });
+check(historicalUncertain.models.length === 1, 'valid historical year at low confidence remains terminal');
+const yearContinuationLocation = { siteId: 'year-shop', characterId: 'year-character' };
+const yearContinuationHistory = [{ senderType: 'character', productCandidateState: { version: 1, status: 'active', ...yearContinuationLocation,
+ owner: 'single', targetEvidence: 'Barcelona shirt', requirements: { requestedTeam: 'Barcelona', requestedProductType: 'shirt', requestedSeason: '2022' }, proposal: null } }];
+const yearContinuation = { ...historical, commerceConstraints: { edition: null, team: null }, productRequirement: {
+ action: 'continue', evidence: '2020 instead', priorTargetEvidence: '', updates: [{ field: 'requestedSeason', value: '2020', evidence: '2020' }], suspectedTerm: null } };
+const continuationFixture = fixture([yearContinuation]);
+const continuationResult = await classifyCommerceIntent('2020 instead', { ...yearContinuationLocation, recentMessages: yearContinuationHistory, jevDecision,
+ fetchImpl: continuationFixture.fetchImpl });
+check(continuationFixture.models.length === 1 && continuationResult.productRequirement?.updates[0]?.value === '2020', 'an active owned team target supplies only team context for a current single-year revision');
+const absentYear = fixture([{ ...yearContinuation, productRequirement: { ...yearContinuation.productRequirement,
+ evidence: 'instead', updates: [{ field: 'requestedSeason', value: '2020', evidence: 'instead' }] } }]);
+const absentYearResult = await classifyCommerceIntent('instead', { ...yearContinuationLocation, recentMessages: yearContinuationHistory, jevDecision,
+ fetchImpl: absentYear.fetchImpl });
+check(absentYearResult.commerceClassificationFailure === 'missing_fields' && absentYear.models.length === 3,
+ 'owned prior target cannot manufacture an unmentioned current year');

@@ -91,7 +91,7 @@ export function buildCommerceDecisionLogEvent({ searchIntent = {}, knowledgeCont
             : searchIntent.productScopePending === true ? "scope_pending" : "",
     sourceErrorCode,
     outcome: searchIntent.commerceClassificationUnavailable === true ? "classification_unavailable"
-      : ["matched", "candidate", "no_match", "needs_clarification", "clarification_exhausted", "source_error"].includes(productContext?.searchOutcome) ? productContext.searchOutcome : (sourceErrorCode ? "source_error" : productContext?.products?.length ? "matched" : "skipped"),
+      : ["matched", "alternative", "candidate", "no_match", "needs_clarification", "clarification_exhausted", "source_error"].includes(productContext?.searchOutcome) ? productContext.searchOutcome : (sourceErrorCode ? "source_error" : productContext?.products?.length ? "matched" : "skipped"),
     productCount: Math.min(10, productContext?.products?.length || 0),
     scopeReason: ["confidence_unverified", "request_unverified", "selection_without_scope", "selection_index_unverified", "item_evidence_unverified", "non_multiple_shape_unverified", "relation_unverified", "selection_evidence_unverified"].includes(searchIntent.productScopeReason) ? searchIntent.productScopeReason : searchIntent.productScopeReason ? "scope_unverified" : "",
     knowledgeStrategy: ["customer_service_topic", "customer_service_no_reference", "directory_then_expanded", "expanded_all", "no_keyword_trigger", "empty_query", "not_requested",

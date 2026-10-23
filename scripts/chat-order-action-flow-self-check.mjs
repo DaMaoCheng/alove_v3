@@ -100,7 +100,7 @@ async function runFlowChecks() {
   };
   globalThis.__orderActionFlowStubs = stubs;
   stubs["guest-product-reply-copy.js"] = { buildGuestProductReplyCopy: () => "Unavailable." };
-  const realModules = new Set(["business-claim-audit-service.js", "tts-emotion-tag-service.js", "product-candidate-source-proof.js", "chat-reply-purpose-service.js", "chat-reply-recovery-state.js", "chat-language-clarification-policy.js", "chat-prompt-utils.js", "chat-reply-review-outcome.js", "product-sizing-guidance-service.js", "product-size-chart-catalog.js", "product-candidate-confirmation-service.js", "chat-product-routing-context-service.js", "product-requirement-fields.js", "commerce-classification-failure-service.js","product-search-decision-service.js", "product-request-scope-service.js", "product-candidate-state-service.js", "product-candidate-context-service.js", "product-attribute-evidence-service.js", "product-edition-service.js", "product-request-scope-service.js", "product-request-scope-copy.js", "chat-reply-orchestrator-service.js", "chat-text-message-service.js", "chat-order-intent-service.js", "checkout-support-guidance.js", "chat-global-reply-policy.js"]);
+  const realModules = new Set(["guest-product-sanitizer.js", "product-source-provenance.js", "product-source-error-service.js","product-alternative-service.js", "product-search-match-service.js", "product-response-sanitizer.js","business-claim-audit-service.js", "tts-emotion-tag-service.js", "product-candidate-source-proof.js", "chat-reply-purpose-service.js", "chat-reply-recovery-state.js", "chat-language-clarification-policy.js", "chat-prompt-utils.js", "chat-reply-review-outcome.js", "product-sizing-guidance-service.js", "product-size-chart-catalog.js", "product-candidate-confirmation-service.js", "chat-product-routing-context-service.js", "product-requirement-fields.js", "commerce-classification-failure-service.js","product-search-decision-service.js", "product-request-scope-service.js", "product-candidate-state-service.js", "product-candidate-context-service.js", "product-attribute-evidence-service.js", "product-edition-service.js", "product-request-scope-service.js", "product-request-scope-copy.js", "chat-reply-orchestrator-service.js", "chat-text-message-service.js", "chat-order-intent-service.js", "checkout-support-guidance.js", "chat-global-reply-policy.js"]);
   const serverUrl = new URL("../server/", import.meta.url).href;
   // Async loaders run in another thread. Transfer only serializable export
   // names; the generated modules read function stubs in the worker's realm.
@@ -114,7 +114,7 @@ async function runFlowChecks() {
     export async function resolve(specifier, context, nextResolve) {
       if (context.parentURL?.startsWith(serverUrl) && specifier.startsWith("./")) {
         const filename = specifier.slice(2);
-        if (filename === "product-intent-service.js" && context.parentURL.endsWith("/product-candidate-confirmation-service.js")) return nextResolve(specifier, context);
+        if (filename === "product-intent-service.js" && (context.parentURL.endsWith("/product-candidate-confirmation-service.js") || context.parentURL.endsWith("/product-alternative-service.js"))) return nextResolve(specifier, context);
         if (!realModules.has(filename)) {
           if (!stubExportNames[filename]) throw new Error("Unmocked server dependency: " + filename);
           return { url: "order-flow:" + filename, shortCircuit: true };

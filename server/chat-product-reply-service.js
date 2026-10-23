@@ -1,6 +1,7 @@
+import { toAlternativeReviewContext } from "./product-alternative-service.js";
 import { selectProductsForRequestedVariants } from "./product-candidate-ranking-service.js";
 import { isAiTransportFallback } from "./ai-reply-fallback-service.js";
-import { sanitizeCandidateUnknownFields } from "../shared/product-candidate-fields.js";
+import { sanitizeCandidateUnknownFields, sanitizeProductAlternative } from "../shared/product-candidate-fields.js";
 import { recordProductBubbleTriggered } from "./product-analytics-service.js";
 import { insertMessage } from "./chat-service-shared.js";
 import { isProductImageCardRequest } from "./product-intent-service.js";
@@ -33,7 +34,7 @@ export function selectProductForMessage(productContext = null) {
 }
 
 export function selectProductsForMessage(productContext = null, { limit = 2 } = {}) {
-  if (productContext?.cardAllowed === false) return [];
+  if (productContext?.cardAllowed === false || productContext?.searchOutcome === "alternative" && !toAlternativeReviewContext(productContext)) return [];
   if (productContext?.sourceRef === 'displayed-product-reference'
     && (!Array.isArray(productContext.products) || productContext.products.some(product => !product || typeof product !== 'object' || Array.isArray(product)))) return [];
   const requestedVariants = Array.isArray(productContext?.searchIntent?.requestedVariants)
@@ -88,13 +89,16 @@ export function buildProductCardDeliveryContext(productContext = null) {
 
 // Both guest and member persistence apply these same existing post-review gates.
 export function selectProductsForReply(productContext = null, replyResult = {}) {
-  if (replyResult.productScopeVerified === false
+  if (productContext?.searchOutcome === "alternative" && replyResult.alternativeEvidenceVerified !== true
+    || replyResult.productScopeVerified === false
     || productContext?.candidateContext && replyResult.candidateEvidenceVerified !== true
     || isAiTransportFallback(replyResult) || replyResult.replyBoundary?.salesAllowed === false) return [];
   return selectProductsForMessage(productContext);
 }
 
 function selectSingleProductForMessage(productContext = null, product = null) {
+  const alternative = toAlternativeReviewContext(productContext);
+  const historicalAlternative = productContext?.sourceRef === "displayed-product-reference" && productContext.snapshotOnly === true ? sanitizeProductAlternative(product.alternative) : null;
   if (!product?.name) return null;
   const livePriceFetchedAt = productContext.snapshotOnly ? product.livePriceFetchedAt || "" : new Date().toISOString();
   const sizeChart = sanitizeProductSizingChart(product.sizeChart);
@@ -104,10 +108,11 @@ function selectSingleProductForMessage(productContext = null, product = null) {
     sku: product.sku || "",
     name: product.name,
     canonicalEdition: resolveCanonicalProductEdition(product),
-    matchStatus: productContext?.searchOutcome === "candidate" ? "candidate" : "matched",
+    matchStatus: alternative ? "alternative" : productContext?.searchOutcome === "candidate" ? "candidate" : "matched",
+    ...(alternative ? { alternative: { kind: "season_alternative", requestedSeason: alternative.requestedSeason, alternativeSeason: alternative.alternativeSeason } } : historicalAlternative ? { alternative: historicalAlternative } : {}),
     candidateUnknownFields: sanitizeCandidateUnknownFields(product.candidateUnknownFields),
     giveaway: product.giveaway === true ? true : product.giveaway === false ? false : null,
-    subtitle: productContext.searchOutcome === 'candidate' ? '' : product.subtitle || product.summary || productContext.searchIntent?.query || "Recommended for you",
+    subtitle: productContext.searchOutcome === 'candidate' ? '' : product.subtitle || product.summary || (alternative || historicalAlternative ? "" : productContext.searchIntent?.query || "Recommended for you"),
     priceNow: product.price || product.priceNow || "",
     priceWas: product.priceWas || "",
     code: product.code || "",

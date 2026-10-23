@@ -1,3 +1,4 @@
+import { alternativeProductsForSearch, bindProductAlternativeContext } from './product-alternative-service.js';
 import { buildDisplayedProductReferenceContext } from './product-displayed-reference-service.js';
 import { mergeReplyCommerceContext } from "./chat-reply-boundary-service.js";
 import { hasPendingProductRequest, productScopeHistory } from "./product-request-scope-service.js";
@@ -146,7 +147,9 @@ export async function resolveGuestProductRecommendation(db, {
     });
     const safeResult = toGuestSafeProductSearchResult(result, { includeAttributeEvidence: true });
     // Enforce the requested garment/audience/team even if a source returns a loose match.
-    let products = safeResult.searchOutcome === "candidate" && searchIntent.candidateSearchAllowed === true
+    let products = safeResult.searchOutcome === "alternative"
+      ? alternativeProductsForSearch(result, searchIntent, safeResult.items)
+      : safeResult.searchOutcome === "candidate" && searchIntent.candidateSearchAllowed === true
       ? safeResult.items.filter(product => product.matchStatus === "candidate")
       : filterProductsByIntent(safeResult.items, searchIntent, { allowNearestAgeFallback: true });
     if (searchIntent.referencedProductId) products = products.filter((product) => String(product.productId || product.id || "") === searchIntent.referencedProductId);
@@ -173,7 +176,7 @@ export async function resolveGuestProductRecommendation(db, {
     return {
       requested: true,
       searchIntent,
-      context: {
+      context: bindProductAlternativeContext({
         sourceType: "product_api",
         sourceRef: isExplicitProductSizingSearch(searchIntent) ? "guest-site-product-sizing-match" : "guest-site-product-context",
         siteId: site.id,
@@ -182,11 +185,11 @@ export async function resolveGuestProductRecommendation(db, {
         siteCurrency: site.currency || "",
         searchIntent,
         cardAllowed: searchIntent.cardAllowed !== false,
-        searchOutcome: products.some(product => product.matchStatus === "candidate") ? "candidate" : resolveProductSearchState(searchIntent, products).status,
+        searchOutcome: safeResult.searchOutcome === "alternative" ? "alternative" : products.some(product => product.matchStatus === "candidate") ? "candidate" : resolveProductSearchState(searchIntent, products).status,
         candidateContext: productCandidateContext(products, searchIntent, { siteId: site.id, characterId: guest.mascot_character_id }),
         sizingProduct: isExplicitProductSizingSearch(searchIntent) ? products[0] : null,
         products,
-      },
+      }, result),
     };
   } catch (error) {
     const failure = normalizeProductSourceError(error);
