@@ -34,6 +34,12 @@ delete legacyFormat.json_schema.schema.properties.referencedProductIds;
 legacyFormat.json_schema.schema.required = legacyFormat.json_schema.schema.required.filter(key => key !== 'referencedProductIds');
 assert.deepEqual(schema.properties.referencedProductIds, { type:'array',items:{type:'string',maxLength:160},minItems:0,maxItems:2 });
 assert(schema.required.includes('referencedProductIds'));
+// Historical bare years intentionally extend just the season wire value.
+// Restore that one prior pattern before checking the unchanged contract hash.
+const legacySeason=legacyFormat.json_schema.schema.properties.productRequirement.properties.updates.items.anyOf
+  .find(branch=>branch.properties.field.enum[0]==='requestedSeason').properties.value;
+assert.deepEqual(legacySeason,{type:'string',pattern:'^$|^[0-9]{4}(?:/[0-9]{2})?$',maxLength:7});
+legacySeason.pattern='^$|^[0-9]{4}/[0-9]{2}$';
 assert.equal(createHash('sha256').update(JSON.stringify(legacyFormat)).digest('hex'),
   '813384b5c1520ce72cd1ca1cf3035edea5bc81b95d240c2fea2699bd303be20f',
   'Shared finite values must retain the complete pre-refactor wire contract');
@@ -85,6 +91,8 @@ assert.equal(normalizeProductRequirementDecision({ action: 'new', evidence: 'Soc
 assert.equal(valid(updates, [{ field: 'requestedFeatures', value: ['short_sleeve'], evidence: 'manga corta' }]), true);
 assert.equal(valid(updates, [{ field: 'requestedPrinting', value: 'none', evidence: 'sin nombre ni número' }]), true);
 assert.equal(valid(updates, [{ field: 'requestedSeason', value: '2026/27', evidence: '2026/27' }]), true);
+for(const value of ['', '2022', '2021/22']) assert.equal(valid(updates,[{field:'requestedSeason',value,evidence:'current'}]),true);
+for(const value of ['202', '20222', '2022/2023', '2022/2', '2022junk']) assert.equal(valid(updates,[{field:'requestedSeason',value,evidence:'current'}]),false);
 assert.equal(valid(updates, [{ field: 'requestedVariants', value: ['some jersey'], evidence: 'some jersey' }]), false);
 for (const field of ['businessInquiry', 'humanHandoff', 'promotionInquiry', 'checkoutIssue', 'commerceConstraints', 'replyBoundary']) {
   assert.ok(schema.properties[field], `Existing commerce field retained: ${field}`);
