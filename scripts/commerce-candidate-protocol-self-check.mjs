@@ -176,8 +176,6 @@ const explicitProviders = ['one', 'two', 'three'].map(name => ({ id: name, apiKe
  baseUrl: 'https://explicit.invalid/v1', apiMode: 'chat_completions' }));
 const minimal = { route: 'store_policy', confidence: .95, replyBoundary: { salesAllowed: false, contactAllowed: true } };
 for (const malformed of [
- { ...minimal, replyBoundary: undefined }, { ...minimal, replyBoundary: { salesAllowed: false } },
- { ...minimal, replyBoundary: { salesAllowed: 'false', contactAllowed: true } },
  { ...minimal, route: 'invented' }, { ...minimal, confidence: '0.95' },
 ]) {
  const f = fixture([malformed, minimal]);
@@ -190,7 +188,13 @@ for (const terminal of [{ ...minimal, confidence: .4 }, { ...minimal, replyBound
  await classifyCommerceIntent('A general store-policy question', { config: explicitProviders, fetchImpl: f.fetchImpl });
  check(f.models.length === 1, 'valid low confidence and closed boundaries are terminal semantic decisions');
 }
-const legacyExhausted = fixture([{ route: 'store_policy', confidence: .95 }]);
+for (const replyBoundary of [undefined,{salesAllowed:false},{salesAllowed:'false',contactAllowed:true}]) {
+ const f=fixture([{...minimal,replyBoundary,answerRequired:true,knowledgeQuery:'current concern'},minimal]);
+ const closed=await classifyCommerceIntent('A general store-policy question',{config:explicitProviders,fetchImpl:f.fetchImpl});
+ check(f.models.length===1 && closed.answerRequired && closed.knowledgeQuery==='current concern' && !closed.boundaryVerified
+  && !closed.replyBoundary.salesAllowed && !closed.replyBoundary.contactAllowed,'legacy unverified boundary closes invitations while preserving valid substantive questions');
+}
+const legacyExhausted = fixture([{ confidence: .95 }]);
 const legacyFailure = await classifyCommerceIntent('A general store-policy question', { config: explicitProviders, fetchImpl: legacyExhausted.fetchImpl });
 check(legacyExhausted.models.length === 3 && legacyFailure.commerceClassificationFailure === 'missing_fields', 'all-invalid legacy protocol stops after each configured provider once');
 check(legacyFailure.commerceClassificationFailures.length === 3, 'finite protocol exhaustion retains sanitized provider diagnostics');

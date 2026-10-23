@@ -254,8 +254,7 @@ export async function classifyCommerceIntent(userText = "", { recentMessages = [
       // and default chains retain full shape and user-evidence validation.
       validateParsed: value => candidateJsonTask || independentClassifierConfig
         ? validateCandidateProtocol(value, { userText: text, recentMessages, detectedTeam, siteId, characterId })
-        : { valid: Boolean(value && COMMERCE_ROUTES.has(value.route) && Number.isFinite(value.confidence)
-          && typeof value.replyBoundary?.salesAllowed === 'boolean' && typeof value.replyBoundary?.contactAllowed === 'boolean'), reason: 'shape' },
+        : { valid: Boolean(value && COMMERCE_ROUTES.has(value.route) && Number.isFinite(value.confidence)), reason: 'shape' },
     });
     if (((candidateJsonTask || independentClassifierConfig) && !validateCommerceIntentShape(parsed)) || !parsed || !COMMERCE_ROUTES.has(parsed.route) || !Number.isFinite(parsed.confidence)) {
       return { ...normalizeCommerceDecision(), commerceClassificationFailure: "missing_fields" };
