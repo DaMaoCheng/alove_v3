@@ -66,7 +66,18 @@ check(repairSystemPrompt.includes('Missing attributes that the user did not ask 
   'matched subjective guidance is not converted to unrequested specification or ranking limitations');
 check(!repairPacket.requirements.requestedEdition && !repairPacket.requirements.requestedFeatures?.length && !repairPacket.requirements.requestedPrinting,
   'matched preference fixture does not manufacture absent user constraints');
-check(repairSystemPrompt.includes('explicitly identify every relevant unknown requested attribute'),
-  'actual unconfirmed candidates still retain required unknown-attribute disclosure');
+check(!repairSystemPrompt.includes('explicitly identify every relevant unknown requested attribute'),
+  'proved matched captions do not inherit unconfirmed-candidate instructions');
+let candidateRepairPrompt = '';
+const unconfirmed = { ...products[0], matchStatus: 'candidate', candidateUnknownFields: ['sleeve'] };
+await repairGroundedCommerceReply({ replyResult: { text: 'The sleeve is confirmed.', sourceType: 'ai' },
+  character: { id: 'mascot_fixture', category_id: 'mascot' }, searchIntent: matchedIntent,
+  productContext: { ...context, searchIntent: matchedIntent, searchOutcome: 'candidate', products: [unconfirmed],
+    candidateContext: { requiresConfirmation: true, products: [{ ...unconfirmed, unknownFields: ['sleeve'] }] } },
+  reviewStatus: 'valid', reviewResult: { allowed: false, confidence: .99, boundarySupported: true }, failedContracts: ['evidence'],
+  language: 'en', userText: 'I want short sleeves.', config: { apiKey: 'isolated-fixture', model: 'fixture', apiMode: 'chat_completions' },
+  requestText: async prompt => { candidateRepairPrompt = prompt.systemPrompt; return '{"displayText":null}'; } });
+check(candidateRepairPrompt.includes('explicitly identify every relevant unknown requested attribute'),
+  'an actual unconfirmed candidate retains required unknown-attribute disclosure');
 check(repaired.productScopeVerified!==true && repaired.candidateEvidenceVerified!==true,'new corrective caption is not an approval or card permission');
 console.log(`product card delivery self-check passed: ${checks} deterministic checks; no DB, network or model calls`);

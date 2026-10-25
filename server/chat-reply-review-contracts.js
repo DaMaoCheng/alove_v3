@@ -7,7 +7,7 @@ import { TRUSTED_IDENTITY_CONTRACT } from "./chat-prompt-utils.js";
 import { productClarificationContext, PRODUCT_CLARIFICATION_CONTRACT, CLOSED_CLARIFICATION_RECOVERY_CONTRACT } from "./chat-reply-purpose-service.js";
 import { buildCurrentImageDeliveryContract, buildImageRepresentationContract } from "./chat-image-status-context-service.js";
 import { buildBusinessClaimContext, businessClaimAuditSchema, BUSINESS_CLAIM_AUDIT_CONTRACT, GENERAL_COMMERCE_EXPLANATION_CONTRACT } from './business-claim-audit-service.js';
-import { toCandidateReviewContext, PRODUCT_CANDIDATE_CONDITIONS_CONTRACT } from "./product-candidate-context-service.js";
+import { toCandidateReviewContext, PRODUCT_CANDIDATE_CONDITIONS_CONTRACT, toNoMatchReviewContext, PRODUCT_NO_MATCH_CONTEXT_CONTRACT, toMatchedCatalogueReviewContext } from "./product-candidate-context-service.js";
 import { LANGUAGE_QUALITY_REVIEW_CONTRACT } from "./chat-reply-language-quality.js";
 import { FACTUAL_REVIEW_CONTRACT_BASE } from "./chat-factual-policy.js";
 import { CHECKOUT_REVIEW_CONTRACT } from "./checkout-support-guidance.js";
@@ -87,8 +87,12 @@ export function buildReplyReviewMessages(options = {}) {
     checkoutContext = null, productContext = null, knowledgeContext = null, searchIntent = null,
     verifiedDiscountOffers = [], factualLimitationReviewRequired = false } = options;
   const productSearchIntent = searchIntent || productContext?.searchIntent || {};
+  const matchedCatalogue = !orderActionState && !imageStatusContext && !guestBenefitContext && !feedbackActionAvailable
+    ? toMatchedCatalogueReviewContext({ searchIntent: productSearchIntent, productContext, knowledgeContext, factualContext,
+      character: options.catalogueOwner?.character, trustedSite: options.catalogueOwner?.trustedSite }) : null;
   const productCardDelivery = buildProductCardDeliveryContext(productContext);
   const candidateContext = toCandidateReviewContext(productContext);
+  const noMatchContext = evidenceRequired ? toNoMatchReviewContext(productContext, { searchIntent: productSearchIntent, characterId: options.characterId, siteId: options.siteId }) : null;
   const alternativeContext = toAlternativeReviewContext(productContext);
   const candidateIds = candidateContext ? new Set(candidateContext.products.map(product => product.id)) : null;
   const productSearchOutcome = alternativeContext ? "alternative" : evidenceRequired ? resolveUnconfirmedProductSearchOutcome(productSearchIntent, productContext?.searchOutcome) : "";
@@ -121,6 +125,7 @@ export function buildReplyReviewMessages(options = {}) {
   if (checkoutContext) system(`${checkoutContext.classificationUnavailable ? "Commerce classification was unavailable. Apply the following checkout rules ONLY when checkoutProblem=true is established under the explicit unsubmitted-purchase definition above; otherwise keep the actual general, policy, product or existing-order concern and its original contracts. Never manufacture checkout state from ambiguity or an old topic. " : ""}${CHECKOUT_REVIEW_CONTRACT}`);
   if (evidenceRequired) system(alternativeContext ? PRODUCT_ALTERNATIVE_CONTRACT + " Review BOTH complete outputs. Any missing apology, concealed difference, original-match claim, unsupported product claim or erased supported parallel answer requires evidenceSupported=false and allowed=false. A retained paragraph never approves a card. " + PRODUCT_ALTERNATIVE_AUDIT_CONTRACT : candidateContext ? CANDIDATE_EVIDENCE_CONTRACT : PRODUCT_EVIDENCE_CONTRACT);
   if (candidateContext) system(PRODUCT_CANDIDATE_CONDITIONS_CONTRACT);
+  if (noMatchContext) system(PRODUCT_NO_MATCH_CONTEXT_CONTRACT);
   if (options.candidateConfirmationRequired) system(CANDIDATE_CONFIRMATION_CONTRACT);
   system(retainedReviewContract(options));
   const schema = buildReplyReviewFormat(options).json_schema.schema;
@@ -130,7 +135,9 @@ export function buildReplyReviewMessages(options = {}) {
       : "When allowed=true, the whole reply is approved: retainedText MUST be empty and ALL retained approvals MUST be false; never echo the approved reply in retainedText. Only allowed=false may propose a retained paragraph. If no paragraph is retained, use empty retainedText and false for retained approvals. ")
     + "Never infer approval from a field default.");
   messages.push({ role: "user", content: JSON.stringify({ ...(businessClaimContext ? { businessClaimContext } : {}), checkoutContext, boundary, productCardDelivery, alternativeContext, ...(options.languageClarificationEligible === true && independentLanguageReview ? { languageClarificationEligible: true } : {}), activeLanguage: language, latestUserMessage: userText, proposedResponse: text, ...(independentLanguageReview || evidenceRequired || languageQualityRequired || businessFactsRequired || factualRequired || productScopeRequired ? { proposedSpeech: speechText || text } : {}), evidenceRequired, candidateConfirmationRequired: options.candidateConfirmationRequired, candidateContext, businessFactsRequired, productScopeRequired, productScopeContext, factualRequired, factualContext, factualLimitationReviewRequired, guidanceRequired, sizingRequired, sizingConversationContext, discountPolicyExplanation, feedbackActionAvailable, imageStatusContext, guestBenefitContext, identityContext, orderActionState: ["login_required", "binding_required"].includes(orderActionState) ? orderActionState : null,
-          evidence: evidenceRequired || businessFactsRequired || productScopeRequired || guidanceRequired || imageStatusContext ? {
+          evidence: matchedCatalogue || evidenceRequired || businessFactsRequired || productScopeRequired || guidanceRequired || imageStatusContext ? {
+            ...(matchedCatalogue ? { searchOutcome: "matched" } : {}),
+            ...(noMatchContext ? { noMatchContext } : {}),
             ...(evidenceRequired ? { searchOutcome: productSearchOutcome, searchState: String(productSearchIntent.searchState || "").slice(0, 64),
               clarificationExhausted: productSearchOutcome === "clarification_exhausted", sourceErrorCode: String(productContext?.sourceErrorCode || productSearchIntent.sourceErrorCode || "").slice(0, 80) } : {}),
             verifiedDiscountOffers: (Array.isArray(verifiedDiscountOffers) ? verifiedDiscountOffers : []).slice(0, 5).map((offer) => ({ code: String(offer?.code || "").slice(0, 100), offerDescription: String(offer?.offerDescription || "").slice(0, 1000) })).filter((offer) => offer.code && offer.offerDescription),
