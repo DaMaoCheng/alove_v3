@@ -65,19 +65,19 @@ async function runFlowChecks() {
     "chat-memory-service.js": { indexChatMessage: noop },
     "chat-product-recommendation-service.js": { buildChatProductRecommendationContext: async () => null, resolveCurrentProductImageCardContext: async () => null },
     "product-recommendation-site-service.js": { resolveProductRecommendationSite: async () => ({ id: "site_fixture", slug: "fixture" }) },
-    "commerce-routing-service.js": { resolveCommerceSearchIntent: async () => fixture.commerceIntent, applyCommerceQuestionPromptPolicy: identity },
+    "commerce-routing-service.js": { resolveCommerceKnowledgeScope: intent => intent.knowledgeScope, resolveCommerceSearchIntent: async () => fixture.commerceIntent, applyCommerceQuestionPromptPolicy: identity },
     "ai-reply-log-service.js": { recordCommerceDecisionLog: noop, recordProviderCallLog: noop },
     "knowledge-retrieval-service.js": { retrieveChatKnowledgeSections: async () => ({ items: [] }) },
     "brave-search-service.js": { shouldTriggerBraveSearch: () => false, searchBraveLlmContext: async () => { throw new Error("unexpected web search"); } },
     "chat-factual-context-service.js": { resolveChatFactualContext: async () => null },
     "product-followup-sanitizer.js": { normalizeProductFollowupReply: () => { throw new Error("unexpected product followup"); } },
-    "chat-product-reply-service.js": { suppressRepeatedProductCards: identity, selectProductsForReply: () => [], insertProductReplyMessage: async () => { throw new Error("unexpected product card"); } },
+    "chat-product-reply-service.js": { buildProductCardDeliveryContext: () => ({ count:0,cards:[],unfulfilledVariants:[] }), selectProductsForMessage: () => [], suppressRepeatedProductCards: identity, selectProductsForReply: () => [], insertProductReplyMessage: async () => { throw new Error("unexpected product card"); } },
     "chat-voice-asset-service.js": { createAiReplyVoiceAssetForDb: async () => ({ id: "voice_fixture", assetStatus: "disabled" }) },
     "chat-reply-speech-service.js": { resolveReplySpeechText: (reply) => reply.speechText },
     "chat-reply-voice-service.js": { resolveReplyVoiceMetaModel: identity, resolveReplyVoiceModel: () => ({ model: "fixture", reason: "fixture" }), VOICE_MODEL_MODE_REALTIME_CALL_FAST: "fixture" },
     "discount-code-eligibility-service.js": { resolveCharacterDiscountOffers: async () => ({ offers: [] }) },
     "chat-discount-offer-output-policy.js": { enforceDiscountOfferReplyPolicy: ({ replyResult }) => replyResult },
-    "product-intent-service.js": { buildProductCorrectionClarificationReply: () => "", buildProductSearchIntent: () => ({}), extractRequirementClearFields: () => [], isAlternativeProductRequest: () => false, buildRecentProductContext: () => ({}), isProductImageCardRequest: () => false },
+    "product-intent-service.js": { filterProductsByIntent: () => { throw new Error("Unexpected catalogue filtering in order fixture"); }, filterProductsByRequestedSizes: () => { throw new Error("Unexpected size filtering in order fixture"); }, buildProductCorrectionClarificationReply: () => "", buildProductSearchIntent: () => ({}), extractRequirementClearFields: () => [], isAlternativeProductRequest: () => false, buildRecentProductContext: () => ({}), isProductImageCardRequest: () => false },
     "product-search-decision-service.js": { PRODUCT_CLARIFICATION_SOURCE_MARKER: "fixture" },
     "chat-feedback-action-service.js": { resolveChatFeedbackActionCandidate: () => null, resolveChatFeedbackAction: () => null, appendFeedbackFollowupCopy: identity },
     "chat-service-shared.js": {
@@ -100,7 +100,7 @@ async function runFlowChecks() {
   };
   globalThis.__orderActionFlowStubs = stubs;
   stubs["guest-product-reply-copy.js"] = { buildGuestProductReplyCopy: () => "Unavailable." };
-  const realModules = new Set(["guest-product-sanitizer.js", "product-source-provenance.js", "product-source-error-service.js","product-alternative-service.js", "product-search-match-service.js", "product-response-sanitizer.js","business-claim-audit-service.js", "tts-emotion-tag-service.js", "product-candidate-source-proof.js", "chat-reply-purpose-service.js", "chat-reply-recovery-state.js", "chat-language-clarification-policy.js", "chat-prompt-utils.js", "chat-reply-review-outcome.js", "product-sizing-guidance-service.js", "product-size-chart-catalog.js", "product-candidate-confirmation-service.js", "chat-product-routing-context-service.js", "product-requirement-fields.js", "commerce-classification-failure-service.js","product-search-decision-service.js", "product-request-scope-service.js", "product-candidate-state-service.js", "product-candidate-context-service.js", "product-attribute-evidence-service.js", "product-edition-service.js", "product-request-scope-service.js", "product-request-scope-copy.js", "chat-reply-orchestrator-service.js", "chat-text-message-service.js", "chat-order-intent-service.js", "checkout-support-guidance.js", "chat-global-reply-policy.js"]);
+  const realModules = new Set(["product-name-candidate-service.js", "guest-product-sanitizer.js", "product-source-provenance.js", "product-source-error-service.js","product-alternative-service.js", "product-search-match-service.js", "product-response-sanitizer.js","business-claim-audit-service.js", "tts-emotion-tag-service.js", "product-candidate-source-proof.js", "chat-reply-purpose-service.js", "chat-reply-recovery-state.js", "chat-language-clarification-policy.js", "chat-prompt-utils.js", "chat-reply-review-outcome.js", "product-sizing-guidance-service.js", "product-size-chart-catalog.js", "product-candidate-confirmation-service.js", "chat-product-routing-context-service.js", "product-requirement-fields.js", "commerce-classification-failure-service.js","product-search-decision-service.js", "product-request-scope-service.js", "product-candidate-state-service.js", "product-candidate-context-service.js", "product-attribute-evidence-service.js", "product-edition-service.js", "product-request-scope-service.js", "product-request-scope-copy.js", "chat-reply-orchestrator-service.js", "chat-text-message-service.js", "chat-order-intent-service.js", "checkout-support-guidance.js", "chat-global-reply-policy.js"]);
   const serverUrl = new URL("../server/", import.meta.url).href;
   // Async loaders run in another thread. Transfer only serializable export
   // names; the generated modules read function stubs in the worker's realm.
@@ -114,7 +114,7 @@ async function runFlowChecks() {
     export async function resolve(specifier, context, nextResolve) {
       if (context.parentURL?.startsWith(serverUrl) && specifier.startsWith("./")) {
         const filename = specifier.slice(2);
-        if (filename === "product-intent-service.js" && (context.parentURL.endsWith("/product-candidate-confirmation-service.js") || context.parentURL.endsWith("/product-alternative-service.js"))) return nextResolve(specifier, context);
+        if (filename === "product-intent-service.js" && (context.parentURL.endsWith("/product-candidate-confirmation-service.js") || context.parentURL.endsWith("/product-alternative-service.js") || context.parentURL.endsWith("/product-name-candidate-service.js"))) return nextResolve(specifier, context);
         if (!realModules.has(filename)) {
           if (!stubExportNames[filename]) throw new Error("Unmocked server dependency: " + filename);
           return { url: "order-flow:" + filename, shortCircuit: true };

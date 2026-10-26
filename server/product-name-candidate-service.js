@@ -1,7 +1,7 @@
 import { sanitizeProductAlternative } from '../shared/product-candidate-fields.js';
 import { multiwordProductNameTerms } from './product-requirement-fields.js';
 import { productAlternativeIntent, hasAlternativeGarmentEvidence, markAlternativeSearch, hasProductAlternativeSearch, alternativeMetadataForSearch } from './product-alternative-service.js';
-import { filterProductsByIntent } from './product-intent-service.js';
+import { filterProductsByIntent, filterProductsByRequestedSizes } from './product-intent-service.js';
 import { filterProductsBySearchCriteria } from './product-search-match-service.js';
 import { evaluateProductAttributeMatch } from './product-attribute-evidence-service.js';
 
@@ -64,7 +64,9 @@ export function buildNameCandidate(product, intent, queries = []) {
 // Fresh source drift must not bypass its name check via the ordinary fallback.
 export function hasStableNameCandidateSource(source, intent, displayed) {
   const terms = multiwordProductNameTerms(intent);
-  if (!terms.length || intent.requestedTeam && !displayed?.alternative) return true;
+  if (!terms.length) return true;
+  if (!filterProductsByRequestedSizes([source], intent.requestedSizes).length) return false;
+  if (intent.requestedTeam && !displayed?.alternative) return true;
   const anchor = { anchor: terms.at(-1) };
   const title = product => String(product?.name || '').normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
   return hasNameCandidateAnchor(displayed, anchor) && hasNameCandidateAnchor(source, anchor)

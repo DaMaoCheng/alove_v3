@@ -177,3 +177,14 @@ const pureSource=await buildCandidateConfirmationContext({site:{id:'test',slug:'
  resolveProduct:async()=>({resolvedFromSource:true,site:{id:'test',slug:'test'},sourceItem:kit})});
 assert.equal(pureSource.searchOutcome,'candidate');assert.equal(pureSource.cardAllowed,false);assert.equal(pureSource.searchIntent.shouldLoadProductContext,false);assert.equal(pureSource.searchIntent.searchState,'not_product','source-only validation never reopens the real routing flags');
 console.log('Pure name-only (lexical not_product) confirmation reaches the fresh source without reopening actions.');
+const only26={...ordinarySource,sizes:[{label:'26',available:true}]},only28={...ordinarySource,sizes:[{label:'28',available:true}]};
+const size28Intent={...ordinary,requestedSizes:['28']};
+for(const supplied of [only26,{...only28,sizes:[{label:'28',available:false}]}]){
+ const bad=await executeProductSearchDetailed({searchIntent:size28Intent,query:size28Intent.query,fetchProducts:async()=>[supplied]});assert.equal(bad.candidates.length,0,'known unavailable requested size cannot become a name candidate');
+}
+const sizedGood=await executeProductSearchDetailed({searchIntent:size28Intent,query:size28Intent.query,fetchProducts:async()=>[only28],fetchCandidateDetail:async()=>only28});assert.equal(sizedGood.candidates[0].productId,'ordinary');
+const sizedDrift=await executeProductSearchDetailed({searchIntent:size28Intent,query:size28Intent.query,fetchProducts:async()=>[only28],fetchCandidateDetail:async()=>only26});assert.equal(sizedDrift.candidates.length,0,'hydrate cannot change requested size');
+assert.equal(hasStableNameCandidateSource(only26,size28Intent,only28),false);assert.equal(hasStableNameCandidateSource(only28,size28Intent,only28),true);
+console.log('Ordinary full-name candidate summary, detail hydration and fresh confirmation preserve explicit available sizes.');
+const sizedExact=await executeProductSearchDetailed({searchIntent:size28Intent,query:size28Intent.query,fetchProducts:async()=>[{...only26,name:only26.name.replace('RONALDO','CRISTIANO RONALDO')}]});
+assert.equal(sizedExact.matches.length,0);assert.equal(sizedExact.candidates.length,0,'a complete name cannot bypass the explicit size check either');

@@ -4,6 +4,7 @@ import { originalProductRequestContext } from "./product-request-scope-service.j
 import { markCandidateContextSource } from "./product-candidate-source-proof.js";
 import {
   filterProductsByIntent,
+  filterProductsByRequestedSizes,
   buildProductCandidateConstraintIntent,
   normalizeProductQueryTeamAlias,
 } from "./product-intent-service.js";
@@ -79,7 +80,8 @@ export async function executeProductSearchDetailed(options = {}) {
     const exact = (await prepareCollectedProducts(intent.confirmedCandidateId ? collected.filter(product => String(product.productId || product.id || "") === intent.confirmedCandidateId) : collected, {
       originalQuery: query, searchIntent: intent, limit: options.limit,
       allowNearestAgeFallback: false, editionAssessment: { remaining: 0, cache: new Map() },
-    })).filter(product => matchesRequestedRetro(product, intent));
+    })).filter(product => matchesRequestedRetro(product, intent)
+      && (!nameRecall || filterProductsByRequestedSizes([product], intent.requestedSizes).length));
     if (exact.length && !exact.some(product => product.attributeEvidence?.giveaway === true) && (!intent.correctionSuggestion?.corrected || intent.confirmedCandidateId) && (!intent.productCandidateState?.suspectedTerm || intent.confirmedCandidateId)) {
       // A confirmed entity carries user-assent evidence. Do not return ordinary
       // matches and skip that evidence review just because its specs are known.
@@ -97,7 +99,8 @@ export async function executeProductSearchDetailed(options = {}) {
   const base = buildProductCandidateConstraintIntent(intent);
   const candidates = filterProductsByIntent(intent.confirmedCandidateId ? collected.filter(product => String(product.productId || product.id || "") === intent.confirmedCandidateId) : collected, base, { allowNearestAgeFallback: false })
     .map(product => ({ product, assessment: evaluateProductAttributeMatch(product, intent) }))
-    .filter(({ product, assessment }) => product?.url && product.available !== false && assessment.status !== "mismatch" && matchesRequestedRetro(product, intent) && (!nameRecall || intent.requestedTeam || hasNameCandidateAnchor(product, nameRecall)))
+    .filter(({ product, assessment }) => product?.url && product.available !== false && assessment.status !== "mismatch" && matchesRequestedRetro(product, intent) && (!nameRecall || (intent.requestedTeam || hasNameCandidateAnchor(product, nameRecall))
+      && filterProductsByRequestedSizes([product], intent.requestedSizes).length))
     .map(({ product, assessment }) => ({ ...product, matchStatus: "candidate",
       candidateUnknownFields: assessment.unknownFields, giveaway: product.attributeEvidence?.giveaway ?? null,
       unmatchedSearchTerms: normalizeArray(intent.requestedKeywords).filter(term => !String(product.name || "").toLowerCase().includes(term.toLowerCase())) }));
@@ -111,7 +114,8 @@ export async function executeProductSearchDetailed(options = {}) {
     if (!detail || String(detail.productId || detail.id) !== String(candidate.productId || candidate.id)
       || detail.available === false || !filterProductsByIntent([detail], base).length) continue;
     const assessment = evaluateProductAttributeMatch(detail, intent);
-    if (assessment.status === "mismatch" || nameRecall && !intent.requestedTeam
+    if (assessment.status === "mismatch" || nameRecall && !filterProductsByRequestedSizes([detail], intent.requestedSizes).length
+      || nameRecall && !intent.requestedTeam
       && (!hasNameCandidateAnchor(detail, nameRecall) || !matchesRequestedRetro(detail, intent))) continue;
     return { matches: [], candidates: [{ ...detail, matchStatus: "candidate", candidateUnknownFields: assessment.unknownFields,
       giveaway: detail.attributeEvidence?.giveaway ?? null, unmatchedSearchTerms: candidate.unmatchedSearchTerms }] };
