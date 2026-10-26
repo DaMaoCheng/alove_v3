@@ -553,7 +553,7 @@ async function loadRecentSessionProductState(db, { sessionId = "", siteId = "", 
   // The old requested year describes the unsuccessful original search, not the
   // alternative card. Keep history intact and resolve explicit card references
   // through their real catalogue facts instead of inheriting that old year.
-  const lastSearchIntent = lastSearchProduct?.alternative?.kind === 'season_alternative'
+  const lastSearchIntent = ['season_alternative', 'retro_alternative'].includes(lastSearchProduct?.alternative?.kind)
     ? null : lastSearchProduct?.searchIntent || null;
   const excludedIdentities = new Set(products.flatMap(productIdentityKeys));
   return {

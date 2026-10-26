@@ -4,6 +4,7 @@ import {
 } from "./product-size-chart-catalog.js";
 import { EDITION_FEATURE_DEFINITIONS, requestedProductEdition, resolveCanonicalProductEdition } from "./product-edition-service.js";
 import { evaluateProductAttributeMatch, extractRequestedPrinting } from "./product-attribute-evidence-service.js";
+import { CHILD_PRODUCT_SIZE_LABELS } from './product-requirement-fields.js';
 import {
   countRecentProductClarifications,
   mergeProductRequirement,
@@ -79,7 +80,7 @@ const TEAM_ALIASES = Object.freeze([
 ]);
 const AUDIENCE_ALIASES = Object.freeze([
   ["adult", ["adult", "adults", "men", "mens", "men's", "male", "grown up", "adult size", "成人", "男款", "男士", "男子", "男装"]],
-  ["kids", ["kid", "kids", "kid's", "child", "children", "childrens", "children's", "youth", "junior", "boys", "girls", "nino", "niños", "ninos", "infantil", "juvenil", "cocuk", "çocuk", "cocuklar", "çocuklar", "儿童", "童装", "童款", "小孩", "青少年"]],
+  ["kids", ["kid", "kids", "kid's", "child", "children", "childrens", "children's", "youth", "junior", "boy", "boys", "girl", "girls", "nino", "niño", "niños", "ninos", "nina", "niña", "niñas", "ninas", "infantil", "juvenil", "cocuk", "çocuk", "cocuklar", "çocuklar", "儿童", "童装", "童款", "男童", "女童", "小孩", "青少年"]],
   ["women", ["women", "womens", "women's", "female", "ladies", "女款", "女装", "女士"]],
 ]);
 const PRODUCT_FEATURE_DEFINITIONS = Object.freeze([
@@ -682,7 +683,7 @@ function extractExcludedTeams(text = "") {
 function extractRequestedVariants(text = "") {
   const value = normalizeLooseText(text);
   const variants = [];
-  if (hasPositiveRequirementPhrase(value, ["home", "主场"])) variants.push("home");
+  if (hasPositiveRequirementPhrase(value, ["home", "de local", "主场"])) variants.push("home");
   if (hasPositiveRequirementPhrase(value, ["away", "segunda equipacion", "segunda camiseta", "客场"])) variants.push("away");
   if (hasPositiveRequirementPhrase(value, ["third", "3rd", "第三客场", "第三球衣", "第三款", "第三"])) variants.push("third");
   if (hasPositiveRequirementPhrase(value, ["retro", "复古", "经典"])) variants.push("retro");
@@ -814,6 +815,7 @@ function extractRequestedKeywords(text = "", {
       ...aliases.flatMap((alias) => normalizeLooseText(alias).split(" ")),
     ]),
     "home", "away", "third", "3rd", "retro", "主场", "客场", "第三", "复古",
+    ...(hasPositiveRequirementPhrase(normalizeLooseText(text), ["de local"]) ? ["local"] : []),
     ...normalizeRequestedVariants({ requestedVariants }),
     safeString(requestedColor).toLowerCase(),
     ...normalizeRequestedFeatures({ requestedFeatures }),
@@ -840,6 +842,10 @@ export function extractRequestedSizes(text = "") {
     const normalized = normalizeRequestedSize(value);
     if (normalized && !sizes.includes(normalized)) sizes.push(normalized);
   };
+  // Numeric child sizes require an explicit size cue; a shirt number, year,
+  // age, height or weight alone never becomes a catalogue size.
+  const childSizePattern = new RegExp(`(?:\\b(?:size|talla|beden|méret|meret)\\b|尺码|尺寸)\\s*[:#-]?\\s*(${CHILD_PRODUCT_SIZE_LABELS.join('|')})(?![\\p{L}\\p{N}])`, 'giu');
+  for (const match of raw.matchAll(childSizePattern)) add(match[1]);
   const standalonePattern = /(?<![\p{L}\p{N}])(?:5XL|4XL|3XL|2XL|XXL|XL|XXS|XS|S|M|L)(?![\p{L}\p{N}])/giu;
   for (const match of raw.matchAll(standalonePattern)) {
     const value = String(match[0] || "");
@@ -899,7 +905,7 @@ function normalizeRequestedSize(value = "") {
   const normalized = safeString(value).toUpperCase().replace(/\s+/g, "");
   if (normalized === "XXL") return "2XL";
   if (normalized === "XXS") return "XXS";
-  return STANDARD_SIZE_LABELS.includes(normalized) ? normalized : "";
+  return STANDARD_SIZE_LABELS.includes(normalized) || CHILD_PRODUCT_SIZE_LABELS.includes(normalized) ? normalized : "";
 }
 
 function productSizeLabelIncludes(value = "", requestedSize = "") {
@@ -933,9 +939,13 @@ function extractRequestedAudience(text = "") {
   const value = normalizeLooseText(text);
   if (!value) return "";
   for (const [canonical, aliases] of AUDIENCE_ALIASES) {
-    if (aliases.some((alias) => includesLoosePhrase(value, alias))) return canonical;
+    if (aliases.some((alias) => matchesAudienceAlias(value, alias))) return canonical;
   }
   return "";
+}
+
+function matchesAudienceAlias(text, alias) {
+  return /[\u4e00-\u9fff]/.test(alias) ? normalizeLooseText(text).includes(alias) : includesLoosePhrase(text, alias);
 }
 
 function extractRequestedAgeRange(text = "") {
@@ -1152,10 +1162,11 @@ function productMatchesAudience(product = {}, audience = "") {
       && !/\b(?:women|womens|female|ladies|girl|girls)\b|女款|女装|女士/i.test(text);
   }
   if (normalizedAudience === "kids") {
-    return /\b(?:kid|kids|child|children|youth|junior|boys|girls|years?|age|ninos?|infantil|juvenil)\b|儿童|童装|童款|小孩|青少年/i.test(text);
+    return AUDIENCE_ALIASES.find(([audience]) => audience === 'kids')[1].some(alias => matchesAudienceAlias(text, alias))
+      || /\b(?:years?|age)\b/i.test(text);
   }
   if (normalizedAudience === "women") {
-    return /\b(?:women|womens|female|ladies|girl|girls)\b|女款|女装|女士/i.test(text);
+    return !productMatchesAudience(product, 'kids') && /\b(?:women|womens|female|ladies)\b|女款|女装|女士/i.test(text);
   }
   return includesLoosePhrase(text, normalizedAudience);
 }

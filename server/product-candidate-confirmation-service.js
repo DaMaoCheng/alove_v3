@@ -1,3 +1,4 @@
+import { revalidateNameCandidate, hasStableNameCandidateSource } from './product-name-candidate-service.js';
 import { readProductCandidateState, findDisplayedProductCandidate, normalizeCandidateResponse, applyProductCandidateState, parseCurrentProductRequirement } from './product-candidate-state-service.js';
 import { buildChatProductRoutingContext } from './chat-product-routing-context-service.js';
 import { normalizeProductRequest, readProductRequestState } from './product-request-scope-service.js';
@@ -97,11 +98,13 @@ export async function buildCandidateConfirmationContext({ site = {}, searchInten
     const source = result?.sourceItem;
     if (result?.resolvedFromSource !== true || result.site?.id !== site.id || result.site?.slug !== site.slug
       || !source?.name || !sameId(source, pending.product) || !source.id && !source.productId || typeof buildCandidateContext !== 'function') return empty;
+    if (!hasStableNameCandidateSource(source, pending.state.requirements, pending.product)) return empty;
     const constraintIntent = buildProductCandidateConstraintIntent({ ...searchIntent, ...pending.state.requirements });
-    if (!filterProductsByIntent([source], constraintIntent, { allowNearestAgeFallback: false }).length) return empty;
+    const nameCandidate = revalidateNameCandidate(source, { ...searchIntent, ...pending.state.requirements }, pending.product);
+    if (!nameCandidate && !filterProductsByIntent([source], constraintIntent, { allowNearestAgeFallback: false }).length) return empty;
     const attributes = evaluateProductAttributeMatch(source, { ...searchIntent, ...pending.state.requirements, commerceRoute: 'product_search' });
     if (source.available === false || attributes.status === 'mismatch') return empty;
-    const product = { ...source, siteId: site.id, siteSlug: site.slug, matchStatus: 'candidate',
+    const product = { ...source, ...(nameCandidate ? { alternative: nameCandidate.alternative } : {}), siteId: site.id, siteSlug: site.slug, matchStatus: 'candidate',
       attributeEvidence: resolveProductAttributeEvidence(source), candidateUnknownFields: attributes.unknownFields,
       unmatchedSearchTerms: [...new Set([...(pending.product.unmatchedSearchTerms || []), ...(searchIntent.requestedKeywords || [])])]
         .filter(term => typeof term === 'string' && term.length <= 80 && !String(source.name || '').toLowerCase().includes(term.toLowerCase())).slice(0, 8) };

@@ -17,6 +17,12 @@ export function publicProductCandidateFields(product = {}) {
 // Display history only; this public metadata never grants search/card permission.
 export function sanitizeProductAlternative(value) {
   const validSeason = x => typeof x === "string" && /^(?:19|20)\d{2}(?:\s*[/-]\s*(?:\d{2}|(?:19|20)\d{2}))?$/.test(x) && x.length <= 16;
+  if (value?.kind === 'retro_alternative' && validSeason(value.alternativeSeason)
+    && (value.requestedSeason === '' || validSeason(value.requestedSeason))
+    && ['', 'jersey_kit'].includes(value.alternativeGarment || '')) return {
+      kind: 'retro_alternative', requestedSeason: value.requestedSeason, alternativeSeason: value.alternativeSeason,
+      alternativeGarment: value.alternativeGarment || '',
+    };
   return value?.kind === "season_alternative" && validSeason(value.requestedSeason) && validSeason(value.alternativeSeason)
     ? { kind: "season_alternative", requestedSeason: value.requestedSeason, alternativeSeason: value.alternativeSeason } : null;
 }

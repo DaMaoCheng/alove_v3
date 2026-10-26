@@ -2,17 +2,26 @@ import { normalizeRequirement } from './product-search-decision-service.js';
 import { hasPendingProductRequest, readProductRequestState, normalizeProductRequest, productRequestOwnerEvidence } from './product-request-scope-service.js';
 import { buildProductSearchIntent, extractRequirementClearFields, isAlternativeProductRequest } from './product-intent-service.js';
 import { requestedProductEdition, applyRequestedProductEdition } from './product-edition-service.js';
-import { PRODUCT_REQUIREMENT_SCALAR_VALUES, PRODUCT_REQUIREMENT_ARRAY_VALUES } from './product-requirement-fields.js';
+import { PRODUCT_REQUIREMENT_SCALAR_VALUES, PRODUCT_REQUIREMENT_ARRAY_VALUES, hasNamedRetroProductAnchor, multiwordProductNameTerms } from './product-requirement-fields.js';
 
 // Private conversation evidence, never availability or permission to shop.
 export const PRODUCT_CANDIDATE_STATE_NAMESPACE = '_productCandidateState';
 const SCALARS = new Set(['requestedTeam', 'requestedProductType', 'requestedAudience', 'requestedColor', 'requestedSeason', 'requestedEdition', 'requestedPrinting']);
-const ARRAYS = new Set(['requestedFeatures', 'requestedVariants', 'requestedSizes']);
+const ARRAYS = new Set(['requestedFeatures', 'requestedVariants', 'requestedSizes', 'requestedKeywords']);
 const string = (value, max = 240) => typeof value === 'string' && value.trim().length <= max ? value.trim() : '';
 const object = value => value && typeof value === 'object' && !Array.isArray(value);
 const evidence = (value, userText) => string(value) && String(userText).includes(string(value)) ? string(value) : '';
 
-export const PRODUCT_CANDIDATE_CONTRACT = `productRequirement and candidateResponse interpret only the CURRENT user message, in any language. Quote exact continuous current substrings for evidence. Requirement new establishes one current merchandise target; continue refines the existing single target or selected prior multiple item, including asking for its link; cancel withdraws it; none is unrelated. Never merge independent targets. Only with no active server target, priorTargetEvidence may quote an exact prior USER substring identifying one target; otherwise empty. Never derive user requirements from assistant text/cards. Updates MUST include every current explicit specification change/removal, never inherited conditions. Return at most one update per field, combining all CURRENT values for an array field in that single update. Do not output unchanged historical fields, absent specifications or placeholder updates. A field not explicitly specified or removed in the CURRENT message must be omitted entirely; an unspecified size does not mean requestedSizes:[]; an existing target does not excuse omitting a current revision. Keep an explicitly requested historical single year as that year; do not infer an adjacent full season from it. Use schema canonical values (shirt/top/merch are garment types, never titles); empty values require explicit removal evidence. No name AND no number means printing:none, not customization. suspectedTerm preserves a potentially mistyped catalogue term verbatim, never substitutes guessed spelling. candidateResponse confirm/reject requires the active DISPLAYED proposal's exact candidateId and current assent/refusal evidence; a request after rejecting another item does not confirm it. Product display, link, comparison and specification requests alone are not identity assent: use candidateResponse none unless a distinct current evidence span affirmatively identifies the displayed item as the intended item. Entity confirmation never relaxes unknown attributes or promotion eligibility. For every single-target turn, including continuation, productRequest is single/new/items:[]/selectedIndex:null; select/continue in productRequest are reserved for prior multiple scope.`;
+function containsLiteralIdentity(quoted, term) {
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Letter-written names cannot be carved out of another word. Han phrases
+  // may be contiguous with ordinary sentence text; no translation is inferred.
+  const start = /^[\p{Script=Latin}\p{N}]/u.test(term) ? '(?<![\\p{L}\\p{N}])' : '';
+  const end = /[\p{Script=Latin}\p{N}]$/u.test(term) ? '(?![\\p{L}\\p{N}])' : '';
+  return new RegExp(`${start}${escaped}${end}`, 'u').test(quoted);
+}
+
+export const PRODUCT_CANDIDATE_CONTRACT = `productRequirement and candidateResponse interpret only the CURRENT user message, in any language. Quote exact continuous current substrings for evidence. Requirement new establishes one current merchandise target; continue refines the existing single target or selected prior multiple item, including asking for its link; cancel withdraws it; none is unrelated. Never merge independent targets. Only with no active server target, priorTargetEvidence may quote an exact prior USER substring identifying one target; otherwise empty. Never derive user requirements from assistant text/cards. Updates MUST include every current explicit specification change/removal, never inherited conditions. Return at most one update per field, combining all CURRENT values for an array field in that single update. Do not output unchanged historical fields, absent specifications or placeholder updates. A field not explicitly specified or removed in the CURRENT message must be omitted entirely; an unspecified size does not mean requestedSizes:[]; an existing target does not excuse omitting a current revision. A normalized searchQuery is only a retrieval hint: do not expand a user-provided name with an unstated first name, or infer an unstated edition, team or suspected typo. Preserve the supplied identity terms rather than completing them. For current explicit player/person names or unresolved catalogue identity terms, include requestedKeywords as one nonempty array update quoting the literal current USER name/phrase exactly, including any explicitly supplied first and last names; omit grammar, shopping verbs, teams already represented elsewhere, inferred expansions and translations. The evidence must contain every supplied term verbatim. For this requestedKeywords update, identityType is player for a football player name, team for a club/national team name, and unknown for another or ambiguous catalogue term. It classifies only that literal quoted term; never expand names or infer an unstated affiliation. A name labelled player cannot simultaneously establish a same-span requestedTeam/commerceConstraints.team, even if its literal words occur in the message. On a size-only continuation omit this update so the original names remain. Never output an empty requestedKeywords array; omitted identity terms are not evidence that an existing name was removed. A player or person name is not a team: never put a player name in requestedTeam or commerceConstraints.team; keep it as the original user identity terms without inventing a club or national team. Keep an explicitly requested historical single year as that year; do not infer an adjacent full season from it. A child described as a girl or boy in any language uses requestedAudience kids, never adult women; child sex alone does not establish a separate catalogue gender. Numeric catalogue child sizes use requestedSizes only when the user identifies them as a size, never from a jersey printing number, age, year or measurement. A response to a size question refines the current original target without accepting a proposed substitute or clearing other requirements. Use schema canonical values (shirt/top/merch are garment types, never titles). Retro is a requestedVariants style, never requestedEdition or commerceConstraints.edition; fan/player describe edition; empty values require explicit removal evidence. Only an explicit USER request for neither name nor number means printing:none, not customization. Omitting printing information is not a request for an unprinted item; do not emit a requestedPrinting update for that omission. A named player alone never implies printing:none. suspectedTerm preserves a potentially mistyped catalogue term verbatim, never substitutes guessed spelling. candidateResponse confirm/reject requires the active DISPLAYED proposal's exact candidateId and current assent/refusal evidence; a request after rejecting another item does not confirm it. Product display, link, comparison and specification requests alone are not identity assent: use candidateResponse none unless a distinct current evidence span affirmatively identifies the displayed item as the intended item. Entity confirmation never relaxes unknown attributes or promotion eligibility. For every single-target turn, including continuation, productRequest is single/new/items:[]/selectedIndex:null; select/continue in productRequest are reserved for prior multiple scope.`;
 
 export function normalizeProductRequirementDecision(value, { userText = '' } = {}) {
   if (!object(value) || !['new', 'continue', 'cancel', 'none'].includes(value.action)) return null;
@@ -30,7 +39,9 @@ export function normalizeProductRequirementDecision(value, { userText = '' } = {
     if (ARRAYS.has(update.field)) {
       if (!Array.isArray(update.value) || update.value.length > 8 || update.value.some(item => !string(item, 80))) return null;
       next = [...new Set(update.value.map(item => string(item, 80)))];
-      if (next.some(item => !PRODUCT_REQUIREMENT_ARRAY_VALUES[update.field].includes(item))) return null;
+      if (update.field === 'requestedKeywords') {
+        if (!next.length || next.some(item => !containsLiteralIdentity(evidence(update.evidence, userText), item))) return null;
+      } else if (next.some(item => !PRODUCT_REQUIREMENT_ARRAY_VALUES[update.field].includes(item))) return null;
     } else {
       if (typeof update.value !== 'string' || update.value.length > 120) return null;
       next = update.value.trim();
@@ -65,7 +76,7 @@ function requirements(value = {}) {
   const normalized = normalizeRequirement(value), edition = requestedProductEdition(value);
   // Old stored features can establish a version. Conflicting legacy evidence
   // stays conflicting; only an explicit validated update may replace it.
-  return { ...normalized, requestedSizes: Array.isArray(value.requestedSizes) ? value.requestedSizes.filter(item => string(item, 80)).slice(0, 8) : [],
+  return { ...normalized, hasBodyMeasurements: value.hasBodyMeasurements === true, requestedSizes: Array.isArray(value.requestedSizes) ? value.requestedSizes.filter(item => string(item, 80)).slice(0, 8) : [],
     requestedFeatures: normalized.requestedFeatures.filter(feature => !['authentic', 'fan_version'].includes(feature)),
     requestedEdition: edition === 'conflict' || PRODUCT_REQUIREMENT_SCALAR_VALUES.requestedEdition.includes(edition) ? edition : '',
     requestedPrinting: PRODUCT_REQUIREMENT_SCALAR_VALUES.requestedPrinting.includes(value.requestedPrinting) ? value.requestedPrinting : '' };
@@ -134,6 +145,7 @@ function reviseRequirements(base, delta, current) {
       if (current[field]) next[field] = current[field];
     }
     if (current.requestedAgeRange && current.requestedAudience) next.requestedAudience = current.requestedAudience;
+    if (current.hasBodyMeasurements) next.hasBodyMeasurements = true;
     for (const field of current.clearFields) {
       if (Object.prototype.hasOwnProperty.call(next, field)) next[field] = Array.isArray(next[field]) ? [] : '';
     }
@@ -142,7 +154,15 @@ function reviseRequirements(base, delta, current) {
     else if (current.customizationRequest === 'jersey' || current.requestedPrintNumber) next.requestedPrinting = '';
   }
   for (const update of delta.updates) {
-    if (update.field === 'requestedFeatures') next.requestedFeatures = [
+    if (update.field === 'requestedKeywords') {
+      const literal = update.value.map(item => item.toLowerCase());
+      // A partial typed name must not discard an already-established query
+      // term also present in CURRENT user text. Query-only expansions stay out.
+      const preserved = (base.requestedKeywords || []).filter(item => (current.requestedKeywords || []).includes(item)
+        && !literal.some(term => ` ${term} `.includes(` ${item} `)));
+      next.requestedKeywords = [...new Set([...literal, ...preserved])];
+    }
+    else if (update.field === 'requestedFeatures') next.requestedFeatures = [
       ...next.requestedFeatures.filter(item => !PRODUCT_REQUIREMENT_ARRAY_VALUES.requestedFeatures.includes(item)), ...update.value,
     ];
     else next[update.field] = update.value;
@@ -289,7 +309,7 @@ export function applyProductCandidateState(intent = {}, decision = {}, { userTex
   }
   const permitted = intent.shouldLoadProductContext === true && intent.replyBoundary?.salesAllowed !== false
     && ['product_search', 'product_question'].includes(intent.commerceRoute)
-    && Boolean(next.requestedTeam && next.requestedProductType) && next.customizationRequest !== 'ambiguous';
+    && Boolean(next.requestedProductType && (next.requestedTeam || hasNamedRetroProductAnchor(next) || multiwordProductNameTerms(next).length)) && next.customizationRequest !== 'ambiguous';
   const query = state.suspectedTerm && state.proposal?.status !== 'confirmed' && !String(intent.query || '').toLowerCase().includes(state.suspectedTerm.value.toLowerCase())
     ? `${intent.query || ''} ${state.suspectedTerm.value}`.trim() : intent.query;
   return { ...intent, ...effective, query, productCandidateState: state, candidateSearchAllowed: permitted,

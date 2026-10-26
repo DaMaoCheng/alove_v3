@@ -20,13 +20,14 @@ const base = { character: { id: 'mascot', category_id: 'mascot', site_id: 'shop'
   userText: 'Which Arsenal shirt would you choose?', searchIntent: intent,
   productContext: { sourceType: 'product_api', sourceRef: 'guest-site-product-context', siteId: 'shop',
     searchOutcome: 'matched', cardAllowed: true, searchIntent: intent, products: [product] },
-  knowledgeContext: { ok: true, strategy: 'business_no_relevant_section', customerServiceIntent: true, customerServiceTopic: 'other', items: [] },
+  knowledgeContext: { ok: true, strategy: 'business_no_relevant_section', customerServiceIntent: false, customerServiceTopic: 'other', items: [] },
   factualContext: { required: false, status: 'not_required', asOfUtc: '2026-10-23T00:00:00Z', searched: false, items: [] },
   replyResult: { text: 'Malformed candidate.', speechText: 'Malformed candidate.', sourceType: 'ai', sourceRef: 'venice-chat-completions' } };
 assert.equal(hasMatchedCatalogueCaptionContext(base), true);
 assert.equal(isGroundedCommerceRepairEligible({ ...base, reviewResult: no, reviewStatus: 'valid',
   failedContracts: ['language', 'factual', 'business_facts', 'boundary'] }), true);
 for (const patch of [
+  { knowledgeContext: { ...base.knowledgeContext, customerServiceIntent: true } },
   { searchIntent: { ...intent, commerceTopic: 'delivery' } },
   { searchIntent: { ...intent, businessInquiry: { kind: 'wholesale' } } },
   { searchIntent: { ...intent, humanHandoff: { explicitRequest: true } } },
@@ -78,6 +79,7 @@ const canonical = { ...base, character: { ...base.character, site_id: 'old-demo'
   trustedSite: { id: 'shop', identity_mascot_character_id: 'mascot' } };
 assert.equal(hasMatchedCatalogueCaptionContext(canonical), true, 'current server canonical mascot binding owns caption purpose despite legacy role site metadata');
 for (const patch of [
+  { knowledgeContext: { ...base.knowledgeContext, customerServiceIntent: true } },
   { trustedSite: { id: 'foreign', identity_mascot_character_id: 'mascot' } },
   { trustedSite: { id: 'shop', identity_mascot_character_id: 'other' } },
   { character: { ...canonical.character, category_id: 'creator' } },

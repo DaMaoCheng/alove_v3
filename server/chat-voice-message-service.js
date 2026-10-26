@@ -69,7 +69,7 @@ export async function createUserVoiceMessage({ characterId, userId, transcriptTe
             }),
           })
         : null;
-      const intentTurn = await prepareChatIntentTurn(db, { session, character, userId: normalizedUserId, userText: promptText, userDisplayOrder: nextOrder, commerceForImageOnly: true });
+      const intentTurn = await prepareChatIntentTurn(db, { session, character, userId: normalizedUserId, userText: promptText, userDisplayOrder: nextOrder, logContext: { requestId: userMessage?.id }, commerceForImageOnly: true });
       const imageLanguage = await applySessionLanguagePreference(db, { character, session, userId: normalizedUserId, userText: promptText, jevDecision: intentTurn.decision });
       const imagePlaceholder = await maybeCreateChatImagePlaceholder(db, {
         session: { ...session, replyLanguageCode: imageLanguage.languageCode },
@@ -185,7 +185,7 @@ export async function createUserVoiceReply({ characterId, userId, messageId }) {
         userText: promptText,
         recentMessages,
       });
-      const intentTurn = await prepareChatIntentTurn(db, { session, character: promptCharacter, userId: normalizedUserId, userText: promptText, userDisplayOrder: Number(userMessage?.display_order || 0), recentMessages });
+      const intentTurn = await prepareChatIntentTurn(db, { session, character: promptCharacter, userId: normalizedUserId, userText: promptText, userDisplayOrder: Number(userMessage?.display_order || 0), recentMessages, logContext: { requestId: userMessage?.id } });
       languagePreference = await applySessionLanguagePreference(db, { character, session, userId: normalizedUserId, userText: promptText, jevDecision: intentTurn.decision });
       promptCharacter = languagePreference.character;
       const chatImageContext = currentProductImageContext ? null : await resolveChatImageReplyDirective(db, {

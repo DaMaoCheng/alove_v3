@@ -1,21 +1,32 @@
+
+import { NAME_CANDIDATE_DIFFERENCE_CONTRACT, NAME_CANDIDATE_UNCERTAINTY_CONTRACT, hasNameCandidateAnchor }  from './product-name-candidate-service.js';
+import { multiwordProductNameTerms } from './product-requirement-fields.js';
 import { filterProductsByIntent, filterProductsByRequestedSizes } from './product-intent-service.js';
 import { filterProductsBySearchCriteria } from './product-search-match-service.js';
 import { getGuestProductEvidence } from './guest-product-sanitizer.js';
 import { buildProductCardDeliveryContext, selectProductsForMessage } from "./chat-product-reply-service.js";
 import { redactContactEmailsForPrompt } from './chat-prompt-utils.js';
-import { sanitizeCandidateUnknownFields } from "../shared/product-candidate-fields.js";
+import { sanitizeProductAlternative, sanitizeCandidateUnknownFields } from "../shared/product-candidate-fields.js";
 import { normalizeProductAttributeEvidence } from "./product-attribute-evidence-service.js";
 import { getCandidateConfirmationProduct } from './product-candidate-confirmation-service.js';
 import { readProductCandidateState } from './product-candidate-state-service.js';
+
+// Canonical site mascots can be shared characters whose legacy site field is
+// different. Only the trusted current site's explicit binding grants that role.
+export function isCurrentCatalogueOwner({ character = {}, trustedSite = null, siteId = '' } = {}) {
+  const canonicalMascot = character.category_id === 'mascot' && String(trustedSite?.id || '') === String(siteId || '')
+    && Boolean(character.id) && trustedSite?.identity_mascot_character_id === character.id;
+  return Boolean(siteId && character.id && String(trustedSite?.id || character.site_id || character.siteId || '') === String(siteId)
+    && (canonicalMascot || (!character.site_id || String(character.site_id) === String(siteId))
+      && (!character.siteId || String(character.siteId) === String(siteId))));
+}
 
 // Only a current, same-site exact result can support ordinary card wording.
 // No new search, candidate identity, catalogue fact or permission is created.
 export function toMatchedCatalogueReviewContext({ searchIntent = {}, productContext, character = {}, trustedSite = null }) {
   const products = productContext?.products, siteId = productContext?.siteId;
   const evidenceProducts = Array.isArray(products) ? products.map(getGuestProductEvidence) : [];
-  const canonicalMascot = character.category_id === 'mascot' && String(trustedSite?.id || '') === String(siteId || '')
-    && Boolean(character.id) && trustedSite?.identity_mascot_character_id === character.id;
-  const permitted = intent => intent?.commerceRoute === 'product_search' && intent.commerceTopic === 'other'
+  const permitted = intent => intent?.commerceRoute === 'product_search'
     && intent.primarySearchVerified === true && !intent.primarySearchBlocked && !intent.sourceErrorCode
     && intent.searchState !== 'source_error' && !intent.commerceClassificationFailure && !intent.commerceClassificationUnavailable
     && intent.shouldLoadProductContext === true && intent.cardAllowed === true
@@ -24,9 +35,7 @@ export function toMatchedCatalogueReviewContext({ searchIntent = {}, productCont
     && !intent.businessInquiry && !intent.humanHandoff && !intent.promotionInquiry && !intent.checkoutIssue
     && !intent.discountExplanationRequired && !intent.confirmedCandidateId && !intent.candidateConfirmationOnly
     && !['pending', 'selected'].includes(intent.productRequestState?.status);
-  if (!siteId || !character.id || String(trustedSite?.id || character.site_id || character.siteId || '') !== String(siteId)
-    || !canonicalMascot && character.site_id && String(character.site_id) !== String(siteId)
-    || !canonicalMascot && character.siteId && String(character.siteId) !== String(siteId)
+  if (!isCurrentCatalogueOwner({ character, trustedSite, siteId })
     || productContext.snapshotOnly || productContext.sourceErrorCode || productContext.searchState === 'source_error' || productContext.ok === false
     || productContext.sourceType !== 'product_api' || !['site-product-context', 'guest-site-product-context'].includes(productContext.sourceRef)
     || productContext.searchOutcome !== 'matched' || productContext.cardAllowed !== true || productContext.candidateContext || productContext.sizingProduct
@@ -52,17 +61,24 @@ export const PRODUCT_NO_MATCH_CONTEXT_CONTRACT = 'noMatchContext describes only 
 // Neither creates a catalogue item, identity confirmation or card permission.
 export function toNoMatchReviewContext(productContext, { searchIntent, characterId = '', siteId = '' } = {}) {
   const intent = searchIntent || productContext?.searchIntent;
+  // This is wording evidence after a completed search, never action permission.
+  // Preserve the strong-primary path; an uncertain primary may already have
+  // allowed the existing commerce fallback to execute an owned pure lookup.
+  const commerceOwned = value => value?.businessKnowledgeRequired === false && value.primarySearchBlocked === false
+    && Number.isFinite(value.commerceConfidence) && value.commerceConfidence >= .8 && value.commerceConfidence <= 1;
+  const searchEvidenceVerified = intent?.primarySearchVerified === true && productContext?.searchIntent?.primarySearchVerified === true
+    || commerceOwned(intent) && commerceOwned(productContext?.searchIntent);
   if (!intent || !characterId || !siteId || productContext?.siteId !== siteId || productContext?.sourceType !== 'product_api'
     || !['site-product-no-match', 'guest-site-product-no-match'].includes(productContext.sourceRef)
     || productContext.searchOutcome !== 'no_match' || !Array.isArray(productContext.products) || productContext.products.length
-    || productContext.candidateContext || productContext.sizingProduct || productContext.sourceErrorCode || productContext.ok === false
+    || productContext.candidateContext || productContext.sizingProduct || productContext.snapshotOnly || productContext.sourceErrorCode || productContext.ok === false
     || productContext.searchState === 'source_error' || productContext.searchIntent?.primarySearchBlocked
     || productContext.searchIntent?.commerceClassificationFailure || productContext.searchIntent?.commerceClassificationUnavailable
     || productContext.searchIntent?.commerceRoute !== 'product_search'
     || productContext.searchIntent?.query !== intent.query || productContext.searchIntent?.searchState !== 'ready_to_search'
-    || productContext.searchIntent?.primarySearchVerified !== true || productContext.searchIntent?.sourceErrorCode
-    || intent.commerceRoute !== 'product_search' || intent.commerceTopic !== 'other' || intent.searchState !== 'ready_to_search'
-    || intent.primarySearchVerified !== true || intent.primarySearchBlocked || intent.shouldLoadProductContext !== true
+    || !searchEvidenceVerified || productContext.searchIntent?.sourceErrorCode
+    || intent.commerceRoute !== 'product_search' || intent.searchState !== 'ready_to_search'
+    || intent.primarySearchBlocked || intent.shouldLoadProductContext !== true
     || intent.cardAllowed !== true || productContext.cardAllowed !== true || intent.nonShoppingReason || intent.sourceErrorCode
     || intent.commerceClassificationFailure || intent.commerceClassificationUnavailable || intent.productCandidateInterpretationUnverified
     || intent.teamConstraintUnverified || intent.scopeUnverified || intent.productScopePending || intent.productRequestState
@@ -96,6 +112,7 @@ export function toCandidateReviewContext(productContext = null) {
       unmatchedSearchTerms: (Array.isArray(product.unmatchedSearchTerms) ? product.unmatchedSearchTerms : [])
         .filter(term => typeof term === "string").map(term => term.trim().slice(0, 80)).filter(Boolean).slice(0, 8),
       attributeEvidence: normalizeProductAttributeEvidence(product.attributeEvidence),
+      ...(sanitizeProductAlternative(product.catalogueDifference) ? { catalogueDifference: sanitizeProductAlternative(product.catalogueDifference) } : {}),
     }));
   const bounded = (value, limit) => typeof value === 'string' && value.length <= limit ? value.trim() : '';
   const original = context.originalRequestContext;
@@ -107,4 +124,28 @@ export function toCandidateReviewContext(productContext = null) {
       .filter(value => bounded(value, 1200)).map(value => redactContactEmailsForPrompt(value)))].slice(0, 4), requiresConfirmation: context.requiresConfirmation === true, entityConfirmed: context.entityConfirmed === true,
     ...(context.entityConfirmed === true ? { entityConfirmationEvidence: bounded(context.entityConfirmationEvidence, 240),
       priorConfirmationQuestion: bounded(context.priorConfirmationQuestion, 2000) } : {}), products };
+}
+
+// Initial uncertain-identity cards reuse the existing difference quote audit.
+// Identity confirmation has its own source/assent audit and sends no new card.
+export function toNameCandidateDifferenceContext(productContext) {
+  const candidate = toCandidateReviewContext(productContext);
+  if (!candidate?.requiresConfirmation || candidate.entityConfirmed || candidate.products.length !== 1) return null;
+  const product = candidate.products[0], difference = product.catalogueDifference;
+  return difference ? { ...difference, requestedRetro: difference.kind === 'retro_alternative',
+    productId: product.id, identityUnverified: true } : null;
+}
+
+export function productCandidateConditionsContract(productContext) {
+  const candidate = toCandidateReviewContext(productContext);
+  return PRODUCT_CANDIDATE_CONDITIONS_CONTRACT + (toNameCandidateUncertaintyContext(productContext) ? '\n' + NAME_CANDIDATE_UNCERTAINTY_CONTRACT : '') + (candidate?.products.some(product => product.catalogueDifference)
+    ? '\n' + NAME_CANDIDATE_DIFFERENCE_CONTRACT : '');
+}
+
+export function toNameCandidateUncertaintyContext(productContext) {
+  const candidate = toCandidateReviewContext(productContext), terms = multiwordProductNameTerms(productContext?.searchIntent);
+  if (!candidate?.requiresConfirmation || candidate.entityConfirmed || candidate.products.length !== 1 || !terms.length) return null;
+  const product = candidate.products[0];
+  return product.unmatchedSearchTerms.length && hasNameCandidateAnchor(product, { anchor: terms.at(-1) })
+    ? { candidateId: product.id, requestedName: terms.join(' '), catalogueName: product.name } : null;
 }

@@ -31,6 +31,7 @@ const update = { anyOf: [
   scalarUpdate('requestedFeatures', list(values(PRODUCT_REQUIREMENT_ARRAY_VALUES.requestedFeatures))),
   scalarUpdate('requestedVariants', list(values(PRODUCT_REQUIREMENT_ARRAY_VALUES.requestedVariants))),
   scalarUpdate('requestedSizes', list(values(PRODUCT_REQUIREMENT_ARRAY_VALUES.requestedSizes))),
+  object({ field: values(['requestedKeywords']), value: list(text(80), 1), evidence: text(), identityType: values(['player', 'team', 'unknown']) }),
 ] };
 
 export const COMMERCE_INTENT_RESPONSE_FORMAT = {
@@ -40,6 +41,7 @@ export const COMMERCE_INTENT_RESPONSE_FORMAT = {
     topic: values(['authenticity', 'delivery', 'returns', 'support', 'material', 'sizing', 'price', 'stock', 'other']),
     needsLiveProductData: bool, searchQuery: text(160), referencedProductId: text(160), referencedProductIds: list(text(160), 0, 2),
     knowledgeScope: values(['business', 'general']), knowledgeQuery: text(), answerRequired: bool,
+    knowledgeRequest: nullable(object({ kind: values(['catalogue_only', 'business_question', 'sizing_update', 'unclear']), evidence: text() })),
     businessInquiry: nullable(object({ kind: values(['quotation', 'wholesale', 'dropshipping', 'distribution', 'sponsorship', 'partnership', 'business_other']), evidence: text(500) })),
     humanHandoff: nullable(object({ explicitRequest: bool, businessReviewRequired: bool, reviewReason: values(['quotation', 'negotiation', 'contract', 'commercial_terms', 'none']), evidence: text(500) })),
     promotionInquiry: nullable(object({ kind: values(['policy', 'benefit_request']), evidence: text(500) })),
@@ -78,7 +80,12 @@ export function validateCommerceIntentShape(value) {
     return typeof input === 'number' && Number.isFinite(input) && (schema.type !== 'integer' || Number.isInteger(input))
       && input >= (schema.minimum ?? -Infinity) && input <= (schema.maximum ?? Infinity);
   };
-  const compatible = value && typeof value === 'object' && !Array.isArray(value) && !Object.hasOwn(value, 'referencedProductIds')
-    ? { ...value, referencedProductIds: [] } : value;
-  return matches(COMMERCE_INTENT_RESPONSE_FORMAT.json_schema.schema, compatible);
+  const withKnowledgeRequest = value && typeof value === 'object' && !Array.isArray(value) && !Object.hasOwn(value, 'knowledgeRequest')
+    ? { ...value, knowledgeRequest: null } : value;
+  const compatible = withKnowledgeRequest && typeof withKnowledgeRequest === 'object' && !Array.isArray(withKnowledgeRequest) && !Object.hasOwn(withKnowledgeRequest, 'referencedProductIds')
+    ? { ...withKnowledgeRequest, referencedProductIds: [] } : withKnowledgeRequest;
+  const nameCompatible = compatible?.productRequirement && Array.isArray(compatible.productRequirement.updates)
+    ? { ...compatible, productRequirement: { ...compatible.productRequirement, updates: compatible.productRequirement.updates.map(update =>
+      update?.field === 'requestedKeywords' && !Object.hasOwn(update, 'identityType') ? { ...update, identityType: 'unknown' } : update) } } : compatible;
+  return matches(COMMERCE_INTENT_RESPONSE_FORMAT.json_schema.schema, nameCompatible);
 }

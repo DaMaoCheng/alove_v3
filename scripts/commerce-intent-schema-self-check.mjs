@@ -2,7 +2,7 @@ import { commerceClassificationTimeout } from '../server/product-intent-classifi
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { COMMERCE_INTENT_RESPONSE_FORMAT } from '../server/commerce-intent-response-format.js';
-import { PRODUCT_REQUIREMENT_SCALAR_VALUES, PRODUCT_REQUIREMENT_ARRAY_VALUES } from '../server/product-requirement-fields.js';
+import { PRODUCT_REQUIREMENT_SCALAR_VALUES, PRODUCT_REQUIREMENT_ARRAY_VALUES, CHILD_PRODUCT_SIZE_LABELS } from '../server/product-requirement-fields.js';
 import { normalizeChatProductRoutingContext } from '../server/chat-product-routing-context-service.js';
 import { normalizeProductRequirementDecision } from '../server/product-candidate-state-service.js';
 import { normalizeProductRequest } from '../server/product-request-scope-service.js';
@@ -31,15 +31,30 @@ assert.equal(COMMERCE_INTENT_RESPONSE_FORMAT.type, 'json_schema');
 assert.equal(COMMERCE_INTENT_RESPONSE_FORMAT.json_schema.strict, true);
 const legacyFormat = structuredClone(COMMERCE_INTENT_RESPONSE_FORMAT);
 delete legacyFormat.json_schema.schema.properties.referencedProductIds;
+delete legacyFormat.json_schema.schema.properties.knowledgeRequest;
+legacyFormat.json_schema.schema.required = legacyFormat.json_schema.schema.required.filter(key => key !== 'knowledgeRequest');
+assert(schema.required.includes('knowledgeRequest'));
+assert(valid(schema.properties.knowledgeRequest, null));
+assert(valid(schema.properties.knowledgeRequest, { kind: 'catalogue_only', evidence: 'shirt' }));
+assert(!valid(schema.properties.knowledgeRequest, { kind: 'invented', evidence: 'shirt' }));
 legacyFormat.json_schema.schema.required = legacyFormat.json_schema.schema.required.filter(key => key !== 'referencedProductIds');
 assert.deepEqual(schema.properties.referencedProductIds, { type:'array',items:{type:'string',maxLength:160},minItems:0,maxItems:2 });
 assert(schema.required.includes('referencedProductIds'));
 // Historical bare years intentionally extend just the season wire value.
 // Restore that one prior pattern before checking the unchanged contract hash.
+const keywordBranch = schema.properties.productRequirement.properties.updates.items.anyOf.find(branch => branch.properties.field.enum[0] === 'requestedKeywords');
+assert.deepEqual(keywordBranch.properties.value, { type:'array', items:{type:'string',maxLength:80}, minItems:1,maxItems:8 });
+legacyFormat.json_schema.schema.properties.productRequirement.properties.updates.items.anyOf = legacyFormat.json_schema.schema.properties.productRequirement.properties.updates.items.anyOf.filter(branch => branch.properties.field.enum[0] !== 'requestedKeywords');
 const legacySeason=legacyFormat.json_schema.schema.properties.productRequirement.properties.updates.items.anyOf
   .find(branch=>branch.properties.field.enum[0]==='requestedSeason').properties.value;
 assert.deepEqual(legacySeason,{type:'string',pattern:'^$|^[0-9]{4}(?:/[0-9]{2})?$',maxLength:7});
 legacySeason.pattern='^$|^[0-9]{4}/[0-9]{2}$';
+// Child labels extend only the finite sizing value; preserve the entire old contract.
+const legacySizes = legacyFormat.json_schema.schema.properties.productRequirement.properties.updates.items.anyOf
+  .find(branch => branch.properties.field.enum[0] === 'requestedSizes').properties.value.items.enum;
+const originalSizeLabels = ['5XL','4XL','3XL','2XL','XXL','XL','XXS','XS','S','M','L'];
+assert.deepEqual(legacySizes, [...originalSizeLabels, ...CHILD_PRODUCT_SIZE_LABELS]);
+legacySizes.splice(0, legacySizes.length, ...originalSizeLabels);
 assert.equal(createHash('sha256').update(JSON.stringify(legacyFormat)).digest('hex'),
   '813384b5c1520ce72cd1ca1cf3035edea5bc81b95d240c2fea2699bd303be20f',
   'Shared finite values must retain the complete pre-refactor wire contract');
@@ -101,6 +116,6 @@ assert.equal(valid(schema.properties.checkoutIssue, { active: true, evidence: 'p
 assert.equal(valid(schema.properties.replyBoundary, { salesAllowed: true }), false);
 console.log('commerce intent schema self-check passed: strict single/multiple shapes, canonical typed requirements, prior business/support contracts retained; no network/DB/model calls');
 
-assert.equal(commerceClassificationTimeout('Real Madrid away jersey 2026/27'),24000);
+assert.equal(commerceClassificationTimeout('Real Madrid away jersey 2026/27'),40000);
 assert.equal(commerceClassificationTimeout('Hello, how are you?'),10000);
 assert.equal(commerceClassificationTimeout('What are your shipping and refund policies?'),10000);

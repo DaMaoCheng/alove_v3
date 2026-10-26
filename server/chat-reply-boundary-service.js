@@ -1,3 +1,5 @@
+import { supportsNameCandidateYears, validateNameIdentityAudit } from './product-name-candidate-service.js';
+import { toNameCandidateDifferenceContext, toNameCandidateUncertaintyContext } from './product-candidate-context-service.js';
 import { toAlternativeReviewContext, validateProductAlternativeAudit } from "./product-alternative-service.js";
 import { SERVER_CONFIG } from './config.js';
 import { canReviewLanguageClarification, reviewedLanguageClarification, reviewedLanguageClarificationPurpose, withClarificationVoiceLanguage, withLanguageClarificationRecovery, languageClarificationRecoveryProof } from "./chat-language-clarification-policy.js";
@@ -7,11 +9,11 @@ import { recoverReviewedLanguageReply } from "./chat-reply-language-recovery-ser
 import { isClosedProductClarification, isConversationReplyRecoveryEligible, productClarificationContext, isProductClarificationRecoveryEligible } from "./chat-reply-purpose-service.js";
 import { buildTrustedCharacterIdentity } from "./chat-prompt-utils.js";
 import { isImageReplyRecoveryEligible, refreshImageReplyRecoveryContext } from "./chat-image-reply-recovery-service.js";
-import { hasMatchedCatalogueCaptionContext, isGroundedCommerceRepairEligible, repairGroundedCommerceReply } from "./chat-grounded-reply-repair-service.js";
+import { hasChildSizingCorrectionContext, hasMatchedCatalogueCaptionContext, isGroundedCommerceRepairEligible, repairGroundedCommerceReply } from "./chat-grounded-reply-repair-service.js";
 import { evaluateReplyReview, approveReplyRemainder, verifiedReplyRemainder } from "./chat-reply-review-decision.js";
 import { buildReplyReviewMessages, buildReplyReviewFormat } from "./chat-reply-review-contracts.js";
 import { buildProductSizingFallback } from "./product-sizing-copy.js";
-import { buildSizingConversationContext } from "./product-sizing-guidance-service.js";
+import { buildSizingConversationContext, buildChildProductSizingContext, hasUnsupportedChildSizingUnit } from "./product-sizing-guidance-service.js";
 import { getChatOrderEntryCopy } from "../shared/chat-order-copy.js";
 import { buildUnconfirmedProductStateReply } from "./guest-product-reply-copy.js";
 import { isAiTransportFallback } from "./ai-reply-fallback-service.js";
@@ -174,13 +176,15 @@ export async function enforceReplyBoundary(options = {}) {
     && ["current-product-sizing-context", "guest-current-product-sizing-context"].includes(productContext?.sourceRef);
   const sizingConversationContext = isStorefrontGuidanceCharacter(character)
     ? buildSizingConversationContext({ searchIntent, userText, recentMessages }) : null;
+  const childProductSizingContext = isStorefrontGuidanceCharacter(character)
+    ? buildChildProductSizingContext({ searchIntent, userText, recentMessages }) : null;
   const businessFactsRequired = needsBusinessFactsReview(searchIntent, character) || Boolean(sizingConversationContext);
   const orderActionState = resolveOrderActionPromptState(orderActionCandidate);
   const orderGuidanceRequired = isStorefrontGuidanceCharacter(character) && Boolean(orderActionState);
   const guestBenefitReview = getGuestBenefitReviewContext(guestBenefitContext);
   let imageStatusContext = toImageStatusReviewContext(chatImageContext);
   const imageStatusRequired = Boolean(imageStatusContext);
-  const guidanceRequired = needsSupportGuidanceReview(searchIntent, character) || sizingRequired || Boolean(sizingConversationContext) || orderGuidanceRequired || Boolean(guestBenefitReview);
+  const guidanceRequired = needsSupportGuidanceReview(searchIntent, character) || sizingRequired || Boolean(sizingConversationContext) || Boolean(childProductSizingContext) || orderGuidanceRequired || Boolean(guestBenefitReview);
   const existingBoundaryRequired = hasReplyBoundary(searchIntent) || evidenceRequired || guidanceRequired || imageStatusRequired;
   const boundaryReviewRequired = options.requireIdentityReview === true || existingBoundaryRequired || businessFactsRequired || factualRequired || productScopeRequired;
   const transportFallback = isAiTransportFallback(replyResult);
@@ -221,8 +225,13 @@ export async function enforceReplyBoundary(options = {}) {
         characterId: character.id, siteId: options.trustedSite?.id || character.site_id || character.siteId, identityContext: buildTrustedCharacterIdentity(character, options.trustedSite),
         clarificationRequired: Boolean(languageRepairAttempted && languageRepairDiagnostics?.repairPurpose === "clarification"),
         orderActionState, imageStatusContext, guestBenefitContext: guestBenefitReview, verifiedDiscountOffers: replyResult.verifiedDiscountOffers,
-        evidenceRequired, businessFactsRequired, productScopeRequired, candidateConfirmationRequired, productScopeContext, factualRequired, factualContext: factualReviewContext, guidanceRequired, sizingRequired, sizingConversationContext, checkoutContext: checkoutContext || uncertainCheckoutContext, discountPolicyExplanation: searchIntent.discountExplanationRequired === true, productContext, knowledgeContext, searchIntent,
+        evidenceRequired, businessFactsRequired, productScopeRequired, candidateConfirmationRequired, productScopeContext, factualRequired, factualContext: factualReviewContext, guidanceRequired, sizingRequired, sizingConversationContext, childProductSizingContext, checkoutContext: checkoutContext || uncertainCheckoutContext, discountPolicyExplanation: searchIntent.discountExplanationRequired === true, productContext, knowledgeContext, searchIntent,
         feedbackActionAvailable: Boolean(feedbackActionCandidate && searchIntent.replyBoundary?.contactAllowed !== false) });
+      if (childProductSizingContext && hasUnsupportedChildSizingUnit({ searchIntent, productContext, text,
+        speechText: replyResult.speechText || text, userText, recentMessages })) {
+        result = { ...result, allowed: false, guidanceSupported: false, retainedGuidanceSupported: false,
+          retainedText: '', retainedTextAllowed: false };
+      }
       if (productContext?.searchOutcome === "alternative" && !toAlternativeReviewContext(productContext)) result = { ...result, allowed: false, evidenceSupported: false, boundarySupported: false };
       if (result?.protocolFailures?.length) languageDiagnostics = { ...languageDiagnostics,
         reviewProtocol: { ...languageDiagnostics.reviewProtocol,
@@ -329,10 +338,12 @@ export async function enforceReplyBoundary(options = {}) {
   // Already matched catalogue cards require their actual evidence during a
   // language rewrite. Choose the same single grounded correction instead of
   // first spending that correction on an ordinary unconstrained regeneration.
-  const matchedCaptionRepair = !accepted && searchIntent.commerceRoute === "product_search"
-    && productContext?.searchOutcome === "matched" && productContext?.products?.length > 0 && !productContext?.candidateContext
+  const catalogueCaptionRepair = !accepted && (
+    searchIntent.commerceRoute === "product_search" && productContext?.searchOutcome === "matched"
+      && productContext?.products?.length > 0 && !productContext?.candidateContext
+    || Boolean(toNameCandidateUncertaintyContext(productContext)))
     && isGroundedCommerceRepairEligible(groundedRepairInput);
-  const regenerationEligible = independentLanguageQualityRequired && !accepted && !transportFallback && !matchedCaptionRepair
+  const regenerationEligible = independentLanguageQualityRequired && !accepted && !transportFallback && !catalogueCaptionRepair
     && !languageRepairAttempted && typeof regenerateReply === "function"
     && (recoveryPurpose || primaryReviewUnavailable || primaryReviewAccepted && languageFailure);
   if (regenerationEligible) {
@@ -389,7 +400,7 @@ export async function enforceReplyBoundary(options = {}) {
     } else languageDiagnostics.repairFailureCode = "image_state_changed";
   }
   const groundedRepairEligible = !regenerationEligible && !imageRecoveryEligible && !accepted
-    && (matchedCaptionRepair || isGroundedCommerceRepairEligible(groundedRepairInput));
+    && (catalogueCaptionRepair || isGroundedCommerceRepairEligible(groundedRepairInput));
   if (groundedRepairEligible) {
     const productCorrection = Boolean(productContext?.candidateContext || hasMatchedCatalogueCaptionContext(groundedRepairInput)
       || toAlternativeReviewContext(productContext));
@@ -449,6 +460,7 @@ export async function enforceReplyBoundary(options = {}) {
     && isClosedProductClarification({ ...options, searchIntent, replyResult, chatImageContext })
     ? buildProductClarificationFallbackReply(code) : '';
   const fallback = closedProductCopy || (evidenceRequired ? buildEvidenceFallback(searchIntent, productContext, { languageCode: code, userText })
+    : hasChildSizingCorrectionContext(options) ? buildLanguageQualityFallbackReply(code)
     : sizingRequired || sizingConversationContext ? buildProductSizingFallback(productContext?.sizingProduct, code)
     : checkoutContext ? buildCheckoutNextStepCopy(searchIntent.checkoutIssue, code)
     : guestBenefitReview ? buildGuestBenefitFallback(guestBenefitContext)
@@ -484,7 +496,7 @@ export async function enforceReplyBoundary(options = {}) {
 // One bounded assessment combines reply boundaries, missing live product facts and scoped support guidance.
 // Production chat opts into language quality; scoped guards share its call.
 // The assessment cannot rewrite text or grant permissions.
-export async function assessReplyBoundary({ text = "", speechText = "", userText = "", language = "en", boundary = {}, languageQualityRequired = false, boundaryReviewRequired = true, independentLanguageReview = false, languageClarificationEligible = false, evidenceRequired = false, businessFactsRequired = false, productScopeRequired = false, candidateConfirmationRequired = false, productScopeContext = null, factualRequired = false, factualContext = null, guidanceRequired = false, sizingRequired = false, sizingConversationContext = null, discountPolicyExplanation = false, feedbackActionAvailable = false, orderActionState = null, imageStatusContext = null, guestBenefitContext = null, identityContext = null, catalogueOwner = null, characterId = "", siteId = "", clarificationRequired = false, checkoutContext = null, productContext = null, knowledgeContext = null, searchIntent = null, verifiedDiscountOffers = [], factualLimitationReviewRequired = false, logContext = {}, fetchImpl = fetch, config = null, recordLog = recordProviderCallLog, timeoutMs = SERVER_CONFIG.aiReply.chatTimeouts.review } = {}) {
+export async function assessReplyBoundary({ text = "", speechText = "", userText = "", language = "en", boundary = {}, languageQualityRequired = false, boundaryReviewRequired = true, independentLanguageReview = false, languageClarificationEligible = false, evidenceRequired = false, businessFactsRequired = false, productScopeRequired = false, candidateConfirmationRequired = false, productScopeContext = null, factualRequired = false, factualContext = null, guidanceRequired = false, sizingRequired = false, sizingConversationContext = null, childProductSizingContext = null, discountPolicyExplanation = false, feedbackActionAvailable = false, orderActionState = null, imageStatusContext = null, guestBenefitContext = null, identityContext = null, catalogueOwner = null, characterId = "", siteId = "", clarificationRequired = false, checkoutContext = null, productContext = null, knowledgeContext = null, searchIntent = null, verifiedDiscountOffers = [], factualLimitationReviewRequired = false, logContext = {}, fetchImpl = fetch, config = null, recordLog = recordProviderCallLog, timeoutMs = SERVER_CONFIG.aiReply.chatTimeouts.review } = {}) {
   productScopeContext = productScopeRequired ? boundedScopeContext(productScopeContext) : null;
   languageQualityRequired = languageQualityRequired && !independentLanguageReview;
   factualRequired = factualReviewRequired(factualContext);
@@ -499,9 +511,11 @@ export async function assessReplyBoundary({ text = "", speechText = "", userText
   const requiredFields = ["allowed", "confidence", ...contracts.map(name => REVIEW_CONTRACTS[name].field),
     ...(independentLanguageReview ? ["boundarySupported"] : []), ...(checkoutContext?.classificationUnavailable ? ["checkoutProblem"] : [])];
   try {
-    const reviewOptions = { text, speechText, userText, language, boundary, languageQualityRequired, boundaryReviewRequired, independentLanguageReview, languageClarificationEligible, evidenceRequired, businessFactsRequired, productScopeRequired, candidateConfirmationRequired, productScopeContext, factualRequired, factualContext, factualLimitationReviewRequired, guidanceRequired, sizingRequired, sizingConversationContext, discountPolicyExplanation, feedbackActionAvailable, orderActionState, imageStatusContext, guestBenefitContext, identityContext, catalogueOwner, characterId, siteId, clarificationRequired, checkoutContext, productContext, knowledgeContext, searchIntent, verifiedDiscountOffers };
+    const reviewOptions = { text, speechText, userText, language, boundary, languageQualityRequired, boundaryReviewRequired, independentLanguageReview, languageClarificationEligible, evidenceRequired, businessFactsRequired, productScopeRequired, candidateConfirmationRequired, productScopeContext, factualRequired, factualContext, factualLimitationReviewRequired, guidanceRequired, sizingRequired, sizingConversationContext, childProductSizingContext, discountPolicyExplanation, feedbackActionAvailable, orderActionState, imageStatusContext, guestBenefitContext, identityContext, catalogueOwner, characterId, siteId, clarificationRequired, checkoutContext, productContext, knowledgeContext, searchIntent, verifiedDiscountOffers };
     const plannedClaimContext = buildBusinessClaimContext(reviewOptions);
     const plannedAlternativeContext = toAlternativeReviewContext(productContext);
+    const plannedNameDifference = toNameCandidateDifferenceContext(productContext);
+    const plannedNameIdentity = toNameCandidateUncertaintyContext(productContext);
     const alternativeAuditOptions = { text: stripTtsControlTags(text), speechText: stripTtsControlTags(speechText || text), context: plannedAlternativeContext };
     if (plannedClaimContext && (!plannedClaimContext.bounded || !plannedClaimContext.references.length && !plannedClaimContext.sizingConversation)) return { allowed: false, confidence: 0, reviewStatus: 'unavailable' };
     // Reuse the existing independent reviewer for trusted identity and scoped
@@ -540,6 +554,10 @@ export async function assessReplyBoundary({ text = "", speechText = "", userText
     const reviewStatus = 'valid';
     const claimAudit = validateBusinessClaimAudit(result?.businessClaimAudit, plannedClaimContext);
     if (plannedAlternativeContext && !validateProductAlternativeAudit(result?.alternativeAudit, alternativeAuditOptions).accepted) result = { ...result, allowed: false, evidenceSupported: false,
+      retainedText: '', retainedTextAllowed: false, retainedEvidenceSupported: false };
+    if (plannedNameIdentity && !validateNameIdentityAudit(result?.nameIdentityAudit, stripTtsControlTags(text), stripTtsControlTags(speechText || text))) result = { ...result, allowed: false, evidenceSupported: false,
+      retainedText: '', retainedTextAllowed: false, retainedEvidenceSupported: false };
+    if (!supportsNameCandidateYears(plannedNameDifference, stripTtsControlTags(text), stripTtsControlTags(speechText || text))) result = { ...result, allowed: false, evidenceSupported: false,
       retainedText: '', retainedTextAllowed: false, retainedEvidenceSupported: false };
     if (plannedClaimContext && !claimAudit.accepted) result = { ...result, allowed: false, businessFactsSupported: false,
       retainedText: '', retainedTextAllowed: false, retainedBusinessFactsSupported: false };

@@ -1,3 +1,4 @@
+import { projectChildSizingUpdatePrompt } from './product-sizing-guidance-service.js';
 import { buildCommerceClassificationFailureReply } from "./commerce-classification-failure-service.js";
 import { finalizeProductCandidateState } from "./product-candidate-state-service.js";
 import { getCandidateConfirmationProduct } from './product-candidate-confirmation-service.js';
@@ -18,7 +19,7 @@ import { buildChatReplyPrompt } from "./chat-prompt-service.js";
 import { indexChatMessage } from "./chat-memory-service.js";
 import { buildChatProductRecommendationContext } from "./chat-product-recommendation-service.js";
 import { resolveProductRecommendationSite } from "./product-recommendation-site-service.js";
-import { applyCommerceQuestionPromptPolicy, resolveCommerceSearchIntent } from "./commerce-routing-service.js";
+import { applyCommerceQuestionPromptPolicy, resolveCommerceSearchIntent, resolveCommerceKnowledgeScope } from "./commerce-routing-service.js";
 import { recordCommerceDecisionLog } from "./ai-reply-log-service.js";
 import { retrieveChatKnowledgeSections } from "./knowledge-retrieval-service.js";
 import { resolveChatFactualContext } from "./chat-factual-context-service.js";
@@ -70,7 +71,8 @@ export async function buildCharacterReplyGenerationForDb(db, {
   const commerceSite = await resolveProductRecommendationSite(db, { character: promptCharacter, userId });
   let commerceSearchIntent = await (intentTurn.resolveCommerce?.bind(intentTurn) || resolveCommerceSearchIntent)({ userText, recentMessages,
     searchIntent: buildProductSearchIntent(userText, productTrigger, { recentProductContext: buildRecentProductContext(recentMessages) }),
-    enrichAllTurns: true, explicitTrigger: Boolean(productTrigger), jevDecision: intentTurn.decision, siteId: commerceSite?.id || "", siteSlug: commerceSite?.slug || "", characterId: characterId || promptCharacter.id });
+    logContext, enrichAllTurns: true, explicitTrigger: Boolean(productTrigger), jevDecision: intentTurn.decision, siteId: commerceSite?.id || "", siteSlug: commerceSite?.slug || "", characterId: characterId || promptCharacter.id });
+  const productStartedAt = Date.now();
   let productContext = suppressRepeatedProductCards((!hasPendingProductRequest(commerceSearchIntent) && !commerceSearchIntent.productRequestState && productContextOverride) || await buildChatProductRecommendationContext(db, {
     character: promptCharacter,
     userId,
@@ -84,26 +86,30 @@ export async function buildCharacterReplyGenerationForDb(db, {
   }), { recentMessages, userText });
   productContext = mergeReplyCommerceContext(productContext, commerceSearchIntent);
   productContext = applyReplyBoundaryToProductContext(productContext, commerceSearchIntent);
+  const productMs = Date.now() - productStartedAt;
   if (productContext) productContext.userText = userText;
   const classificationFailureReply = buildCommerceClassificationFailureReply(commerceSearchIntent, { userText, language: logContext.languageCode || promptCharacter?.profile?.language || "en" });
+  const knowledgeStartedAt = Date.now();
   let knowledgeContext = await retrieveChatKnowledgeSections({
     db,
     query: userText,
+    logContext,
     knowledgeQuery: commerceSearchIntent.knowledgeQuery,
-    knowledgeScope: classificationFailureReply ? "none" : commerceSearchIntent.commerceRoute === "product_search" && !commerceSearchIntent.answerRequired ? "none" : commerceSearchIntent.knowledgeScope,
+    knowledgeScope: resolveCommerceKnowledgeScope(commerceSearchIntent, { classificationFailed: Boolean(classificationFailureReply) }),
     siteId: commerceSite?.id || "",
     character: promptCharacter,
     userId,
     topicHint: commerceSearchIntent.customerServiceKnowledgeRequest ? commerceSearchIntent.commerceTopic : "",
     limit: 4,
   });
+  const knowledgeMs = Date.now() - knowledgeStartedAt;
   const factualContext = await resolveChatFactualContext({
     userText, jevDecision: intentTurn.decision, searchIntent: commerceSearchIntent,
     language: logContext.languageCode || promptCharacter?.profile?.language || "en",
     country: promptCharacter?.profile?.countryCode || "US",
     logContext: { requestId: logContext.requestId, sessionId: session.id, characterId, userId },
   });
-  await recordCommerceDecisionLog({ searchIntent: productContext?.searchIntent || commerceSearchIntent, knowledgeContext, productContext, factualContext,
+  await recordCommerceDecisionLog({ searchIntent: productContext?.searchIntent || commerceSearchIntent, knowledgeContext, productContext, factualContext, stageDurations: { productMs, knowledgeMs },
     requestId: logContext.requestId, sessionId: session.id, characterId, userId });
   // Only callers that persist an order action supply this site. Voice currently does not.
   const orderAction = !orderLookupSiteSlug || (isStorefrontGuidanceCharacter(promptCharacter) && shouldSkipOrderLookupForCheckout(commerceSearchIntent))
@@ -130,12 +136,13 @@ export async function buildCharacterReplyGenerationForDb(db, {
     if (error?.statusCode && error.statusCode >= 500) console.warn("discount offer context unavailable", error.code || error.message);
   }
   chatImageContext = await resolveChatImageStatusContext(getDbPool(), { session, character: promptCharacter, userDisplayOrder, directive: chatImageContext });
+  const sizeUpdatePrompt = projectChildSizingUpdatePrompt({ searchIntent: commerceSearchIntent, productContext, recentMessages });
   const promptContext = applyCheckoutSupportPromptPolicy(applyReplyBoundaryPromptPolicy(applyCommerceQuestionPromptPolicy(buildChatReplyPrompt({
     character: promptCharacter, trustedSite: commerceSite,
-    recentMessages,
+    recentMessages: sizeUpdatePrompt.recentMessages,
     userText,
     userContext,
-    productContext,
+    productContext: sizeUpdatePrompt.productContext,
     discountOffersContext,
     knowledgeContext,
     factualContext,
@@ -143,7 +150,7 @@ export async function buildCharacterReplyGenerationForDb(db, {
     orderActionCandidate: orderAction,
     chatImageContext,
     visionInputs,
-  }), commerceSearchIntent), commerceSearchIntent), commerceSearchIntent, promptCharacter);
+  }), commerceSearchIntent, { userText, recentMessages }), commerceSearchIntent), commerceSearchIntent, promptCharacter);
   const generatedReplyResult = classificationFailureReply || await generateChatReply({
     deferIdentityToBoundaryReview: true,
     promptContext,

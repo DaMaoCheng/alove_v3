@@ -44,6 +44,7 @@ const contextFor = input => toNoMatchReviewContext(input.productContext, { searc
 assert.equal(contextFor(base).requirements.requestedColor, 'green');
 const verdict = { ...approved, allowed: false, evidenceSupported: false };
 const eligibility = input => isGroundedCommerceRepairEligible({ reviewStatus: 'valid', reviewResult: verdict, failedContracts: ['evidence'], ...input });
+assert.equal(isGroundedCommerceRepairEligible({ ...base, reviewStatus: 'valid', reviewResult: { ...verdict, confidence: 0 }, failedContracts: ['evidence','confidence'] }), true, 'owned successful empty evidence may generate one fresh candidate even when the rejected wording has zero confidence; this is not approval');
 for (const [name, change] of [
   ['source failure', x => { x.productContext.searchOutcome = 'source_error'; }],
   ['hidden source error', x => { x.productContext.sourceErrorCode = 'timeout'; }],
@@ -91,3 +92,20 @@ assert(!JSON.stringify(contextFor(base)).includes('Only the separate shirt'), 'r
 assert.equal(base.productContext.products.length, 0);
 assert.equal(base.feedbackActionCandidate.kind, 'feedback', 'real server feedback action is preserved');
 console.log('Owned no-match context, negative boundaries, common correction/review provenance and unchanged feedback passed');
+// A completed, owned empty lookup is text evidence even when uncertain JEV
+// allowed the existing commerce fallback; it must not grant a new action.
+const commerceOwned = structuredClone(base);
+commerceOwned.searchIntent = { ...commerceOwned.searchIntent, primarySearchVerified: false, primarySearchBlocked: false,
+  businessKnowledgeRequired: false, commerceConfidence: .99 };
+commerceOwned.productContext.searchIntent = commerceOwned.searchIntent;
+assert(contextFor(commerceOwned), 'A verified whole-turn catalogue lookup that actually completed can retain no-match text evidence without a strong primary action');
+assert(eligibility(commerceOwned));
+for (const change of [x => { x.searchIntent.primarySearchBlocked = true; },
+  x => { delete x.searchIntent.businessKnowledgeRequired; }, x => { x.searchIntent.commerceConfidence = .5; }, x => { x.searchIntent.commerceConfidence = NaN; },
+  x => { x.productContext.searchIntent = { ...x.searchIntent, businessKnowledgeRequired: true }; },
+  x => { x.productContext.searchIntent = { ...x.searchIntent, query: 'different target' }; },
+  x => { x.productContext.searchOutcome = 'not_searched'; }, x => { x.productContext.sourceErrorCode = 'timeout'; }]) {
+  const probe = structuredClone(commerceOwned); probe.productContext.searchIntent = probe.searchIntent; change(probe);
+  assert.equal(contextFor(probe), null, 'No evidence bypass for blocked, legacy/uncertain, unexecuted or failed searches');
+}
+console.log('Completed commerce-owned empty lookup correction without primary permission escalation passed');

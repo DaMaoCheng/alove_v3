@@ -4,6 +4,7 @@ const SOURCE_PROOF = Symbol('server-candidate-source');
 const productSignature = products => JSON.stringify((products || []).map(product => ({
   id: String(product.productId || product.id || ''), siteId: product.siteId || '', name: product.name,
   url: product.url, price: product.price, available: product.available, attributeEvidence: product.attributeEvidence,
+  ...(product.matchStatus === 'candidate' && product.alternative ? { catalogueDifference: product.alternative } : {}),
 })));
 export function markCandidateContextSource(context, searchIntent = {}, products = [], location = {}) {
   if (!context) return context;

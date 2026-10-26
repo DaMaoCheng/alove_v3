@@ -64,7 +64,7 @@ export async function persistGuestTurn({
           beforeDisplayOrder: promptBeforeDisplayOrder,
         }),
       });
-      const intentTurn = await prepareChatIntentTurn(db, { session: guestSessionForImage(guest), character, siteId: guest.site_id, siteSlug: guest.site_slug, userText: turnText, userDisplayOrder: Number(existing[0].display_order || 0), commerceBeforeDisplayOrder: promptBeforeDisplayOrder, commerceForImageOnly: true });
+      const intentTurn = await prepareChatIntentTurn(db, { session: guestSessionForImage(guest), character, siteId: guest.site_id, siteSlug: guest.site_slug, userText: turnText, userDisplayOrder: Number(existing[0].display_order || 0), logContext: { requestId: existing[0].id }, commerceBeforeDisplayOrder: promptBeforeDisplayOrder, commerceForImageOnly: true });
       const languagePreference = await applySessionLanguagePreference(db, { character, session: guestSessionForImage(guest), userText: turnText, jevDecision: intentTurn.decision });
       const imageResult = await maybeCreateGuestChatImagePlaceholder(db, {
         guest,
@@ -158,7 +158,7 @@ export async function persistGuestTurn({
         beforeDisplayOrder: order,
       }),
     });
-    const intentTurn = await prepareChatIntentTurn(db, { session: guestSessionForImage(guest), character, siteId: guest.site_id, siteSlug: guest.site_slug, userText: turnText, userDisplayOrder: Number(message.displayOrder || order), commerceBeforeDisplayOrder: order, commerceForImageOnly: true });
+    const intentTurn = await prepareChatIntentTurn(db, { session: guestSessionForImage(guest), character, siteId: guest.site_id, siteSlug: guest.site_slug, userText: turnText, userDisplayOrder: Number(message.displayOrder || order), logContext: { requestId: message.id }, commerceBeforeDisplayOrder: order, commerceForImageOnly: true });
     const languagePreference = await applySessionLanguagePreference(db, { character, session: guestSessionForImage(guest), userText: turnText, jevDecision: intentTurn.decision });
     const imageResult = await maybeCreateGuestChatImagePlaceholder(db, {
       guest,

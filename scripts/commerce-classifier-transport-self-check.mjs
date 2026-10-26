@@ -5,7 +5,8 @@ const state = { version: 1, status: 'active', owner: 'single', siteId: 's', char
   targetEvidence: 'Real Madrid shirt', requirements: { requestedTeam: 'Real Madrid', requestedProductType: 'shirt' }, proposal: null };
 const continuation = { siteId: 's', characterId: 'c', recentMessages: [{ senderType: 'character', productCandidateState: state }],
   jevDecision: { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'search', productAction: .9 } };
-assert.equal(commerceClassificationTimeout('manga corta', continuation), 24000, 'A validated contextual product continuation uses the same bounded merchandise task budget');
+assert.equal(commerceClassificationTimeout('Camiseta de niña retro Cristiano Ronaldo'), 40000, 'The same full merchandise protocol needs its bounded task budget even without a team');
+assert.equal(commerceClassificationTimeout('manga corta', continuation), 40000, 'A validated contextual product continuation uses the same bounded merchandise task budget');
 for (const options of [{ ...continuation, siteId: 'other' }, { ...continuation, jevDecision: { ...continuation.jevDecision, productAction: .5 } },
   { ...continuation, jevDecision: { ...continuation.jevDecision, primaryIntent: 'chat' } }, { ...continuation, recentMessages: [{ senderType: 'user', productCandidateState: state }] },
   { ...continuation, recentMessages: [{ senderType: 'character', productCandidateState: { ...state, status: 'cleared' } }] }]) {

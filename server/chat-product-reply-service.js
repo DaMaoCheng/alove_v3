@@ -98,6 +98,7 @@ export function selectProductsForReply(productContext = null, replyResult = {}) 
 
 function selectSingleProductForMessage(productContext = null, product = null) {
   const alternative = toAlternativeReviewContext(productContext);
+  const candidateDifference = productContext?.candidateContext && product.matchStatus === 'candidate' ? sanitizeProductAlternative(product.alternative) : null;
   const historicalAlternative = productContext?.sourceRef === "displayed-product-reference" && productContext.snapshotOnly === true ? sanitizeProductAlternative(product.alternative) : null;
   if (!product?.name) return null;
   const livePriceFetchedAt = productContext.snapshotOnly ? product.livePriceFetchedAt || "" : new Date().toISOString();
@@ -109,7 +110,7 @@ function selectSingleProductForMessage(productContext = null, product = null) {
     name: product.name,
     canonicalEdition: resolveCanonicalProductEdition(product),
     matchStatus: alternative ? "alternative" : productContext?.searchOutcome === "candidate" ? "candidate" : "matched",
-    ...(alternative ? { alternative: { kind: "season_alternative", requestedSeason: alternative.requestedSeason, alternativeSeason: alternative.alternativeSeason } } : historicalAlternative ? { alternative: historicalAlternative } : {}),
+    ...(alternative ? { alternative: sanitizeProductAlternative({ kind: alternative.kind || 'season_alternative', requestedSeason: alternative.requestedSeason, alternativeSeason: alternative.alternativeSeason, alternativeGarment: alternative.alternativeGarment }) } : candidateDifference ? { alternative: candidateDifference } : historicalAlternative ? { alternative: historicalAlternative } : {}),
     candidateUnknownFields: sanitizeCandidateUnknownFields(product.candidateUnknownFields),
     giveaway: product.giveaway === true ? true : product.giveaway === false ? false : null,
     subtitle: productContext.searchOutcome === 'candidate' ? '' : product.subtitle || product.summary || (alternative || historicalAlternative ? "" : productContext.searchIntent?.query || "Recommended for you"),

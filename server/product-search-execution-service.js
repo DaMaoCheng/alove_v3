@@ -1,9 +1,9 @@
-import { productAlternativeIntent, markAlternativeSearch, hasProductAlternativeSearch } from './product-alternative-service.js';
+import { nameCandidateRecall, hasNameCandidateAnchor, buildNameCandidate, unmatchedNameCandidateTerms } from './product-name-candidate-service.js';
+import { productAlternativeIntent, matchesRequestedRetro, hasAlternativeGarmentEvidence, markAlternativeSearch, hasProductAlternativeSearch } from './product-alternative-service.js';
 import { originalProductRequestContext } from "./product-request-scope-service.js";
 import { markCandidateContextSource } from "./product-candidate-source-proof.js";
 import {
   filterProductsByIntent,
-  hasExplicitProductTypeEvidence,
   buildProductCandidateConstraintIntent,
   normalizeProductQueryTeamAlias,
 } from "./product-intent-service.js";
@@ -30,6 +30,7 @@ import { evaluateProductAttributeMatch } from "./product-attribute-evidence-serv
 // the strict array contract and can never receive an unconfirmed substitute.
 export async function executeProductSearchDetailed(options = {}) {
   const intent = options.searchIntent || {};
+  const nameRecall = nameCandidateRecall(intent);
   if (intent.candidateSearchAllowed !== true || intent.requestedPrintNumber || intent.customizationRequest) {
     const matches = await executeProductSearch(options);
     if (intent.candidateSearchAllowed === true && intent.confirmedCandidateId) {
@@ -47,7 +48,7 @@ export async function executeProductSearchDetailed(options = {}) {
   }
   if (!intent.shouldLoadProductContext || intent.cardAllowed === false || intent.productScopePending
     || intent.scopeUnverified || intent.nonShoppingReason || intent.searchState === "clarification_exhausted"
-    || !intent.requestedTeam || !intent.requestedProductType) return { matches: [], candidates: [] };
+    || (!intent.requestedTeam && !productAlternativeIntent(intent) && !nameRecall) || !intent.requestedProductType) return { matches: [], candidates: [] };
   const fetchProducts = options.fetchProducts || fetchProductSummary;
   const query = safeString(intent.confirmedCandidateId && intent.productCandidateState?.proposal?.name || options.query || intent.query);
   const anchor = [intent.requestedTeam, intent.requestedVariant, intent.requestedSeason].filter(Boolean).join(" ");
@@ -59,7 +60,7 @@ export async function executeProductSearchDetailed(options = {}) {
   const year = /^\d{4}$/.test(String(intent.requestedSeason || '')) ? Number(intent.requestedSeason) : 0;
   const seasonAnchors = year ? [year - 1, year].map(start => [intent.requestedTeam, intent.requestedVariant,
     `${start}/${String(start + 1).slice(-2)}`].filter(Boolean).join(' ')) : [];
-  const queries = uniqueQueries([query, ...seasonAnchors, nameQuery, anchor, ...variantAnchors]).slice(0, 3);
+  const queries = uniqueQueries([query, ...seasonAnchors, nameRecall?.query, nameQuery, anchor, ...variantAnchors]).slice(0, 3);
   const collected = [], identities = new Set();
   let partialMatches = [];
   for (let queryIndex = 0; queryIndex < queries.length; queryIndex++) {
@@ -75,10 +76,10 @@ export async function executeProductSearchDetailed(options = {}) {
       maxProducts: PRODUCT_CANDIDATE_FETCH_LIMIT, throwOnError: true,
     });
     appendUniqueProducts(collected, identities, rows.filter(product => String(product.productId || product.id || "") !== intent.rejectedCandidateId));
-    const exact = await prepareCollectedProducts(intent.confirmedCandidateId ? collected.filter(product => String(product.productId || product.id || "") === intent.confirmedCandidateId) : collected, {
+    const exact = (await prepareCollectedProducts(intent.confirmedCandidateId ? collected.filter(product => String(product.productId || product.id || "") === intent.confirmedCandidateId) : collected, {
       originalQuery: query, searchIntent: intent, limit: options.limit,
       allowNearestAgeFallback: false, editionAssessment: { remaining: 0, cache: new Map() },
-    });
+    })).filter(product => matchesRequestedRetro(product, intent));
     if (exact.length && !exact.some(product => product.attributeEvidence?.giveaway === true) && (!intent.correctionSuggestion?.corrected || intent.confirmedCandidateId) && (!intent.productCandidateState?.suspectedTerm || intent.confirmedCandidateId)) {
       // A confirmed entity carries user-assent evidence. Do not return ordinary
       // matches and skip that evidence review just because its specs are known.
@@ -96,7 +97,7 @@ export async function executeProductSearchDetailed(options = {}) {
   const base = buildProductCandidateConstraintIntent(intent);
   const candidates = filterProductsByIntent(intent.confirmedCandidateId ? collected.filter(product => String(product.productId || product.id || "") === intent.confirmedCandidateId) : collected, base, { allowNearestAgeFallback: false })
     .map(product => ({ product, assessment: evaluateProductAttributeMatch(product, intent) }))
-    .filter(({ product, assessment }) => product?.url && product.available !== false && assessment.status !== "mismatch")
+    .filter(({ product, assessment }) => product?.url && product.available !== false && assessment.status !== "mismatch" && matchesRequestedRetro(product, intent) && (!nameRecall || intent.requestedTeam || hasNameCandidateAnchor(product, nameRecall)))
     .map(({ product, assessment }) => ({ ...product, matchStatus: "candidate",
       candidateUnknownFields: assessment.unknownFields, giveaway: product.attributeEvidence?.giveaway ?? null,
       unmatchedSearchTerms: normalizeArray(intent.requestedKeywords).filter(term => !String(product.name || "").toLowerCase().includes(term.toLowerCase())) }));
@@ -110,18 +111,19 @@ export async function executeProductSearchDetailed(options = {}) {
     if (!detail || String(detail.productId || detail.id) !== String(candidate.productId || candidate.id)
       || detail.available === false || !filterProductsByIntent([detail], base).length) continue;
     const assessment = evaluateProductAttributeMatch(detail, intent);
-    if (assessment.status === "mismatch") continue;
+    if (assessment.status === "mismatch" || nameRecall && !intent.requestedTeam
+      && (!hasNameCandidateAnchor(detail, nameRecall) || !matchesRequestedRetro(detail, intent))) continue;
     return { matches: [], candidates: [{ ...detail, matchStatus: "candidate", candidateUnknownFields: assessment.unknownFields,
       giveaway: detail.attributeEvidence?.giveaway ?? null, unmatchedSearchTerms: candidate.unmatchedSearchTerms }] };
   }
   const alternativeIntent = productAlternativeIntent(intent);
   if (alternativeIntent) {
     const selectAlternative = async rows => {
-      const alternatives = (await prepareCollectedProducts(rows.filter(product => hasExplicitProductTypeEvidence(product, intent.requestedProductType)), {
+      const alternatives = (await prepareCollectedProducts(rows.filter(product => hasAlternativeGarmentEvidence(product, intent)), {
         originalQuery: '', searchIntent: alternativeIntent, limit: 5, allowNearestAgeFallback: false,
         editionAssessment: { remaining: 0, cache: new Map() },
       })).filter(product => product?.url && product.available !== false && !product.attributeEvidence?.giveaway
-        && !filterProductsByIntent([product], intent).length);
+        && !(filterProductsByIntent([product], intent).length && matchesRequestedRetro(product, intent)));
       for (const product of alternatives) {
         const result = markAlternativeSearch({ matches: [], candidates: [], alternatives: [{ ...product, matchStatus: 'alternative' }] }, intent, queries);
         if (hasProductAlternativeSearch(result)) return result;
@@ -132,13 +134,17 @@ export async function executeProductSearchDetailed(options = {}) {
     // garment. Reuse those real facts before spending the one extra recall.
     const fromOriginalPool = await selectAlternative(collected);
     if (fromOriginalPool) return fromOriginalPool;
+    const possibleName = nameRecall && collected.map(product => buildNameCandidate(product, intent, queries)).find(Boolean);
+    if (possibleName) return { matches: [], candidates: [possibleName] };
     const rows = await fetchProducts(options.productApiUrl, { ...alternativeIntent,
-      query: [intent.requestedTeam, intent.requestedVariant].filter(Boolean).join(' ') }, {
+      query: [intent.requestedTeam, alternativeIntent.requestedVariant, ...(!intent.requestedTeam ? nameRecall ? [nameRecall.anchor] : normalizeArray(intent.requestedKeywords) : [])].filter(Boolean).join(' ') }, {
       currency: options.currency, encryptedAccessToken: options.encryptedAccessToken,
       maxProducts: PRODUCT_CANDIDATE_FETCH_LIMIT, throwOnError: true,
     });
     const fromAdditionalRecall = await selectAlternative(rows);
     if (fromAdditionalRecall) return fromAdditionalRecall;
+    const additionalName = nameRecall && rows.map(product => buildNameCandidate(product, intent, queries)).find(Boolean);
+    if (additionalName) return { matches: [], candidates: [additionalName] };
   }
   return { matches: [], candidates: [] };
 }
@@ -170,8 +176,9 @@ export function productCandidateContext(products = [], searchIntent = {}, locati
       priorConfirmationQuestion: sameProposal ? bounded(proposal.reply, 2000) : '' } : {}), products: candidates.map(product => ({
     id: String(product.productId || product.id || "").slice(0, 128), name: String(product.name || "").slice(0, 255),
     price: typeof product.price === 'string' ? product.price.slice(0, 80) : '',
-    unknownFields: product.candidateUnknownFields || [], unmatchedSearchTerms: product.unmatchedSearchTerms || [],
+    unknownFields: product.candidateUnknownFields || [], unmatchedSearchTerms: unmatchedNameCandidateTerms(product, searchIntent) || product.unmatchedSearchTerms || [],
     attributeEvidence: product.attributeEvidence || null,
+    ...(product.matchStatus === 'candidate' && product.alternative ? { catalogueDifference: product.alternative } : {}),
   })) }, searchIntent, candidates, location) : null;
 }
 

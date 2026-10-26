@@ -1,4 +1,39 @@
 import { hasPendingProductRequest } from "./product-request-scope-service.js";
+import { buildProductSearchIntent } from './product-intent-service.js';
+
+export const CHILD_PRODUCT_SIZING_CONTRACT = 'childProductSizingContext is current scoped USER sizing context, never product availability or fit evidence. Describe generic children\'s catalogue kits as children\'s/infantil, without asserting they are boys-only or girls-only. Children\'s football kits are searched as kids, without inventing a separate girls/boys catalogue category or treating a child as an adult woman. When needsSizeQuestion=true, this explicit scoped contract permits one missing-size question alongside a matched caption or successful no-match acknowledgement; that question is not a factual size or fit claim. Include one natural brief question asking the child\'s usual kit size; if they do not know it, ask for height as the next useful detail. Do not repeat already supplied sizes or measurements. Missing size does not block a permitted exact or alternative catalogue card: keep card first, then its grounded explanation and the sizing question together. A size or measurement answer refines the current original merchandise target and does not confirm a different suggested item, relax its conditions or authorize new product actions. When updateOnly=true, only acknowledge the provided size as USER information and retain the original target; do not supply availability, chart measurements, age mappings or fit advice. When needsSizeQuestion=false, acknowledge the supplied information instead of asking for the size again; if a measurement type or product-specific chart is genuinely missing, clarify that missing evidence without restarting the size question. A store-policy sizing conversation never acquires product search or card permission from this context. Only an actual product-specific verified chart can support a size recommendation; age, sex or a bare number never guarantees fit. Preserve supported concurrent policy questions and all existing permissions.';
+
+export function buildChildProductSizingContext({ searchIntent = {}, userText = '' } = {}) {
+  if (searchIntent.requestedAudience !== 'kids' || searchIntent.knowledgeScope === 'general'
+    || searchIntent.replyBoundary?.salesAllowed === false || hasPendingProductRequest(searchIntent)
+    || !['product_search', 'product_question', 'store_policy'].includes(searchIntent.commerceRoute)
+    || searchIntent.commerceRoute === 'store_policy' && searchIntent.commerceTopic !== 'sizing') return null;
+  const current = buildProductSearchIntent(userText);
+  const sizes = [...new Set([...(Array.isArray(searchIntent.requestedSizes) ? searchIntent.requestedSizes : []), ...current.requestedSizes])].slice(0, 8);
+  const measurementProvided = searchIntent.hasBodyMeasurements === true || current.hasBodyMeasurements === true;
+  return { audience: 'kids', requestedSizes: sizes, measurementProvided, updateOnly: searchIntent.childSizingUpdateOnly === true, needsSizeQuestion: !sizes.length && !measurementProvided };
+}
+
+// A scoped user-size update is not a measurement lookup. Keep real state and
+// product evidence intact; expose only the information needed for this prompt.
+export function projectChildSizingUpdatePrompt({ searchIntent = {}, productContext = null, recentMessages = [] } = {}) {
+  if (searchIntent.childSizingUpdateOnly !== true) return { productContext, recentMessages };
+  const project = product => product ? { id: product.id, productId: product.productId, name: product.name, siteId: product.siteId,
+    measurementsOmittedForSizeUpdate: true } : product;
+  return { productContext: productContext ? { ...productContext, products: [], sizingProduct: project(productContext.sizingProduct) } : null,
+    recentMessages: recentMessages.filter(row => (row.senderType || row.sender_type) === 'user') };
+}
+
+// Standard physical-unit claims require a source unit or an exact USER report;
+// a unitless catalogue table never supplies centimetres by convention.
+export function hasUnsupportedChildSizingUnit({ searchIntent = {}, productContext, text = '', speechText = '', userText = '', recentMessages = [] } = {}) {
+  if (searchIntent.childSizingUpdateOnly !== true || !buildChildProductSizingContext({ searchIntent, userText }) || !productContext?.sizingProduct
+    || String(productContext.sizingProduct.sizeChart?.unit || '').trim()) return false;
+  const claims = value => [...String(value || '').normalize('NFKC').matchAll(/(?<![\p{L}\p{N}])(\d+(?:[.,]\d+)?(?:\s*[-–—]\s*\d+(?:[.,]\d+)?)?)\s*(cm|mm|inches|inch|ft|kg|lbs?)(?![\p{L}\p{N}])/giu)]
+    .map(match => (match[1] + match[2]).toLowerCase().replace(/\s/g, '').replace(/[–—]/g, '-'));
+  const reported = new Set([userText, ...recentMessages.filter(row => (row.senderType || row.sender_type) === 'user').map(row => row.text || row.text_content)].flatMap(claims));
+  return [text, speechText].flatMap(claims).some(value => !reported.has(value));
+}
 
 export const SIZING_CLASSIFICATION_CONTRACT = "A sizing conversation does not require an identified product to have a clear purpose. A current answer to the recent sizing or measurement question continues topic=sizing with answerRequired=true, even if it only supplies a value or its measurement type. Without an identified product, use store_policy for general sizing assistance; use product_question when the product is identified. Missing measurement type or product identity needs clarification, not route=unclear solely for that missing detail. Do not inherit sizing after a genuine topic change, and do not authorize product search or cards from a measurement answer.";
 
@@ -8,7 +43,7 @@ export function buildSizingConversationContext({ searchIntent = {}, userText = "
   const tentative = searchIntent.replyTopicHint === "sizing";
   if ((!tentative && (searchIntent.commerceTopic !== "sizing" || searchIntent.answerRequired !== true || searchIntent.knowledgeScope === "general"))
     || hasPendingProductRequest(searchIntent)) return null;
-  return { tentative, latestUserMessage: String(userText).slice(0, 1000), recentConversation: (Array.isArray(recentMessages) ? recentMessages : []).slice(-6).map(row => ({
+  return { tentative, latestUserMessage: String(userText).slice(0, 1000), recentConversation: (Array.isArray(recentMessages) ? recentMessages : []).filter(row => !searchIntent.childSizingUpdateOnly || (row.senderType || row.sender_type) === 'user').slice(-6).map(row => ({
     role: (row?.senderType || row?.sender_type) === "user" ? "user" : "assistant",
     text: String(row?.text || row?.text_content || "").slice(0, 600),
   })).filter(row => row.text) };

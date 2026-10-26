@@ -22,6 +22,8 @@ function formatRateLimitDetails(error) {
 }
 
 function formatProtocolDetails(error) {
+  if (error?.code === "AI_JSON_PARSE_ERROR") return '; phase=output_protocol; protocol=parse';
+  if (error?.code === "AI_JSON_INVALID_OUTPUT") return `; phase=output_protocol; protocol=${error.aiJsonProtocolKind === 'evidence' ? 'evidence' : 'shape'}`;
   return error?.code === "AI_REPLY_PROTOCOL_ERROR"
     && ["unexpected_stream", "invalid_json", "empty_answer", "invalid_stream", "incomplete_stream", "stream_limit"].includes(error?.protocolKind)
     ? `; protocol=${error.protocolKind}` : "";
@@ -69,7 +71,7 @@ export async function recordAiReplyLog(payload = {}) {
   await writeAiReplyLog(payload);
 }
 
-export function buildCommerceDecisionLogEvent({ searchIntent = {}, knowledgeContext = {}, productContext = null, factualContext = null, requestId = "", sessionId = "", characterId = "", userId = "" } = {}) {
+export function buildCommerceDecisionLogEvent({ searchIntent = {}, knowledgeContext = {}, productContext = null, factualContext = null, stageDurations = {}, requestId = "", sessionId = "", characterId = "", userId = "" } = {}) {
   const safeTopic = ["authenticity", "delivery", "returns", "support", "material", "sizing", "price", "stock", "other"].includes(searchIntent.commerceTopic) ? searchIntent.commerceTopic : "";
   const route = ["product_search", "product_question", "store_policy", "chat", "unclear"].includes(searchIntent.commerceRoute) ? searchIntent.commerceRoute : "legacy";
   const sourceErrorCode = validateProductSourceErrorCode(searchIntent.sourceErrorCode);
@@ -99,6 +101,13 @@ export function buildCommerceDecisionLogEvent({ searchIntent = {}, knowledgeCont
       "general_no_reference", "general_directory_limit", "general_selection_unavailable", "general_no_relevant_section", "general_no_verified_answer", "general_relevant_reference"].includes(knowledgeContext.strategy) ? knowledgeContext.strategy : "",
     knowledgeIds: (knowledgeContext.items || []).slice(0, 3).map((item) => safeIdentifier(item.id).slice(0, 64)).filter(Boolean),
   };
+  if (typeof searchIntent.businessKnowledgeRequired === 'boolean') details.knowledgeRequired = searchIntent.businessKnowledgeRequired;
+  const timings = {};
+  for (const [field, label] of [['productMs', 'productMs'], ['knowledgeMs', 'knowledgeMs']]) {
+    const value = stageDurations?.[field];
+    if (Number.isSafeInteger(value) && value >= 0 && value <= 1200000) timings[label] = value;
+  }
+  if (Object.keys(timings).length) details.timings = timings;
   const selectionFailure = knowledgeContext.selectionFailure;
   if (["sizing", "product_selection", "commerce_question"].includes(searchIntent.replyTopicHint)) details.replyTopicHint = searchIntent.replyTopicHint;
   if (["directory", "evidence"].includes(selectionFailure?.stage)
@@ -133,6 +142,8 @@ export function buildCommerceDecisionLogEvent({ searchIntent = {}, knowledgeCont
   }
   if (JSON.stringify(details).length > 500 && details.knowledgeSelection) delete details.knowledgeSelection.counts;
   if (JSON.stringify(details).length > 500) delete details.knowledgeSelection;
+  if (JSON.stringify(details).length > 500) delete details.timings;
+  if (JSON.stringify(details).length > 500) delete details.knowledgeRequired;
   return { requestId: safeIdentifier(requestId), sessionId: safeIdentifier(sessionId), characterId: safeIdentifier(characterId), userId: safeIdentifier(userId),
     status: sourceErrorCode ? "error" : "success", provider: "commerce", sourceType: "commerce", sourceRef: "commerce-decision",
     degraded: Boolean(sourceErrorCode), degradationReason: sourceErrorCode,
@@ -145,7 +156,7 @@ export async function recordCommerceDecisionLog(payload = {}) {
   await writeAiReplyLog(buildCommerceDecisionLogEvent(payload));
 }
 
-export async function recordProviderCallLog({
+export function buildProviderCallLogEvent({
   requestId = "",
   sessionId = "",
   characterId = "",
@@ -159,9 +170,8 @@ export async function recordProviderCallLog({
   durationMs = 0,
   error = null,
 } = {}) {
-  if (!SERVER_CONFIG.runtime.providerLogWriteEnabled) return;
   const succeeded = normalizeString(status).toLowerCase() === "success";
-  await writeAiReplyLog({
+  return {
     requestId,
     sessionId, characterId, userId,
     provider: resolveProviderLogLabel(provider, baseUrl),
@@ -174,7 +184,12 @@ export async function recordProviderCallLog({
     degradationReason: succeeded ? "" : resolveProviderFailureReason(error),
     durationMs: durationMs || (startedAt ? Date.now() - startedAt : 0),
     errorMessage: succeeded ? "" : formatProviderFailureMessage(error),
-  });
+  };
+}
+
+export async function recordProviderCallLog(payload = {}) {
+  if (!SERVER_CONFIG.runtime.providerLogWriteEnabled) return;
+  await writeAiReplyLog(buildProviderCallLogEvent(payload));
 }
 
 export function buildReplyReviewLogEvent({ logContext = {}, reviewStatus, failedContracts = [], guardApplied = false,
@@ -614,6 +629,8 @@ function resolveProviderFailureReason(error = null) {
   if (error?.code === "AI_REPLY_TIMEOUT" || error?.name === "AbortError") return "timeout";
   if (error?.code === "AI_REPLY_NETWORK_ERROR") return "network";
   if (error?.code === "AI_REPLY_PROTOCOL_ERROR") return "protocol";
+  if (error?.code === "AI_JSON_PARSE_ERROR") return "json_parse";
+  if (error?.code === "AI_JSON_INVALID_OUTPUT") return error.aiJsonProtocolKind === 'evidence' ? 'json_evidence' : 'json_shape';
   if (statusCode) return `http_${statusCode}`;
   return "request_failed";
 }

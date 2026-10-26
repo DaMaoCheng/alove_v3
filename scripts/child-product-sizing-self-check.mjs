@@ -1,0 +1,41 @@
+import assert from 'node:assert/strict';
+import { buildProductSearchIntent, filterProductsByIntent, extractRequestedSizes, filterProductsByRequestedSizes } from '../server/product-intent-service.js';
+import * as sizing from '../server/product-sizing-guidance-service.js';
+import {applyProductCandidateState} from '../server/product-candidate-state-service.js';
+for (const phrase of ['Real Madrid jersey for a girl', 'camiseta del Real Madrid para niña', '皇马女童球衣', 'Real Madrid shirt for a boy']) {
+  assert.equal(buildProductSearchIntent(phrase).requestedAudience, 'kids', phrase);
+}
+assert.equal(buildProductSearchIntent('Real Madrid women jersey').requestedAudience, 'women');
+const kids={name:'Kids Real Madrid Home Soccer Jersey',sizes:[{label:'#24',available:true}]};
+assert.equal(filterProductsByIntent([kids],{requestedAudience:'kids'}).length,1);
+assert.equal(filterProductsByIntent([{name:'Girls Real Madrid Jersey'}],{requestedAudience:'women'}).length,0,'children are not adult women');
+assert.deepEqual(extractRequestedSizes('talla 24'),['24']);
+assert.deepEqual(extractRequestedSizes('size #18'),['18']);
+assert.deepEqual(extractRequestedSizes('Ronaldo #24 jersey'),[],'shirt print number is not a size');
+assert.deepEqual(extractRequestedSizes('height 124 cm, 24 kg'),[],'body values are not size labels');
+for(const text of ['24','Tengo 24 años','jersey 2024','order 24','number 24']) assert.deepEqual(extractRequestedSizes(text),[],text);
+assert.equal(filterProductsByRequestedSizes([kids],['24']).length,1);
+assert.equal(filterProductsByRequestedSizes([kids],['22']).length,0);
+const intent={commerceRoute:'product_search',requestedAudience:'kids',requestedProductType:'shirt',shouldLoadProductContext:true,replyBoundary:{salesAllowed:true}};
+assert.equal(sizing.buildChildProductSizingContext({searchIntent:intent}).needsSizeQuestion,true);
+for(const extra of [{requestedSizes:['24']},{hasBodyMeasurements:true}]) assert.equal(sizing.buildChildProductSizingContext({searchIntent:{...intent,...extra}}).needsSizeQuestion,false);
+assert.equal(sizing.buildChildProductSizingContext({searchIntent:intent,userText:'talla 24'}).needsSizeQuestion,false);
+assert.equal(sizing.buildChildProductSizingContext({searchIntent:intent,userText:'Mide 124 cm'}).needsSizeQuestion,false);
+for(const extra of [{requestedAudience:'women'},{commerceRoute:'chat'},{knowledgeScope:'general'},{replyBoundary:{salesAllowed:false}},{productScopePending:true}]) assert.equal(sizing.buildChildProductSizingContext({searchIntent:{...intent,...extra}}),null);
+assert.equal(sizing.buildChildProductSizingContext({searchIntent:{...intent,requestedSizes:['24']},recentMessages:[{senderType:'user',text:'Earlier size M'}]}).needsSizeQuestion,false);
+const location={siteId:'site-child',characterId:'child-character'};
+const decision=(action,text,updates=[])=>({confident:true,productRequirement:{action,evidence:text,updates,suspectedTerm:null}});
+const originalText='Real Madrid retro jersey for a girl';
+const original=applyProductCandidateState({...buildProductSearchIntent(originalText),...intent,requestedTeam:'Real Madrid',requestedVariants:['retro'],requestedKeywords:['ronaldo']},decision('new',originalText),{...location,userText:originalText,recentMessages:[]});
+const withSize=applyProductCandidateState({...buildProductSearchIntent('talla 24'),...intent},decision('continue','talla 24',[{field:'requestedSizes',value:['24'],evidence:'talla 24'}]),{...location,userText:'talla 24',recentMessages:[{senderType:'character',productCandidateState:original.productCandidateState}]});
+assert.deepEqual(withSize.requestedSizes,['24']);assert.equal(withSize.requestedTeam,'Real Madrid');assert.deepEqual(withSize.requestedVariants,['retro']);assert.deepEqual(withSize.requestedKeywords,['ronaldo']);assert.equal(sizing.buildChildProductSizingContext({searchIntent:withSize}).needsSizeQuestion,false);
+const withMeasurements=applyProductCandidateState({...buildProductSearchIntent('Mide 124 cm'),...intent},decision('continue','Mide 124 cm'),{...location,userText:'Mide 124 cm',recentMessages:[{senderType:'character',productCandidateState:original.productCandidateState}]});
+assert.equal(withMeasurements.hasBodyMeasurements,true);
+const continued=applyProductCandidateState({...buildProductSearchIntent('same shirt'),...intent},decision('continue','same shirt'),{...location,userText:'same shirt',recentMessages:[{senderType:'character',productCandidateState:withMeasurements.productCandidateState}]});
+assert.equal(continued.hasBodyMeasurements,true);assert.equal(sizing.buildChildProductSizingContext({searchIntent:continued}).needsSizeQuestion,false);
+const newTarget=applyProductCandidateState({...buildProductSearchIntent('Barcelona kids shirt'),...intent,requestedTeam:'Barcelona'},decision('new','Barcelona kids shirt'),{...location,userText:'Barcelona kids shirt',recentMessages:[{senderType:'character',productCandidateState:withSize.productCandidateState}]});
+assert.deepEqual(newTarget.requestedSizes,[],'new targets must not inherit old size');
+console.log('child product audience, size evidence and finite question gates: passed');
+
+assert.deepEqual(buildProductSearchIntent('talla 30').requestedSizes,['30'],'actual catalogue #30 child label is supported');
+assert.deepEqual(buildProductSearchIntent('number 30 jersey').requestedSizes,[],'shirt numbers are not sizes');

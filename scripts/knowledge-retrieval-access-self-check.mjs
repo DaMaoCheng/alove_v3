@@ -14,6 +14,23 @@ const IDS = {
   ggDelivery: "kb_retrieval_gg_delivery_self_check",
 };
 
+// Execute the real access SQL before restricting the result to this test's
+// namespace. Existing global policies may legitimately outrank the generic
+// fixture; they must not determine this fixture's ranking assertions. Keep ALL
+// fixture IDs here, including inaccessible ones, so access leaks still fail.
+const fixtureIds = new Set(Object.values(IDS));
+const fixtureDb = {
+  async execute(sql, params) {
+    assert(/FROM knowledge_sections ks\s+INNER JOIN knowledge_bases kb/.test(sql), "fixture reader must only scope the real knowledge access query");
+    const [rows, fields] = await getDbPool().execute(sql, params);
+    return [rows.filter(row => fixtureIds.has(row.knowledge_base_id)), fields];
+  },
+};
+
+function retrieveFixtureKnowledgeSections(options) {
+  return retrieveKnowledgeSections({ ...options, db: fixtureDb });
+}
+
 async function main() {
   await initializeDatabase();
   await cleanup();
@@ -107,17 +124,17 @@ async function main() {
     expectedKnowledgeBaseId: IDS.ggDelivery,
     forbiddenKnowledgeBaseId: IDS.fkkDelivery,
   });
-  const fallbackDelivery = await retrieveKnowledgeSections({
+  const fallbackDelivery = await retrieveFixtureKnowledgeSections({
     query: "How long is shipping?",
     character: { id: "no_policy_character", site_id: "site_without_delivery_policy" },
     limit: 4,
   });
   assert(fallbackDelivery.items[0]?.knowledgeBaseId === IDS.genericDelivery, "delivery should fall back to generic knowledge when the site has no policy");
-  const returns = await retrieveKnowledgeSections({ query: "I need a refund", character: { ...character, site_id: "site_delivery_test_fkk" }, limit: 4 });
+  const returns = await retrieveFixtureKnowledgeSections({ query: "I need a refund", character: { ...character, site_id: "site_delivery_test_fkk" }, limit: 4 });
   assert(returns.customerServiceTopic === "returns", "return topic should keep its existing route");
   assert(!returns.items.some((item) => item.knowledgeBaseId === IDS.fkkDelivery), "site shipping policy must not replace return guidance");
 
-  const knowledgeContext = await retrieveKnowledgeSections({ query: "alpha-global please", character, limit: 2 });
+  const knowledgeContext = await retrieveFixtureKnowledgeSections({ query: "alpha-global please", character, limit: 2 });
   const prompt = buildChatReplyPrompt({
     character,
     userText: "alpha-global please",
@@ -128,7 +145,7 @@ async function main() {
   const noKnowledgePrompt = buildChatReplyPrompt({
     character,
     userText: "totally unrelated chat",
-    knowledgeContext: await retrieveKnowledgeSections({ query: "totally unrelated chat", character, limit: 2 }),
+    knowledgeContext: await retrieveFixtureKnowledgeSections({ query: "totally unrelated chat", character, limit: 2 }),
   });
   assert(!noKnowledgePrompt.layers.some((layer) => layer.id === "knowledge_context"), "prompt should omit knowledge context layer without keyword trigger");
 
@@ -168,7 +185,7 @@ function basePayload({ id, scope, bindings = {}, keywords, title, content, categ
 }
 
 async function expectSiteDeliveryPriority({ character, expectedKnowledgeBaseId, forbiddenKnowledgeBaseId, query = "How long is shipping?" }) {
-  const result = await retrieveKnowledgeSections({ query, character, limit: 4 });
+  const result = await retrieveFixtureKnowledgeSections({ query, character, limit: 4 });
   assert(result.customerServiceTopic === "delivery", "shipping question should select the delivery route");
   assert(result.items.length > 0, "shipping question should return a policy reference");
   const knowledgeBaseIds = [...new Set(result.items.map((item) => item.knowledgeBaseId))];
@@ -177,12 +194,12 @@ async function expectSiteDeliveryPriority({ character, expectedKnowledgeBaseId, 
 }
 
 async function expectHit(query, character, expectedKnowledgeBaseId) {
-  const result = await retrieveKnowledgeSections({ query, character, category: "self_check", limit: 4 });
+  const result = await retrieveFixtureKnowledgeSections({ query, character, category: "self_check", limit: 4 });
   assert(result.items.some((item) => item.knowledgeBaseId === expectedKnowledgeBaseId), `${query} should hit ${expectedKnowledgeBaseId}`);
 }
 
 async function expectNoHit(query, character, forbiddenKnowledgeBaseId = "") {
-  const result = await retrieveKnowledgeSections({ query, character, category: "self_check", limit: 4 });
+  const result = await retrieveFixtureKnowledgeSections({ query, character, category: "self_check", limit: 4 });
   if (forbiddenKnowledgeBaseId) {
     assert(!result.items.some((item) => item.knowledgeBaseId === forbiddenKnowledgeBaseId), `${query} should not hit ${forbiddenKnowledgeBaseId}`);
     return;

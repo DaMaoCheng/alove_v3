@@ -11,7 +11,7 @@ import { buildUnansweredUserQuestionContext } from "./chat-reply-recovery-state.
 
 // Request-local reuse only. Different legacy inputs intentionally remain different
 // requests: changing a capability or image context can change Jev's decision.
-export function createChatIntentTurn({ classify = classifyJevIntent } = {}) {
+export function createChatIntentTurn({ classify = classifyJevIntent, logContext = {} } = {}) {
   const requests = new Map();
   const references = new Map();
   let commerceRequest = null;
@@ -26,7 +26,7 @@ export function createChatIntentTurn({ classify = classifyJevIntent } = {}) {
     conversationContext: null,
     commerceSearchIntent: null,
     async resolveCommerce(options = {}) {
-      commerceRequest ||= resolveCommerceSearchIntent({ ...options, jevDecision: options.jevDecision || this.decision });
+      commerceRequest ||= resolveCommerceSearchIntent({ ...options, logContext: { ...logContext, ...options.logContext }, jevDecision: options.jevDecision || this.decision });
       this.commerceSearchIntent = await commerceRequest;
       return this.commerceSearchIntent;
     },
@@ -48,8 +48,8 @@ export function createChatIntentTurn({ classify = classifyJevIntent } = {}) {
   };
 }
 
-export async function prepareChatIntentTurn(db, { session = {}, character = {}, userText = "", userDisplayOrder = 0, classify, recentMessages = null, siteId = "", siteSlug = "", userId = "", productTrigger = "", classifyCommerce, commerceBeforeDisplayOrder = userDisplayOrder, commerceForImageOnly = false, classifyImage = classifyChatImageIntent } = {}) {
-  const turn = createChatIntentTurn({ classify });
+export async function prepareChatIntentTurn(db, { session = {}, character = {}, userText = "", userDisplayOrder = 0, classify, recentMessages = null, siteId = "", siteSlug = "", userId = "", productTrigger = "", classifyCommerce, commerceBeforeDisplayOrder = userDisplayOrder, commerceForImageOnly = false, classifyImage = classifyChatImageIntent, logContext = {} } = {}) {
+  const turn = createChatIntentTurn({ classify, logContext: { sessionId: session.id, characterId: character.id || session.character_id, userId: userId || session.internal_uid || session.internalUid, ...logContext } });
   turn.conversationContext = await resolveRecentImageConversationContext(db, {
     sessionId: session.id,
     beforeDisplayOrder: userDisplayOrder,

@@ -115,7 +115,7 @@ export async function createUserMessage({ characterId, userId, text, attachments
             }),
           })
         : null;
-      const intentTurn = await prepareChatIntentTurn(db, { session, character, userId: normalizedUserId, userText: triggerText, userDisplayOrder: Number(lastUserMessage?.displayOrder || nextOrder), commerceBeforeDisplayOrder: nextOrder, commerceForImageOnly: true });
+      const intentTurn = await prepareChatIntentTurn(db, { session, character, userId: normalizedUserId, userText: triggerText, userDisplayOrder: Number(lastUserMessage?.displayOrder || nextOrder), logContext: { requestId: lastUserMessage?.id }, commerceBeforeDisplayOrder: nextOrder, commerceForImageOnly: true });
       const imageLanguage = await applySessionLanguagePreference(db, { character, session, userId: normalizedUserId, userText: triggerText, jevDecision: intentTurn.decision });
       const imagePlaceholder = await maybeCreateChatImagePlaceholder(db, {
         session: { ...session, replyLanguageCode: imageLanguage.languageCode },
@@ -236,7 +236,7 @@ export async function createUserReply({ characterId, userId, sinceMessageId, voi
         userText: currentUserText,
         recentMessages,
       });
-      const intentTurn = await prepareChatIntentTurn(db, { session, character: promptCharacter, userId: normalizedUserId, userText: currentUserText, userDisplayOrder: lastUserDisplayOrder, recentMessages, productTrigger });
+      const intentTurn = await prepareChatIntentTurn(db, { session, character: promptCharacter, userId: normalizedUserId, userText: currentUserText, userDisplayOrder: lastUserDisplayOrder, recentMessages, productTrigger, logContext: { requestId: pendingUserMessages.at(-1)?.id } });
       languagePreference = await applySessionLanguagePreference(db, { character, session, userId: normalizedUserId, userText: currentUserText, jevDecision: intentTurn.decision });
       promptCharacter = languagePreference.character;
       const voiceModelDecision = resolveReplyVoiceModel({

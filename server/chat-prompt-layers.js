@@ -1,6 +1,6 @@
 import { toAlternativeReviewContext, PRODUCT_ALTERNATIVE_CONTRACT } from "./product-alternative-service.js";
 import { buildProductCardDeliveryContext } from "./chat-product-reply-service.js";
-import { toCandidateReviewContext, PRODUCT_CANDIDATE_CONDITIONS_CONTRACT } from "./product-candidate-context-service.js";
+import { toNameCandidateUncertaintyContext, toCandidateReviewContext, productCandidateConditionsContract } from "./product-candidate-context-service.js";
 import { buildChatImageStatusInstruction } from "./chat-image-status-context-service.js";
 import { formatTrustedProductSizingFacts } from "./product-sizing-context-service.js";
 import { resolveOrderActionPromptState } from "./chat-global-reply-policy.js";
@@ -270,10 +270,12 @@ export function buildProductContextLayer(character, productContext = null, userT
           ? "The user is identifying the already displayed candidate. This is a read-only reference confirmation: no new catalogue search or product card is permitted. Acknowledge the identity only when supported by the current assent; keep unknown specifications unverified."
           : "The trusted catalogue returned candidate items for the user's current product request. The system may show a candidate card; the complete requested attributes have not been verified.",
         productContext.candidateContext.requiresConfirmation === true
-          ? "Ask explicitly whether the displayed candidate is the item the user means, in the active conversation language. Preserve this confirmation question in BOTH displayText and speechText."
+          ? toNameCandidateUncertaintyContext(productContext)
+            ? "Ask explicitly whether THIS displayed catalogue name/reference identifies the name/entity the user means. This confirms only the name reference, not acceptance of a known different model. Preserve the name-identity question and explicit full-name uncertainty in BOTH displayText and speechText."
+            : "Ask explicitly whether the displayed candidate is the item the user means, in the active conversation language. Preserve this confirmation question in BOTH displayText and speechText."
           : "The user already confirmed the item reference. Do not ask whether this is the item again. Answer the remaining attribute question with supplied evidence and state which requested attributes remain unverified.",
         deliveryInstruction,
-        PRODUCT_CANDIDATE_CONDITIONS_CONTRACT,
+        productCandidateConditionsContract(productContext),
         "When identity still requires confirmation, present this as a possible catalogue candidate, not the requested item already found. Never call it a verified full match while requested attributes remain unknown. Do not turn the user's requested attributes into a positive description of this product. Distinguish the catalogue wording from the user's unverified term without silently correcting the user. Explicitly name each relevant unknownFields attribute or unmatchedSearchTerms in natural active-language words and say it remains unverified; a generic confirmation question alone is insufficient. A later yes confirms only the item reference, not unknown sleeve, printing, edition or promotion eligibility.",
         "When giveaway=true, the item is marked as an activity giveaway. Briefly explain that activity conditions apply and eligibility is unverified. A displayed zero price does not prove this user can buy it free. Do not invent campaign terms or coupon entitlement.",
         "Do not send a normal sales follow-up, push checkout, or output URL, price, stock, promo code or SKU. Let the card carry its details. Keep the complete relevant answer and confirmation question concise.",

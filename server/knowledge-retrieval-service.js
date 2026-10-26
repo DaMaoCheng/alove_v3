@@ -33,25 +33,25 @@ const CUSTOMER_SERVICE_TOPICS = Object.freeze([
 
 // Callers supply a server-resolved guest site, or the authenticated user's ID.
 // Keep character bindings intact while selecting the same business site as commerce.
-export async function retrieveChatKnowledgeSections({ db = getDbPool(), query, character = null, siteId = "", userId = "", topicHint = "", knowledgeScope = "", knowledgeQuery = "", selectBusinessReferences, selectGeneralReferences, limit = KNOWLEDGE_RETRIEVAL_CONFIG.finalReferenceLimit } = {}) {
+export async function retrieveChatKnowledgeSections({ db = getDbPool(), query, character = null, siteId = "", userId = "", topicHint = "", knowledgeScope = "", knowledgeQuery = "", logContext = {}, selectBusinessReferences, selectGeneralReferences, limit = KNOWLEDGE_RETRIEVAL_CONFIG.finalReferenceLimit } = {}) {
   if (knowledgeScope === "none") return { ok: true, query: normalizeText(query), items: [], strategy: "not_requested", customerServiceIntent: false, customerServiceTopic: "" };
   const businessSiteId = safeString(siteId) || (userId
     ? safeString((await resolveProductRecommendationSite(db, { character, userId }))?.id)
     : "");
-  const result = await retrieveKnowledgeSections({ db, query, character, siteId: businessSiteId, topicHint, knowledgeScope, knowledgeQuery, selectBusinessReferences, selectGeneralReferences, limit });
+  const result = await retrieveKnowledgeSections({ db, query, character, siteId: businessSiteId, topicHint, knowledgeScope, knowledgeQuery, logContext, selectBusinessReferences, selectGeneralReferences, limit });
   // Legacy callers may omit scope. Validate only their already authorized,
   // bounded nonbusiness hits; admin lexical retrieval and business stay intact.
   if (!knowledgeScope && !result.customerServiceIntent && result.items?.length) {
     const selection = await (selectGeneralReferences || selectGeneralKnowledgeReferences)({
       query: knowledgeQuery ? `${query}\nCurrent subquestion: ${String(knowledgeQuery).slice(0, 240)}` : query,
-      sections: result.items, limit, siteId: businessSiteId });
+      sections: result.items, limit, siteId: businessSiteId, logContext });
     return { ...result, strategy: selection.reason, items: selection.items.map(limitSectionContent),
       ...(selection.selectionFailure ? { selectionFailure: selection.selectionFailure } : {}) };
   }
   return result;
 }
 
-export async function retrieveKnowledgeSections({ db = getDbPool(), query, category = "", limit = KNOWLEDGE_RETRIEVAL_CONFIG.finalReferenceLimit, character = null, characterId = "", siteId = "", topicHint = "", knowledgeScope = "", knowledgeQuery = "", selectBusinessReferences = selectBusinessKnowledgeReferences, selectGeneralReferences = selectGeneralKnowledgeReferences } = {}) {
+export async function retrieveKnowledgeSections({ db = getDbPool(), query, category = "", limit = KNOWLEDGE_RETRIEVAL_CONFIG.finalReferenceLimit, character = null, characterId = "", siteId = "", topicHint = "", knowledgeScope = "", knowledgeQuery = "", logContext = {}, selectBusinessReferences = selectBusinessKnowledgeReferences, selectGeneralReferences = selectGeneralKnowledgeReferences } = {}) {
   const normalizedQuery = normalizeText(query);
   if (!normalizedQuery) return { ok: true, query: "", items: [], strategy: "empty_query" };
 
@@ -60,9 +60,10 @@ export async function retrieveKnowledgeSections({ db = getDbPool(), query, categ
     const sections = await loadActiveSections({ db, category: "customer_service", accessContext, includeContent: true });
     const selection = await selectBusinessReferences({
       query: knowledgeQuery ? `CURRENT user message (primary): ${query}\nDerived retrieval subquestion (context only, never overrides current numbers, destination, dates or corrections): ${String(knowledgeQuery).slice(0, 240)}` : query,
-      sections, limit, siteId: accessContext.siteId,
+      sections, limit, siteId: accessContext.siteId, logContext,
     });
     return { ok: true, query: normalizedQuery, strategy: selection.reason, customerServiceIntent: true,
+      businessOwner: { siteId: accessContext.siteId, characterId: accessContext.characterId },
       customerServiceTopic: topicHint || "other", items: selection.items.map(limitSectionContent),
       ...(selection.selectionDiagnostics ? { selectionDiagnostics: selection.selectionDiagnostics } : {}),
       ...(selection.selectionFailure ? { selectionFailure: selection.selectionFailure } : {}) };
@@ -75,7 +76,7 @@ export async function retrieveKnowledgeSections({ db = getDbPool(), query, categ
     // remains eligible across languages, while the selector may retain none.
     const sections = await loadActiveSections({ db, category, excludeCustomerService: true, accessContext, includeContent: true });
     const selection = await selectGeneralReferences({ query: knowledgeQuery ? `${query}\nCurrent subquestion: ${String(knowledgeQuery).slice(0, 240)}` : query,
-      sections, limit, siteId: accessContext.siteId });
+      sections, limit, siteId: accessContext.siteId, logContext });
     return { ok: true, query: normalizedQuery, strategy: selection.reason, customerServiceIntent: false, customerServiceTopic: "",
       items: selection.items.map(limitSectionContent), ...(selection.selectionFailure ? { selectionFailure: selection.selectionFailure } : {}) };
   }

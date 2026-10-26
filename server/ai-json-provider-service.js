@@ -29,6 +29,7 @@ export async function requestAiJsonWithProviderFallback(messages, {
   perProviderTimeout = false,
   providerTimeoutMs = null,
   validateParsed = null,
+  logContext = {},
 } = {}) {
   const providers = configuredProviders(config);
   if (!providers.length) throw new Error("AI JSON service is not configured");
@@ -45,6 +46,12 @@ export async function requestAiJsonWithProviderFallback(messages, {
     messages: hasLeadingSystem ? messages.slice(1) : messages,
   };
   const failures = [];
+  // Scope diagnostics explicitly; never forward prompts or arbitrary context
+  // fields to either provider logs or the upstream model.
+  const identifiers = Object.fromEntries(['requestId', 'sessionId', 'characterId', 'userId']
+    .filter(key => typeof logContext?.[key] === 'string' && /^[a-z0-9_:-]{1,80}$/i.test(logContext[key]))
+    .map(key => [key, logContext[key]]));
+  const recordCall = payload => recordProviderCallFn({ ...payload, ...identifiers });
   const rememberFailure = (modelConfig, error, kind) => {
     failures.push({ provider: ["venice", "openai", "deepseek"].includes(modelConfig.id) ? modelConfig.id : "other", kind });
     error.aiJsonProviderFailures = [...failures];
@@ -69,10 +76,11 @@ export async function requestAiJsonWithProviderFallback(messages, {
       ? { response_format: responseFormat }
       : { text: { ...modelConfig.requestBodyExtras?.text, format: responseFormat.type === "json_schema"
         ? { type: "json_schema", ...responseFormat.json_schema } : responseFormat } } : null;
+    const startedAt = Date.now();
     try {
       text = await requestOpenAiText(promptContext, {
         modelConfig: formatExtras ? { ...modelConfig, requestBodyExtras: { ...modelConfig.requestBodyExtras, ...formatExtras } } : modelConfig,
-        fetchImpl, jsonOutput: !responseFormat, sourceRef, recordProviderCallFn,
+        fetchImpl, jsonOutput: !responseFormat, sourceRef, recordProviderCallFn: recordCall,
         timeoutMs: Math.min(attemptBudget, providerTimeout > 0 ? providerTimeout : attemptBudget),
       });
     } catch (error) {
@@ -87,20 +95,25 @@ export async function requestAiJsonWithProviderFallback(messages, {
       parsed = JSON.parse(String(text || "").trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""));
     } catch {
       // Do not include upstream text (which may contain private data) in errors.
-      lastError = Object.assign(new SyntaxError("AI JSON response could not be parsed"), { code: "AI_JSON_PARSE_ERROR" });
+      lastError = Object.assign(new SyntaxError("AI JSON response could not be parsed"), { code: "AI_JSON_PARSE_ERROR", aiJsonProtocolKind: "parse" });
       rememberFailure(modelConfig, lastError, "parse");
-      if (!validateParsed) throw lastError;
+      if (!validateParsed) {
+        await recordCall({ provider: modelConfig.id, model: modelConfig.model, baseUrl: modelConfig.baseUrl,
+          sourceRef, status: "error", startedAt, error: lastError });
+        throw lastError;
+      }
     }
     if (parsed !== undefined && validateParsed) {
       const verdict = validateParsed(parsed);
       if (verdict?.valid === true) return parsed;
       const reason = ["shape", "evidence"].includes(verdict?.reason) ? verdict.reason : "shape";
-      lastError = rememberFailure(modelConfig, Object.assign(new Error(`AI JSON protocol rejected: ${reason}`), { code: "AI_JSON_INVALID_OUTPUT" }), `protocol_${reason}`);
+      lastError = rememberFailure(modelConfig, Object.assign(new Error(`AI JSON protocol rejected: ${reason}`),
+        { code: "AI_JSON_INVALID_OUTPUT", aiJsonProtocolKind: reason }), `protocol_${reason}`);
     } else if (parsed !== undefined) {
       return parsed;
     }
-    await recordProviderCallFn({ provider: modelConfig.id, model: modelConfig.model, baseUrl: modelConfig.baseUrl,
-      sourceRef, status: "error", startedAt: Date.now(), error: lastError });
+    await recordCall({ provider: modelConfig.id, model: modelConfig.model, baseUrl: modelConfig.baseUrl,
+      sourceRef, status: "error", startedAt, error: lastError });
   }
   throw lastError || new Error("AI JSON task time budget exhausted");
 }

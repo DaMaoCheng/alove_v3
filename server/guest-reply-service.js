@@ -1,3 +1,4 @@
+import { projectChildSizingUpdatePrompt } from './product-sizing-guidance-service.js';
 import { buildCommerceClassificationFailureReply } from "./commerce-classification-failure-service.js";
 import { finalizeProductCandidateState } from "./product-candidate-state-service.js";
 import { getCandidateConfirmationProduct } from './product-candidate-confirmation-service.js';
@@ -18,7 +19,7 @@ import { generateChatReply } from "./ai-reply-service.js";
 import { buildImageReplyRecoveryPrompt } from "./chat-image-reply-recovery-service.js";
 import { buildReplyPurposeRecoveryPrompt } from "./chat-reply-purpose-service.js";
 import { isAiTransportFallback } from "./ai-reply-fallback-service.js";
-import { applyCommerceQuestionPromptPolicy, resolveCommerceSearchIntent } from "./commerce-routing-service.js";
+import { applyCommerceQuestionPromptPolicy, resolveCommerceSearchIntent, resolveCommerceKnowledgeScope } from "./commerce-routing-service.js";
 import { recordCommerceDecisionLog } from "./ai-reply-log-service.js";
 import { retrieveChatKnowledgeSections } from "./knowledge-retrieval-service.js";
 import { resolveChatFactualContext } from "./chat-factual-context-service.js";
@@ -101,7 +102,7 @@ export async function prepareStoredGuestReply({
       beforeDisplayOrder: promptBeforeDisplayOrder,
     }),
   });
-  const intentTurn = await prepareChatIntentTurn(getDbPool(), { session: guestSessionForImage(guest), character, siteId: guest.site_id, siteSlug: guest.site_slug, userText: turnText, userDisplayOrder: Number(message.display_order), commerceBeforeDisplayOrder: promptBeforeDisplayOrder, commerceForImageOnly: true });
+  const intentTurn = await prepareChatIntentTurn(getDbPool(), { session: guestSessionForImage(guest), character, siteId: guest.site_id, siteSlug: guest.site_slug, userText: turnText, userDisplayOrder: Number(message.display_order), logContext: { requestId: message.id }, commerceBeforeDisplayOrder: promptBeforeDisplayOrder, commerceForImageOnly: true });
   const languagePreference = await applySessionLanguagePreference(getDbPool(), { character, session: guestSessionForImage(guest), userText: turnText, jevDecision: intentTurn.decision });
   const imageResult = await maybeCreateGuestChatImagePlaceholder(getDbPool(), {
     guest,
@@ -159,12 +160,14 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
     sessionId: prepared.guest.chat_session_id,
     beforeDisplayOrder: prepared.promptBeforeDisplayOrder,
   });
-  const intentTurn = prepared.intentTurn || await prepareChatIntentTurn(getDbPool(), { session: guestSessionForImage(prepared.guest), character: promptCharacter, userText: prepared.text, userDisplayOrder: prepared.message.display_order, siteId: prepared.guest.site_id, siteSlug: prepared.guest.site_slug });
+  const intentTurn = prepared.intentTurn || await prepareChatIntentTurn(getDbPool(), { session: guestSessionForImage(prepared.guest), character: promptCharacter, userText: prepared.text, userDisplayOrder: prepared.message.display_order, logContext: { requestId: prepared.message.id }, siteId: prepared.guest.site_id, siteSlug: prepared.guest.site_slug });
   if (!prepared.languagePreference) languagePreference = await applySessionLanguagePreference(getDbPool(), { character, session, userText: prepared.text, jevDecision: intentTurn.decision });
   promptCharacter = languagePreference.character;
   const precomputedSearchIntent = await (intentTurn.resolveCommerce?.bind(intentTurn) || resolveCommerceSearchIntent)({ userText: prepared.text, recentMessages,
     searchIntent: buildProductSearchIntent(prepared.text, "", { recentProductContext: buildRecentProductContext(recentMessages) }),
-    enrichAllTurns: true, jevDecision: intentTurn.decision, siteId: prepared.guest.site_id, characterId: promptCharacter.id });
+    enrichAllTurns: true, jevDecision: intentTurn.decision, siteId: prepared.guest.site_id, characterId: promptCharacter.id,
+    logContext: { requestId: prepared.message.id, sessionId: prepared.guest.chat_session_id, characterId: promptCharacter.id } });
+  const productStartedAt = Date.now();
   const productRecommendation = await resolveGuestProductRecommendation(getDbPool(), {
     guest: prepared.guest,
     userText: prepared.text,
@@ -176,20 +179,24 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
     recentMessages,
     userText: prepared.text,
   }), productRecommendation.searchIntent);
+  const productMs = Date.now() - productStartedAt;
   const parsedExternalSourceContext = parseExternalSourceContext(prepared.guest.external_source_context_json);
   const externalSourceContext = parsedExternalSourceContext?.mascotCharacterId === prepared.guest.mascot_character_id
     ? parsedExternalSourceContext
     : null;
   const classificationFailureReply = buildCommerceClassificationFailureReply(productRecommendation.searchIntent, { userText: prepared.text, language: languagePreference.languageCode || "en" });
+  const knowledgeStartedAt = Date.now();
   const knowledgeContext = await retrieveChatKnowledgeSections({
     query: prepared.text,
+    logContext: { requestId: prepared.message.id, sessionId: prepared.guest.chat_session_id, characterId: promptCharacter.id },
     knowledgeQuery: productRecommendation.searchIntent?.knowledgeQuery,
-    knowledgeScope: classificationFailureReply ? "none" : productRecommendation.searchIntent?.commerceRoute === "product_search" && !productRecommendation.searchIntent?.answerRequired ? "none" : productRecommendation.searchIntent?.knowledgeScope,
+    knowledgeScope: resolveCommerceKnowledgeScope(productRecommendation.searchIntent, { classificationFailed: Boolean(classificationFailureReply) }),
     character: promptCharacter,
     siteId: prepared.guest.site_id,
     topicHint: productRecommendation.searchIntent?.customerServiceKnowledgeRequest ? productRecommendation.searchIntent?.commerceTopic : "",
     limit: 4,
   });
+  const knowledgeMs = Date.now() - knowledgeStartedAt;
   const factualContext = await resolveChatFactualContext({
     userText: prepared.text, jevDecision: intentTurn.decision, searchIntent: productRecommendation.searchIntent,
     language: languagePreference.languageCode || promptCharacter?.profile?.language || "en",
@@ -197,7 +204,7 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
     logContext: { requestId: prepared.message.id, sessionId: prepared.guest.chat_session_id, characterId: promptCharacter.id },
   });
   await recordCommerceDecisionLog({
-    searchIntent: productRecommendation.searchIntent, knowledgeContext, productContext, factualContext,
+    searchIntent: productRecommendation.searchIntent, knowledgeContext, productContext, factualContext, stageDurations: { productMs, knowledgeMs },
     requestId: prepared.message.id, sessionId: prepared.guest.chat_session_id, characterId: promptCharacter.id,
   });
   const resolvedOrderAction = shouldSkipOrderLookupForCheckout(productRecommendation.searchIntent) ? null : await resolveTtmallOrderAction({ text: prepared.text, siteSlug: prepared.guest.site_slug, classifyJev: intentTurn.classify,
@@ -227,20 +234,21 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
     userDisplayOrder: Number(prepared.message.display_order || prepared.message.displayOrder || 0),
     directive: prepared.imageResult?.directive || null, currentImageMessageId: prepared.imageResult?.message?.id || "",
   });
+  const sizeUpdatePrompt = projectChildSizingUpdatePrompt({ searchIntent: productRecommendation.searchIntent, productContext, recentMessages });
   const promptContext = applyCheckoutSupportPromptPolicy(applyReplyBoundaryPromptPolicy(applyCommerceQuestionPromptPolicy(buildChatReplyPrompt({
       character: promptCharacter, trustedSite: { id: prepared.guest.site_id, slug: prepared.guest.site_slug, name: prepared.guest.site_name, identity_mascot_character_id: prepared.guest.site_mascot_character_id },
-      recentMessages,
+      recentMessages: sizeUpdatePrompt.recentMessages,
       userText: prepared.text,
       userContext: null,
       externalSourceContext,
-      productContext,
+      productContext: sizeUpdatePrompt.productContext,
       knowledgeContext,
       factualContext,
       feedbackActionCandidate,
       orderActionCandidate: orderAction,
       chatImageContext,
       visionInputs,
-    }), productRecommendation.searchIntent), productRecommendation.searchIntent), productRecommendation.searchIntent, promptCharacter);
+    }), productRecommendation.searchIntent, { userText: prepared.text, recentMessages }), productRecommendation.searchIntent), productRecommendation.searchIntent, promptCharacter);
   const guestPromptContext = applyGuestPromptPolicy(applyGuestProductClarificationPromptPolicy(promptContext, {
     productRequested: productRecommendation.requested,
     product: productContext?.products?.[0] || null,
