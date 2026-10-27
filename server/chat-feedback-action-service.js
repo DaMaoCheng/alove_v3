@@ -4,11 +4,6 @@ import { isAiTransportFallback } from "./ai-reply-fallback-service.js";
 import { isStorefrontGuidanceCharacter, resolveOrderActionPromptState } from "./chat-global-reply-policy.js";
 import { normalizeCharacterLanguage } from "../shared/language-library.js";
 
-const NO_MATCH_SOURCES = new Set([
-  "site-product-no-match",
-  "guest-site-product-no-match",
-]);
-
 const HUMAN_HANDOFF_LABELS = Object.freeze({
   en: "Click here", zh: "点击这里", es: "Haz clic aquí", fr: "Cliquez ici", de: "Hier klicken",
   pt: "Clique aqui", it: "Clicca qui", ja: "こちらをクリック", ko: "여기를 클릭하세요", ar: "اضغط هنا",
@@ -55,8 +50,6 @@ export function resolveChatFeedbackActionCandidate({ character = {}, productCont
   const returnsInquiry = knowledgeContext?.customerServiceTopic === "returns";
   if (Array.isArray(productContext?.products) && productContext.products.length && !jerseyCustomizationInquiry && !unavailableTracking && !returnsInquiry) return null;
 
-  const noProductMatch = NO_MATCH_SOURCES.has(String(productContext?.sourceRef || ""))
-    && String(productContext?.searchOutcome || "") === "no_match";
   const orderDeliveryHandoff = orderActionAvailable && (knowledgeContext?.customerServiceTopic === "delivery" || searchIntent?.commerceTopic === "delivery");
   const businessConfidence = Number(searchIntent?.commerceConfidence);
   const verifiedBusinessInquiry = ["quotation", "wholesale", "dropshipping", "distribution", "sponsorship", "partnership", "business_other"].includes(searchIntent?.businessInquiry?.kind)
@@ -80,7 +73,9 @@ export function resolveChatFeedbackActionCandidate({ character = {}, productCont
   const noKnowledgeReference = searchIntent?.commerceTopic !== "sizing" && !retrievalUnavailable && !orderDeliveryHandoff && knowledgeContext?.customerServiceIntent === true
     && Array.isArray(knowledgeContext?.items)
     && knowledgeContext.items.length === 0 && missingKnowledgeNeedsService;
-  if (!jerseyCustomizationInquiry && !noProductMatch && !noKnowledgeReference && !unavailableTracking && !returnsInquiry) return null;
+  // A catalogue miss is a search result, not a request to contact the team.
+  // Independent support, tracking, returns and business handoffs still qualify.
+  if (!jerseyCustomizationInquiry && !noKnowledgeReference && !unavailableTracking && !returnsInquiry) return null;
 
   return {
     kind: jerseyCustomizationInquiry ? "jersey_customization" : "feedback",

@@ -297,7 +297,7 @@ export function buildImageDecisionLogEvent({ session = {}, guest = {}, character
   const score = value => Number.isFinite(value) && value >= 0 && value <= 1 ? Math.round(value * 1000) / 1000 : null;
   const trigger = result?.trigger || decision?.trigger || imageDecision || {};
   const message = result?.message || (result?.contentType ? result : null);
-  const reason = skipImageGeneration ? "product_image_card" : ["quota_exhausted", "active_generation", "disallowed_request", "image_task_created", "appearance_uncertain"].includes(result?.reason || decision?.reason) ? result?.reason || decision.reason : "";
+  const reason = skipImageGeneration ? "product_image_card" : ["quota_exhausted", "active_generation", "disallowed_request", "image_task_created", "appearance_uncertain", "classification_unavailable"].includes(result?.reason || decision?.reason) ? result?.reason || decision.reason : "";
   const failure = ["timeout", "invalid_json", "provider_error", "not_configured"].includes(trigger.classificationFailure) ? trigger.classificationFailure : "";
   const classification = ["accepted", "model_no_intent", "low_confidence", "grounding_rejected"].includes(trigger.classificationOutcome) ? trigger.classificationOutcome : "";
   const requestScope = ["image_only", "mixed", "unknown"].includes(trigger.requestScope) ? trigger.requestScope : "";

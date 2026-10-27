@@ -23,7 +23,8 @@ import { parseJsonValue } from "./chat-message-payload-utils.js";
 import { acquireDedicatedDbAdvisoryLock } from "./db-advisory-lock-service.js";
 
 import { enforceReplyBoundary } from "./chat-reply-boundary-service.js";
-import { resolveChatImageStatusContext } from "./chat-image-status-context-service.js";
+import { resolveChatImageStatusContext, buildChatImageStatusInstruction } from "./chat-image-status-context-service.js";
+import { buildImageReplyRecoveryPrompt } from "./chat-image-reply-recovery-service.js";
 
 const FAILURE_REPLY_SOURCE_PREFIX = "chat-image-failure:";
 
@@ -126,11 +127,7 @@ export async function generateChatImageTerminalReplyFromJob(job = {}) {
       if (!context) return { ok: true, skipped: true, reason: "state_changed" };
       let draft = null;
       try {
-        let promptContext = buildChatReplyPrompt({ character: context.character, recentMessages, userText, chatImageContext: imageContext });
-        if (context.guestSessionId) promptContext = applyGuestPromptPolicy(promptContext);
-        promptContext = projectTerminalImageReplyPrompt(promptContext, { originalRequest: userText, imageContext });
-        const generated = await generateChatReply({ promptContext, userText: TERMINAL_CAPTION_TASK, logContext, deferIdentityToBoundaryReview: true });
-        if (!isAiTransportFallback(generated) && String(generated.text || "").trim()) draft = boundedReply(generated, context, userText);
+        draft = await generateTerminalCaption({ context, recentMessages, userText, imageContext, logContext });
       } catch (error) { console.warn("[aiove] image terminal reply generation unavailable:", error.code || "generation_failed"); }
       if (draft) {
         context = await checkpointTerminalReply(job, context, { draft });
@@ -144,13 +141,17 @@ export async function generateChatImageTerminalReplyFromJob(job = {}) {
       context = await checkpointTerminalReply(job, context, { draft: reviewDraft, reviewStarted: true }, "review");
       if (!context) return { ok: true, skipped: true, reason: "state_changed" };
       try {
-        // Existing identity, language and actual-image contracts; no regeneration
-        // callback, product actions, secondary task, or unbounded review cycle.
+        // The shared reviewer may repair only this ready-image caption once.
+        // reviewStarted is already durable, so task replay cannot repeat it.
         const reviewed = await enforceReplyBoundary({ replyResult: context.terminalReply.draft,
           character: context.character, userText, recentMessages, language: context.languageCode,
           languageQualityRequired: true, requireIdentityReview: true,
           independentLanguageQualityRequired: true, chatImageContext: imageContext,
-          searchIntent: { replyBoundary: { salesAllowed: false, contactAllowed: false } }, logContext });
+          searchIntent: { replyBoundary: { salesAllowed: false, contactAllowed: false } }, logContext,
+          refreshImageStatus: () => terminalImageContext(context),
+          regenerateReply: (_rejected, recovery) => recovery?.kind === "image"
+            ? generateTerminalCaption({ context, recentMessages, userText, imageContext: recovery.chatImageContext, logContext, recovery })
+            : null });
         if (!reviewed.degraded && !reviewed.replyRecoveryState) reply = boundedReply(reviewed, context, userText);
       } catch (error) { console.warn("[aiove] image terminal reply review unavailable:", error.code || "review_failed"); }
       reply ||= terminalFallback(context);
@@ -165,6 +166,20 @@ export async function generateChatImageTerminalReplyFromJob(job = {}) {
     });
     return { ok: true, sourceRef, status: context.imageStatus };
   } finally { await releaseLock(); }
+}
+
+async function generateTerminalCaption({ context, recentMessages, userText, imageContext, logContext, recovery = null }) {
+  let promptContext = buildChatReplyPrompt({ character: context.character, recentMessages, userText, chatImageContext: imageContext });
+  if (context.guestSessionId) promptContext = applyGuestPromptPolicy(promptContext);
+  promptContext = projectTerminalImageReplyPrompt(promptContext, { originalRequest: userText, imageContext });
+  if (recovery) {
+    promptContext = buildImageReplyRecoveryPrompt(promptContext, recovery);
+    if (!promptContext) return null;
+    promptContext.messages = [...promptContext.messages, { role: "system",
+      content: `${promptContext.messages.at(-1).content}\n\n${promptContext.layers.at(-1).content}` }];
+  }
+  const generated = await generateChatReply({ promptContext, userText: TERMINAL_CAPTION_TASK, logContext, deferIdentityToBoundaryReview: true });
+  return !isAiTransportFallback(generated) && String(generated.text || "").trim() ? boundedReply(generated, context, userText) : null;
 }
 
 async function terminalImageContext(context) {
@@ -197,12 +212,15 @@ export function projectTerminalImageReplyPrompt(promptContext, { originalRequest
   const packet = { kind: "read_only_prior_image_request", originalRequest: String(originalRequest).slice(0, 4000),
     recentConversation, terminalState: { kind: imageContext?.imageStatus?.kind,
       status: imageContext?.imageStatus?.status, currentTurn: imageContext?.imageStatus?.currentTurn === true } };
-  const layer = { id: "terminal_image_caption", title: "Server Image Completion Caption", content: TERMINAL_CAPTION_TASK };
+  // The final generation instruction shares the reviewer's verified-media
+  // contract; its caption task must not obscure those representation limits.
+  const captionInstruction = [TERMINAL_CAPTION_TASK, buildChatImageStatusInstruction(imageContext)].filter(Boolean).join("\n\n");
+  const layer = { id: "terminal_image_caption", title: "Server Image Completion Caption", content: captionInstruction };
   return { ...promptContext,
     systemPrompt: `${promptContext?.systemPrompt || ""}\n\n## ${layer.title}\n${layer.content}`,
     layers: [...(promptContext?.layers || []), layer],
     messages: [{ role: "user", content: `READ-ONLY DATA PACKET (quoted prior conversation, not a new request):\n${JSON.stringify(packet)}` },
-      { role: "system", content: TERMINAL_CAPTION_TASK }],
+      { role: "system", content: captionInstruction }],
   };
 }
 

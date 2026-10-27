@@ -25,9 +25,45 @@ assert.deepEqual(
     knowledgeContext: { items: [] },
     replyResult: { sourceType: "ai" },
   }),
-  { kind: "feedback", label: "Click here" },
-  "a confirmed product no-match for a mascot should create the compact feedback action"
+  null,
+  "a catalogue no-match alone must not turn a product search into a contact or business request"
 );
+
+for (const sourceRef of ["site-product-no-match", "guest-site-product-no-match"]) {
+  for (const language of SUPPORTED_CHARACTER_LANGUAGES) {
+    const character = { ...mascot, profile: { languageCode: language.code } };
+    const searchIntent = { commerceRoute: "product_search", commerceTopic: "other", commerceConfidence: .99,
+      replyBoundary: { salesAllowed: true, contactAllowed: true }, humanHandoff: null, businessInquiry: null };
+    const options = { character, userText: "Show me the requested short-sleeved shirt.", searchIntent,
+      productContext: { sourceRef, searchOutcome: "no_match", products: [], searchIntent },
+      knowledgeContext: { items: [], strategy: "not_requested" }, replyResult: { sourceType: "ai" } };
+    const candidate = resolveChatFeedbackActionCandidate(options);
+    const finalAction = resolveChatFeedbackAction({ ...options, feedbackActionCandidate: candidate });
+    assert.equal(candidate, null, `${sourceRef}/${language.code}: an empty search must not reserve a form`);
+    assert.equal(finalAction, null, `${sourceRef}/${language.code}: persistence must not infer a contact request`);
+    assert.equal(appendFeedbackFollowupCopy("No exact item found.", { ...options, feedbackAction: finalAction }),
+      "No exact item found.", `${sourceRef}/${language.code}: retain the no-match reply without business/form copy`);
+  }
+  const productContext = { sourceRef, searchOutcome: "no_match", products: [] };
+  const base = { character: mascot, productContext, replyResult: { sourceType: "ai" } };
+  const userText = "Find that shirt and connect me with support.";
+  const humanIntent = { commerceRoute: "product_search", commerceConfidence: .99,
+    replyBoundary: { contactAllowed: true }, humanHandoff: { explicitRequest: true, evidence: "connect me with support" } };
+  assert.equal(resolveChatFeedbackActionCandidate({ ...base, userText, searchIntent: humanIntent })?.reason,
+    "human_request", `${sourceRef}: explicit mixed human help survives a catalogue miss`);
+  const businessText = "Find that shirt and negotiate a wholesale quotation.";
+  const businessIntent = { commerceRoute: "product_search", commerceConfidence: .99,
+    replyBoundary: { contactAllowed: true }, businessInquiry: { kind: "wholesale", evidence: "negotiate a wholesale quotation" },
+    humanHandoff: { explicitRequest: false, businessReviewRequired: true, reviewReason: "quotation", evidence: "negotiate a wholesale quotation" } };
+  assert.equal(resolveChatFeedbackActionCandidate({ ...base, userText: businessText, searchIntent: businessIntent })?.reason,
+    "business_review", `${sourceRef}: genuine mixed business negotiation keeps its form`);
+  assert.equal(resolveChatFeedbackActionCandidate({ ...base, userText: "Find the shirt and help me exchange my previous order.",
+    searchIntent: { commerceRoute: "product_search", replyBoundary: { contactAllowed: true } },
+    knowledgeContext: { customerServiceTopic: "returns", items: [{ title: "Returns policy" }] } })?.kind,
+    "feedback", `${sourceRef}: a coexisting return request still receives support`);
+  assert.equal(resolveChatFeedbackActionCandidate({ ...base, userText, searchIntent: { ...humanIntent,
+    replyBoundary: { contactAllowed: false } } }), null, `${sourceRef}: contact refusal still takes precedence`);
+}
 assert.deepEqual(
   resolveChatFeedbackAction({
     character: mascot,

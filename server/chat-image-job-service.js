@@ -5,6 +5,7 @@ import {
   createChatImageDeadlineError,
   getChatImageJobDeadline,
   listExpiredQueuedChatImageJobs,
+  waitForChatImageInitialReplyAfterLock,
 } from "./chat-image-job-lifecycle-service.js";
 import { getChatImageStatusCopy } from "./chat-image-copy-service.js";
 import {
@@ -333,6 +334,19 @@ function nonRetryableImageError(message) {
 }
 
 async function markChatImageReady({ messageId, assetId, saved, job = null }) {
+  try {
+    return await commitChatImageReady({ messageId, assetId, saved, job });
+  } catch (error) {
+    if (!await waitForChatImageInitialReplyAfterLock(getDbPool(), { error, job: job || {}, assetId, messageId,
+      assertCanContinue: () => assertChatImageJobCanContinue(job, { messageId, assetId }) })) throw error;
+  }
+  // The first transaction has rolled back. Reuse the staged file and attempt
+  // only this existing atomic commit once; never call the image provider here.
+  job?.reportStage?.("image_ready_commit");
+  return commitChatImageReady({ messageId, assetId, saved, job });
+}
+
+async function commitChatImageReady({ messageId, assetId, saved, job = null }) {
   await withTransaction(async (db) => {
     if (job?.id) await assertMemoryJobLease(db, job);
     const [[owner]] = await db.execute("SELECT internal_uid, guest_session_id, status, created_at FROM chat_image_assets WHERE id = ? AND message_id = ? LIMIT 1", [assetId, messageId]);

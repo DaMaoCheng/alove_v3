@@ -94,6 +94,9 @@ const absentTask=await resolveChatImageStatusContext({execute:async()=>[[]]}, {s
 assert.equal(absentTask.imageStatus.status,'unknown');
 const quota={reason:'quota_exhausted',taskCreated:false,instruction:'No new task.'};
 assert.equal(await resolveChatImageStatusContext({execute:async()=>[[]]}, {session,character:{id:'character-a'},userDisplayOrder:100,directive:quota}),quota);
+const unavailableRequest={...ready,reason:'classification_unavailable',taskCreated:false};
+assert.deepEqual(toImageStatusReviewContext(unavailableRequest).currentRequest,{outcome:'not_created',reason:'classification_unavailable'},'classification failure must remain a current unfulfilled request, not an approved photo');
+assert.equal(getChatImageStatusFallbackCopy(unavailableRequest,'en'),getChatImageStatusFallbackCopy(missing,'en'),'an earlier ready image cannot satisfy a new unclassified request');
 assert.match(buildChatImageContextLayer(context).content,/ordinary unrelated chat/);
 assert.match(buildChatImageContextLayer(failed).content,/failed/);
 assert.match(buildChatImageContextLayer({taskCreated:true,taskFailed:true,instruction:'Failed.'}).content,/ultimately failed/);

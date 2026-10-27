@@ -6,7 +6,7 @@ const { applyProductCandidateState } = await import('../server/product-candidate
 const { resolveCommerceSearchIntent } = await import('../server/commerce-routing-service.js');
 const { buildProductSearchIntent } = await import('../server/product-intent-service.js');
 const { classifyChatImageIntent } = await import('../server/chat-image-intent-classifier-service.js');
-const { maybeCreateGuestChatImagePlaceholder } = await import('../server/chat-image-generation-service.js');
+const { maybeCreateGuestChatImagePlaceholder, maybeCreateChatImagePlaceholder, resolveChatImageReplyDirective } = await import('../server/chat-image-generation-service.js');
 const { applyChatImageCommercePolicy } = await import('../server/chat-image-commerce-policy-service.js');
 const text = 'A ver pasame tu imagen';
 const identity = { siteId: 'site_fixture', characterId: 'mascot_fixture', userText: text };
@@ -58,6 +58,10 @@ const options = { character, userText: text, jevDecision: { ok: false, confident
 const db = { execute: async sql => {
  if (sql.includes('FROM mascot_greeting_images')) { libraryReads++; return [[]]; }
  if (sql.includes('FROM guest_image_entitlements')) { entitlementReads++; return [[]]; }
+ if (sql.includes('FROM chat_image_assets') || sql.includes('FROM chat_messages')) {
+  assert.match(sql.trim(), /^SELECT\b/i, 'clarification may inspect existing tasks, but must never create one');
+  return [[]];
+ }
  throw new Error('Unexpected DB effect in isolated continuity check: '+sql.slice(0, 100));
 } };
 try {
@@ -84,7 +88,65 @@ try {
  assert.equal((await classifyChatImageIntent('How would that outfit look on you?', options)).hasIntent, false, 'hypothetical discussion alone grants no image action');
  assert.equal((await maybeCreateGuestChatImagePlaceholder(db, { ...options, imageDecision: { ...outfit, hasIntent: false, allowed: false } })).taskCreated, false);
  const noReference = { ...outfit, clothingTarget: 'catalogue_product', intentType: 'try_on', actorEvidence: 'Wear', actionEvidence: 'Wear this shirt' };
- assert.equal(applyChatImageCommercePolicy(noReference, { commerceIntent: { commerceRoute: 'chat' }, userText: 'Wear this shirt',
+ assert.equal(applyChatImageCommercePolicy(noReference, { commerceIntent: { commerceRoute: 'product_search' }, userText: 'Wear this shirt',
   siteId: identity.siteId, characterId: character.id, recentMessages: [] }).hasIntent, false, 'real merchandise still needs a same-site reference image');
+ // A semantic role-photo approval cannot establish that imagined clothing
+ // exists in the catalogue. Preserve the question instead of dropping intent.
+ const uncertainSource = { ...outfit, clothingTarget: 'catalogue_product', intentType: 'try_on' };
+ const pureChatScope = { commerceIntent: { commerceRoute: 'chat' }, recentMessages: [], userText: text,
+  siteId: identity.siteId, characterId: character.id };
+ const clarification = applyChatImageCommercePolicy(uncertainSource, pureChatScope);
+ assert.equal(clarification.reason, 'appearance_uncertain', 'unverified outfit origin must request clarification instead of disappearing as no intent');
+ assert.equal(clarification.hasIntent, true);
+ assert.equal(clarification.allowed, false);
+ assert.equal(clarification.explicitGeneration, false);
+ assert.equal(clarification.deferredToProduct, false);
+ assert.equal(clarification.productReferenceRequired, true);
+ assert.equal(clarification.clothingTarget, 'catalogue_product', 'never relabel uncertain merchandise as generic');
+ const counts = { libraryReads, entitlementReads };
+ const guestClarification = await maybeCreateGuestChatImagePlaceholder(db, { ...options, imageDecision: uncertainSource });
+ assert.equal(guestClarification.taskCreated, false);
+ assert.equal(guestClarification.directive.reason, 'appearance_uncertain');
+ assert.match(guestClarification.directive.instruction, /clarification/);
+ assert.match(guestClarification.directive.instruction, /do not refuse character photos/);
+ assert.equal(guestClarification.taskId ?? null, null);
+ const memberOptions = { ...options, imageDecision: uncertainSource, userId: 'owner_fixture', userDisplayOrder: 10,
+  session: { ...options.session, internal_uid: 'owner_fixture' } };
+ assert.equal(await maybeCreateChatImagePlaceholder(db, memberOptions), null);
+ const memberClarification = await resolveChatImageReplyDirective(db, memberOptions);
+ assert.equal(memberClarification.reason, 'appearance_uncertain');
+ assert.match(memberClarification.instruction, /without creating or promising an image/);
+ assert.deepEqual({ libraryReads, entitlementReads }, counts, 'source clarification cannot read entitlement or serve an arbitrary library image');
+ const card = { senderType: 'character', characterId: character.id, contentType: 'product',
+  product: { id: 'product_fixture', name: 'Actual catalogue shirt', siteId: identity.siteId } };
+ const ownedState = { version: 1, status: 'active', owner: 'single', siteId: identity.siteId,
+  characterId: character.id, targetEvidence: 'Actual catalogue shirt', requirements: {}, proposal: null };
+ for (const changes of [
+  { commerceIntent: { commerceRoute: 'product_search' } },
+  { commerceIntent: { commerceRoute: 'product_question' } },
+  { commerceIntent: { commerceRoute: 'chat', imageProductEvidence: ['catalogue shirt'] } },
+  { recentMessages: [card] },
+  { recentMessages: [{ senderType: 'character', productCandidateState: ownedState }] },
+ ]) {
+  const preserved = applyChatImageCommercePolicy(uncertainSource, { ...pureChatScope, ...changes });
+  assert.equal(preserved.hasIntent, false, 'real merchandise/candidate context retains the existing reference defer');
+  assert.equal(preserved.allowed, false);
+  assert.equal(preserved.deferredToProduct, true);
+ }
+ const referenced = applyChatImageCommercePolicy(uncertainSource, { ...pureChatScope, recentMessages: [{ ...card,
+  product: { ...card.product, imageUrl: 'https://fixture.invalid/catalogue-shirt.jpg' } }] });
+ assert.equal(referenced.allowed, true, 'existing verified catalogue-reference admission remains available');
+ assert.equal(referenced.referenceProduct.id, card.product.id);
+ for (const foreign of [
+  { ...card, characterId: 'another_character' },
+  { ...card, senderType: 'user' },
+  { ...card, product: { ...card.product, siteId: 'another_site' } },
+  { senderType: 'character', productCandidateState: { ...ownedState, siteId: 'another_site' } },
+  { senderType: 'character', productCandidateState: { ...ownedState, characterId: 'another_character' } },
+ ]) {
+  const scoped = applyChatImageCommercePolicy(uncertainSource, { ...pureChatScope, recentMessages: [foreign] });
+  assert.equal(scoped.reason, 'appearance_uncertain', 'foreign/user content cannot become trusted catalogue context');
+  assert.equal(scoped.allowed, false);
+ }
 } finally { globalThis.fetch = originalFetch; }
-console.log('image outfit continuity passed (ghost state, independent mixed selfie, clothing/gallery contradiction, hypothetical and source protection; fixtures only, no models/DB/image writes)');
+console.log('image outfit continuity passed (ghost state, independent mixed selfie, clothing/gallery contradiction, hypothetical, scoped source clarification and guest/member no-task guards; fixtures only, no models/DB/image writes)');

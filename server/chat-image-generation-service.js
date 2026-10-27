@@ -32,10 +32,17 @@ import { resolveRecentImageConversationContext } from "./chat-image-conversation
 
 export const CHAT_IMAGE_REPLY_REASONS = Object.freeze({
   IMAGE_TASK_CREATED: "image_task_created",
+  CLASSIFICATION_UNAVAILABLE: "classification_unavailable",
   ACTIVE_GENERATION: CHAT_IMAGE_BLOCK_REASONS.ACTIVE_GENERATION,
   QUOTA_EXHAUSTED: CHAT_IMAGE_BLOCK_REASONS.QUOTA_EXHAUSTED,
   DISALLOWED_REQUEST: CHAT_IMAGE_BLOCK_REASONS.DISALLOWED_REQUEST,
 });
+
+const CLASSIFICATION_UNAVAILABLE_INSTRUCTION = [
+  "The current possible character-photo request could not be verified because image-intent classification was unavailable. This is not a semantic rejection or image permission.",
+  "No image was created or sent. Do not promise generation, progress or delivery, invent a quota problem, or call the request disallowed. Briefly explain that the photo request could not be processed now and invite trying again later in the active conversation language. Do not blame the user wording or ask for clarification merely because a service timed out.",
+  "Preserve answers to any other independent questions in this mixed turn using their own trusted context. Do not replace them with an image acknowledgement or a generic acknowledgement that ignores the unresolved photo request.",
+];
 
 // Logging cannot affect image permissions, quota locks or the caller's transaction.
 async function recordImageTurn(options, result, failed = false) {
@@ -112,7 +119,10 @@ async function createGuestImageTurn(db, {
     session,
     userMessage,
   });
-  if (!trigger.hasIntent) return { requested: false, taskCreated: false, reason: "", trigger, message: null, directive: null };
+  if (!trigger.hasIntent) {
+    if (trigger.reason === CHAT_IMAGE_REPLY_REASONS.CLASSIFICATION_UNAVAILABLE) return buildGuestImageResult({ reason: trigger.reason, trigger });
+    return { requested: false, taskCreated: false, reason: "", trigger, message: null, directive: null };
+  }
   if (!trigger.allowed) {
     return buildGuestImageResult({ reason: trigger.reason || CHAT_IMAGE_BLOCK_REASONS.DISALLOWED_REQUEST, trigger });
   }
@@ -206,8 +216,8 @@ export async function evaluateChatImageRequest(db, { session, character = null, 
   if (!trigger.hasIntent) {
     return {
       hasIntent: false,
-      action: "none",
-      reason: "",
+      action: trigger.reason === CHAT_IMAGE_REPLY_REASONS.CLASSIFICATION_UNAVAILABLE ? "unavailable" : "none",
+      reason: trigger.reason || "",
       trigger,
     };
   }
@@ -269,6 +279,7 @@ export async function resolveChatImageReplyDirective(db, { session, character = 
     recentMessages,
     userMessage: { displayOrder: userDisplayOrder },
   });
+  if (decision.action === "unavailable") return buildChatImageReplyDirective(decision);
   if (!decision.hasIntent || decision.action === "none") return null;
   if (await hasImageGenerationAfterUserMessage(db, {
     sessionId: session?.id,
@@ -376,6 +387,8 @@ function buildGuestImageResult({ taskCreated = false, reason = "", trigger = nul
         "The image request was accepted. Discuss digital image creation, not physically taking a photo, traveling or posing. Acknowledge only the supplied task status.",
         "Use the active conversation language. Let the image message carry its status, and answer any other explicit question in this same turn using its trusted product/knowledge context. Do not replace that answer with only a photo acknowledgement.",
       ]
+    : reason === CHAT_IMAGE_REPLY_REASONS.CLASSIFICATION_UNAVAILABLE
+      ? CLASSIFICATION_UNAVAILABLE_INSTRUCTION
     : reason === 'appearance_uncertain'
       ? ["The current photo request is valid, but it is uncertain whether to depict the user's earlier outfit or a different/plain look.",
           "No image was created or sent. Ask one brief natural clarification of the desired appearance in the active language; do not refuse character photos or claim a quota problem. Preserve independent answers in a mixed request."]
@@ -450,6 +463,7 @@ async function hasImageGenerationAfterUserMessage(db, { sessionId, userDisplayOr
 function buildChatImageReplyDirective(decision) {
   const reason = decision.reason || CHAT_IMAGE_REPLY_REASONS.DISALLOWED_REQUEST;
   const instructions = {
+    [CHAT_IMAGE_REPLY_REASONS.CLASSIFICATION_UNAVAILABLE]: CLASSIFICATION_UNAVAILABLE_INSTRUCTION,
     appearance_uncertain: [
       "The current character-photo request needs clarification of whether to continue the earlier USER outfit or use a different/plain appearance.",
       "Ask one brief natural appearance clarification, without creating or promising an image, claiming a quota block or refusing all character photos. Preserve independent mixed-question answers.",
@@ -514,7 +528,18 @@ async function analyzeChatImageTriggerWithIntent(userText = "", {
   if (deterministic.hasIntent && !verifyCharacterTarget) {
     return { ...deterministic, conditions: classified.conditions || null };
   }
-  if (!classified.hasIntent) return { ...deterministic, hasIntent: false, allowed: false, reason: "", matchedIntent: "", intentType: "", explicitGeneration: false, detectionSource: classified.detectionSource || "classifier", confidence: classified.confidence, classificationFailure: classified.classificationFailure, classificationOutcome: classified.classificationOutcome, classificationIntent: classified.classificationIntent };
+  if (!classified.hasIntent) {
+    // An unavailable second opinion is not a semantic no-image verdict. The
+    // first-pass signal only scopes a no-action notice; it never approves media.
+    const possiblePhotoRequest = jevDecision?.ok
+      ? ["library_photo", "explicit_generation", "try_on", "group_photo"].includes(jevDecision.imageIntent)
+      : deterministic.hasIntent;
+    const classificationUnavailable = classified.classificationFailure
+      || ["grounding_rejected", "low_confidence"].includes(classified.classificationOutcome);
+    return { ...deterministic, hasIntent: false, allowed: false,
+      reason: classificationUnavailable && possiblePhotoRequest ? CHAT_IMAGE_REPLY_REASONS.CLASSIFICATION_UNAVAILABLE : "",
+      matchedIntent: "", intentType: "", explicitGeneration: false, detectionSource: classified.detectionSource || "classifier", confidence: classified.confidence, classificationFailure: classified.classificationFailure, classificationOutcome: classified.classificationOutcome, classificationIntent: classified.classificationIntent };
+  }
 
   // Confirm a real image request before applying the existing unsupported-task
   // gate. Semantic approval never overrides its batch/advertising restrictions.

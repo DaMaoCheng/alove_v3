@@ -130,13 +130,13 @@ try {
   });
 
   // Scale only the classifier's provider timers; use real abort/body paths
-  // without making this regression wait fifteen seconds per attempt.
+  // without making this regression wait thirty seconds per attempt.
   const nativeSetTimeout = globalThis.setTimeout;
   const originalClassifierFetch = globalThis.fetch;
   const budgets = [];
   let delayedCalls = 0;
   globalThis.setTimeout = (callback, delay, ...args) => {
-    if (delay >= 4000 && delay <= 15000) {
+    if (delay >= 4000 && delay <= 30000) {
       budgets.push(delay);
       return nativeSetTimeout(callback, delay / 100, ...args);
     }
@@ -149,15 +149,15 @@ try {
       delayedCalls++;
       const timer = nativeSetTimeout(() => resolve({ choices: [{ message: { content: JSON.stringify({
         hasIntent: true, allowed: true, confidence: .98, intentType: "library_photo",
-      }) } }] }), 80);
+      }) } }] }), 240);
       signal.addEventListener("abort", () => { clearTimeout(timer); reject(Error("fixture abort")); }, { once: true });
     }),
   });
   try {
     const slow = await classifyChatImageIntent("show me a photo", { jevDecision: { ok: true, confident: false } });
-    assert.equal(slow.allowed, true, "a body slower than the old4.5s budget must still be classified");
-    assert.equal(budgets[0], 15000, "image classification receives the enlarged finite provider budget");
-    assert(budgets.every(ms => ms > 14000 && ms <= 15000), "body read retains the enlarged attempt deadline");
+    assert.equal(slow.allowed, true, "a body slower than the former 15s budget and the provider default must still be classified");
+    assert.equal(budgets[0], 30000, "image classification receives the enlarged finite provider budget");
+    assert(budgets.every(ms => ms > 29000 && ms <= 30000), "body read retains the enlarged attempt deadline");
     assert.equal(delayedCalls, 1, "a successful response must not start another provider");
   } finally {
     globalThis.setTimeout = nativeSetTimeout;

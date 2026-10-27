@@ -3,7 +3,7 @@ import { classifyJevIntent, mapJevImageIntent } from "./jev-intent-service.js";
 import { resolveCharacterImageFollowupContext } from "./chat-image-conversation-context-service.js";
 import { pendingAppearanceUserContext, resolveImageAppearance } from './chat-image-appearance-context-service.js';
 
-const CLASSIFIER_TIMEOUT_MS = 15000;
+const CLASSIFIER_TIMEOUT_MS = 30000;
 const MIN_CONFIDENCE = 0.7;
 
 export async function classifyChatImageIntent(userText = "", { character = null, jevDecision = null, conversationContext = null, cacheKey = "", forceTargetVerification = false } = {}) {
@@ -149,7 +149,7 @@ async function requestClassifier(userText, { conversationContext = null, verifyC
               ...(pendingAppearance ? { pendingUserAppearance: pendingAppearance } : {}),
             }),
           },
-  ], { timeoutMs: CLASSIFIER_TIMEOUT_MS, perProviderTimeout: true, sourceRef: "chat-image-intent-classifier" });
+  ], { timeoutMs: CLASSIFIER_TIMEOUT_MS, perProviderTimeout: true, providerTimeoutMs: CLASSIFIER_TIMEOUT_MS, sourceRef: "chat-image-intent-classifier" });
 }
 
 function normalizeClassifierResult(parsed = {}, { text = "", verifyCharacterTarget = false, followupContext = null, pendingAppearance = null } = {}) {

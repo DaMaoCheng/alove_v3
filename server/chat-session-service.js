@@ -12,7 +12,7 @@ export async function findLatestUserSession({ characterId, userId }) {
 export async function findLatestUserSessionForDb(db, { characterId, userId }) {
   await lockUserSessionOwnerForDb(db, userId);
   const [sessions] = await db.execute(
-    `SELECT id, character_id, session_title, session_status, source_type, source_ref, preferred_language, last_message_at
+    `SELECT id, internal_uid, guest_session_id, character_id, session_title, session_status, source_type, source_ref, preferred_language, last_message_at
      FROM chat_sessions
      WHERE character_id = ?
        AND internal_uid = ?
@@ -63,19 +63,8 @@ export async function findCharacterById(db, characterId, { userId = "" } = {}) {
 }
 
 export async function findOrCreateUserSession(db, { character, userId }) {
-  await lockUserSessionOwnerForDb(db, userId);
-  const [sessions] = await db.execute(
-    `SELECT id, character_id, session_title, session_status, source_type, source_ref, preferred_language, last_message_at
-     FROM chat_sessions
-     WHERE character_id = ?
-       AND internal_uid = ?
-       AND session_status = 'active'
-       AND source_type = ?
-     ORDER BY last_message_at DESC, updated_at DESC
-     LIMIT 1`,
-    [character.id, userId, USER_SESSION_SOURCE_TYPE]
-  );
-  if (sessions[0]) return sessions[0];
+  const existing = await findLatestUserSessionForDb(db, { characterId: character.id, userId });
+  if (existing) return existing;
 
   const sessionId = createId("chat");
   const title = `${character.name} conversation`;
@@ -100,6 +89,8 @@ export async function findOrCreateUserSession(db, { character, userId }) {
   );
   return {
     id: sessionId,
+    internal_uid: userId,
+    guest_session_id: null,
     character_id: character.id,
     session_title: title,
     session_status: "active",

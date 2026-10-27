@@ -88,7 +88,7 @@ export async function refreshChatImageStatusContext(freshDb, context) {
 }
 
 export function toImageStatusReviewContext(context) {
-  const reason = ["active_generation", "quota_exhausted", "disallowed_request"].includes(context?.reason) ? context.reason : "";
+  const reason = ["active_generation", "quota_exhausted", "disallowed_request", "classification_unavailable"].includes(context?.reason) ? context.reason : "";
   const fact = context?.imageStatus || (reason ? { kind: "unknown", status: "unknown", currentTurn: false } : null);
   if (!fact || !["generated", "library", "unknown"].includes(fact.kind)) return null;
   return { kind: fact.kind, status: fact.kind !== "unknown" && STATES.has(fact.status) ? fact.status : "unknown", currentTurn: fact.currentTurn === true,
@@ -149,7 +149,7 @@ export function buildChatImageStatusInstruction(context) {
 export function getChatImageStatusFallbackCopy(context, language = "en") {
   const fact = toImageStatusReviewContext(context);
   if (context?.taskCreated && !fact?.currentTurn) return getChatImageUnverifiedStatusCopy(language);
-  if (["quota_exhausted", "disallowed_request"].includes(fact?.currentRequest?.reason)
+  if (["quota_exhausted", "disallowed_request", "classification_unavailable"].includes(fact?.currentRequest?.reason)
     || fact?.currentRequest?.reason === "active_generation" && !["queued", "generating"].includes(fact?.status)) return getChatImageUnverifiedStatusCopy(language);
   if (fact?.status === "ready") return fact.currentTurn ? getChatImageStatusCopy({ language, status: "ready" }) : getChatImageHistoricalReadyCopy(language);
   if (["queued", "generating"].includes(fact?.status)) return getChatImageStatusCopy({ language, status: "queued" });

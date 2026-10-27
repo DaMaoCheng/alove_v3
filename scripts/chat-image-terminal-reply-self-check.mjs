@@ -4,10 +4,12 @@ import { createHash } from 'node:crypto';
 import vm from 'node:vm';
 import {removeTtsControlTags} from '../server/tts-emotion-tag-service.js';
 import {normalizeGuestReplyText,sanitizeGuestReplyText} from '../server/guest-chat-output-policy.js';
-import { withChatImageReplySnapshot, isFulfilledImageOnlyRequest, toImageStatusReviewContext, buildImageRepresentationContract, buildCurrentImageDeliveryContract } from '../server/chat-image-status-context-service.js';
+import { withChatImageReplySnapshot, isFulfilledImageOnlyRequest, toImageStatusReviewContext, buildImageRepresentationContract, buildCurrentImageDeliveryContract, buildChatImageStatusInstruction } from '../server/chat-image-status-context-service.js';
 
 // Run the actual terminal executor and original-reply registration against a
 // transaction/lock fixture. No real DB, provider, TTS, service or user data.
+import { buildImageReplyRecoveryPrompt } from '../server/chat-image-reply-recovery-service.js';
+
 const sourcePath = new URL('../server/chat-image-failure-reply-job-service.js', import.meta.url);
 const actualSource = readFileSync(process.env.ALOVE_TERMINAL_BASELINE || sourcePath, 'utf8');
 const fallbackIdentity = { aiModel: 'fixture-actual-backup-model', aiProvider: 'fixture-backup', aiBaseUrl: 'https://backup-fixture.invalid/v1' };
@@ -38,7 +40,7 @@ function fixture({ status = 'ready', initial = null, ledger = {}, newerUser = fa
     if (sql.startsWith('UPDATE chat_sessions')) return [{ affectedRows: 1 }];
     throw new Error(`Unrecognized fixture SQL: ${sql.slice(0, 100)}`);
   } };
-  const sandbox = { removeTtsControlTags,
+  const sandbox = { removeTtsControlTags, buildChatImageStatusInstruction, buildImageReplyRecoveryPrompt,
     console, createHash,
     normalizeCharacterLanguage: value => value ? { code: 'en', label: 'English' } : null,
     upsertPersonaLanguageSetting: value => value,
@@ -53,7 +55,7 @@ function fixture({ status = 'ready', initial = null, ledger = {}, newerUser = fa
       assert.equal(directive.terminalReplyOnly, true, 'caption purpose is explicit server state');
       assert.equal(directive.trigger, undefined, 'never invent a classifier acceptance or image-only user scope');
       return { ...directive, imageStatus: { kind: 'generated', status: state.status, currentTurn: true },
-        _imageStatusAnchor: { assetId: 'asset', messageId: currentImageMessageId, kind: 'generated',
+        _imageStatusAnchor: { assetId: 'asset', messageId: currentImageMessageId, kind: 'generated', displayOrder: 11,
           scope: { sessionId: session.id, characterId: character.character_id, ownerId: state.userId || null,
             guestId: state.guestId || null, order: userDisplayOrder, currentImageMessageId } } };
     },
@@ -61,6 +63,9 @@ function fixture({ status = 'ready', initial = null, ledger = {}, newerUser = fa
       state.generations++;
       assert.equal(promptContext.messages.at(-1).role, 'system', 'last instruction is the server caption task, not the mixed user request');
       assert.match(promptContext.messages.at(-1).content, /not a new user question/);
+      assert.match(promptContext.messages.at(-1).content, /physical photoshoots are unverified/, 'terminal generation must receive the same representation limits as its reviewer');
+      assert.equal(promptContext.messages.at(-1).content.includes('already added this specific requested character photo'), state.status === 'ready',
+        'failed captions must never inherit the current ready-delivery contract');
       assert(promptContext.systemPrompt.startsWith('Preserved persona, voice, language and safety instructions.'));
       assert.equal(promptContext.layers[0].id, 'persona');
       assert(promptContext.messages[0].content.startsWith('READ-ONLY DATA PACKET'));
@@ -83,9 +88,12 @@ function fixture({ status = 'ready', initial = null, ledger = {}, newerUser = fa
       assert.equal(options.requireIdentityReview, true);
       assert.equal(options.independentLanguageQualityRequired, true);
       assert.equal(options.languageQualityRequired, true);
-      assert.equal(options.regenerateReply, undefined, 'no hidden second generation callback');
+      assert.equal(typeof options.regenerateReply, 'function', 'ready caption must reuse the existing bounded text-only recovery');
+      assert.equal(typeof options.refreshImageStatus, 'function');
       assert.deepEqual(JSON.parse(JSON.stringify(options.searchIntent.replyBoundary)), { salesAllowed: false, contactAllowed: false });
       await state.onReview?.();
+      assert.equal(await options.regenerateReply(options.replyResult, { kind: 'language' }), null, 'unrelated recovery never spends a caption generation');
+      if (state.recoverImageReview) return options.regenerateReply(options.replyResult, { kind: 'image', chatImageContext: await options.refreshImageStatus(), failedContracts: ['boundary'] });
       return state.rejectReview ? { ...options.replyResult, degraded: true } : options.replyResult;
     },
     isAiTransportFallback: () => false,
@@ -227,7 +235,7 @@ assert.equal(failed.state.generations, 1); assert.equal(failed.state.reviews, 1)
 const legacy = fixture({ status: 'failed', legacy: true });
 await legacy.run();
 assert.equal(legacy.state.messages.length, 1, 'old serialized failure job without initial marker still works');
-console.log('Image terminal reply: opposite ordering, enqueue/executor concurrency, asset-lifetime dedup, one generation/review, crash recovery, mixed/new-turn/lease/owner protection and legacy failure passed (isolated real executor; no DB/network/models).');
+console.log('Image terminal reply: opposite ordering, enqueue/executor concurrency, asset-lifetime dedup, normal single candidate and bounded image-text repair, crash recovery, mixed/new-turn/lease/owner protection and legacy failure passed (isolated real executor; no DB/network/models).');
 
 const delivered = {kind:"generated",status:"ready",currentTurn:true};
 assert.match(buildCurrentImageDeliveryContract(delivered), /each other question still needs/);
@@ -255,3 +263,13 @@ const safeCaption=captionFormat.normalize({text:"Here is your photo. Use promo c
 assert(!safeCaption.text.includes("SAVE50"),"guest safety filtering remains active in caption subtask");
 const trackingCaption=captionFormat.normalize({text:"Here is the photo we discussed."},{guestSessionId:"owned-guest",languageCode:"en"},"Where is tracking AB1234? Also send your photo.");
 assert.equal(trackingCaption.text,"Here is the photo we discussed.");
+
+const imageRepair = fixture({ initial });
+imageRepair.state.recoverImageReview = true;
+await imageRepair.run();
+assert.equal(imageRepair.state.generations, 2, 'only one additional text candidate through the shared recovery path');
+assert.equal(imageRepair.state.messages.length, 1);
+assert.equal(imageRepair.state.metadata._terminalReply.responseKind, 'natural');
+await imageRepair.run();
+assert.equal(imageRepair.state.generations, 2, 'completed ledger prevents repair on replay');
+assert.equal(imageRepair.originalReply.text, 'Original policy answer and pending image acknowledgement.');

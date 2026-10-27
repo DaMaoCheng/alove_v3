@@ -7,16 +7,31 @@ import { hasPendingProductRequest } from "./product-request-scope-service.js";
 // Product photographs are catalogue evidence; an avatar cannot stand in for them.
 export function applyChatImageCommercePolicy(trigger = {}, { commerceIntent = null, recentMessages = [], siteId = '', userText = '', characterName = '', characterId = '' } = {}) {
   if (!trigger.hasIntent || !trigger.allowed) return trigger;
+  const persisted = readProductCandidateState(recentMessages, { siteId, characterId });
   const commerceProduct = ['product_search', 'product_question'].includes(commerceIntent?.commerceRoute)
     || hasPendingProductRequest(commerceIntent)
     || (commerceIntent?.commerceRoute === 'unclear' && commerceIntent.replyTopicHint === 'product_selection')
     || commerceIntent?.productCandidateState?.status === 'active'
-    || (commerceIntent?.commerceRoute === 'unclear' && readProductCandidateState(recentMessages, { siteId, characterId })?.status === 'active');
+    || (commerceIntent?.commerceRoute === 'unclear' && persisted?.status === 'active');
   const wantsClothing = trigger.conditions?.wants_clothing === true || trigger.intentType === 'try_on';
-  const defer = () => ({ ...trigger, hasIntent: false, allowed: false, explicitGeneration: false, deferredToProduct: true, productReferenceRequired: true });
   const action = String(trigger.actionEvidence || '');
   const actorIsCharacter = characterName && String(trigger.actorEvidence || '').trim().toLowerCase() === String(characterName).trim().toLowerCase();
   const productEvidence = Array.isArray(commerceIntent?.imageProductEvidence) ? commerceIntent.imageProductEvidence.filter(span => typeof span === 'string' && span).slice(0, 6) : [];
+  // A classifier's catalogue label alone is not evidence of a real product.
+  // Keep uncertain character-photo requests visible without granting image access.
+  const hasOwnedProductCard = (Array.isArray(recentMessages) ? recentMessages : []).some(row => {
+    const p = row.product;
+    return (row.contentType || row.content_type) === 'product' && p?.id && p?.name
+      && siteId && String(p.siteId || p.site_id || '') === String(siteId)
+      && (row.senderType || row.sender_type) === 'character'
+      && characterId && String(row.characterId || row.character_id || '') === String(characterId);
+  });
+  const unclearOutfitSource = wantsClothing && trigger.clothingTarget === 'catalogue_product'
+    && !commerceProduct && persisted?.status !== 'active' && !productEvidence.length && !hasOwnedProductCard;
+  const defer = () => unclearOutfitSource
+    ? { ...trigger, allowed: false, explicitGeneration: false, reason: 'appearance_uncertain',
+        appearanceClarificationRequired: true, deferredToProduct: false, productReferenceRequired: true }
+    : { ...trigger, hasIntent: false, allowed: false, explicitGeneration: false, deferredToProduct: true, productReferenceRequired: true };
   const start = String(userText).indexOf(action), end = start + action.length;
   const overlapsProduct = productEvidence.some(span => {
     const at = String(userText).indexOf(span);
@@ -34,7 +49,6 @@ export function applyChatImageCommercePolicy(trigger = {}, { commerceIntent = nu
   // An ambiguous or undisplayed candidate is not the product the user agreed to wear.
   // Current classification is provisional: admission runs before reply review.
   // Only a previously finalized, persisted confirmation grants reference access.
-  const persisted = readProductCandidateState(recentMessages, { siteId, characterId });
   const current = commerceIntent.productCandidateState;
   const historicalId = persisted?.status === 'active' && persisted.proposal?.status === 'confirmed'
     ? persisted.proposal.candidateId : '';
