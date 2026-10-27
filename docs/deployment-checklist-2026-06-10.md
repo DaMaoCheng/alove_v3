@@ -110,6 +110,9 @@ IMAGE_GENERATION_API_KEY=replace_with_image_generation_key
 IMAGE_GENERATION_SIZE=1024x1792
 IMAGE_GENERATION_COUNT=1
 IMAGE_GENERATION_TIMEOUT_MS=180000
+# Chat-only Venice filtering: false matches the web's disabled adult blur setting.
+# Leave true for provider filtering; avatars/admin retain their own defaults.
+CHAT_IMAGE_VENICE_SAFE_MODE=true
 AVATAR_MODERATION_TIMEOUT_MS=12000
 
 ELEVENLABS_API_KEY=replace_with_elevenlabs_key

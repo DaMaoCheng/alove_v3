@@ -38,6 +38,19 @@ check(conflict.productScopePending&&!conflict.shouldLoadProductContext&&!conflic
 const selectedHistory=[{senderType:'character',productRequestState:chosen.productRequestState}];
 const facts=await resolveCommerceSearchIntent({...base,userText:'What is the price?',recentMessages:selectedHistory,searchIntent:buildProductSearchIntent('What is the price?'),classifyCommerce:async()=>({...decision,route:'product_question',needsLiveProductData:true,searchQuery:'Barcelona blue shirt size M',replyBoundary:{salesAllowed:false,contactAllowed:true},productRequest:{relation:'multiple',action:'continue',items:[],selectedIndex:null,selectionEvidence:'What is the price?'}})});
 check(facts.shouldLoadProductContext&&!facts.cardAllowed,'selected factual lookup remains separate from recommendation permission');
+const selectedFactDecision={...decision,route:'product_question',needsLiveProductData:true,searchQuery:'Barcelona blue shirt size M',replyBoundary:{salesAllowed:false,contactAllowed:true},productRequest:{relation:'multiple',action:'continue',items:[],selectedIndex:null,selectionEvidence:'What is the price?'}};
+for(const invalidHistory of [
+ [{senderType:'character',productRequestState:{...chosen.productRequestState,siteId:'foreign'}}],
+ [{senderType:'character',productRequestState:{...chosen.productRequestState,characterId:'foreign'}}],
+ [{senderType:'user',productRequestState:chosen.productRequestState}],
+ [{senderType:'character',productRequestState:{...chosen.productRequestState,selectedIndex:99}}],
+]){
+ const denied=await resolveCommerceSearchIntent({...base,userText:'What is the price?',recentMessages:invalidHistory,searchIntent:buildProductSearchIntent('What is the price?'),classifyCommerce:async()=>selectedFactDecision});
+ check(!denied.shouldLoadProductContext&&!denied.cardAllowed,'foreign, forged or malformed selected history grants no factual lookup or card');
+}
+const freshGeneric=await resolveCommerceSearchIntent({...base,userText:'Can any shirt have a name printed?',recentMessages:selectedHistory,searchIntent:buildProductSearchIntent('Can any shirt have a name printed?'),classifyCommerce:async()=>({...selectedFactDecision,candidateDecisionRequired:true,searchQuery:'shirt name printing',productRequest:{relation:'single',action:'new',items:[],selectedIndex:null,selectionEvidence:''}})});
+check(!freshGeneric.shouldLoadProductContext&&!freshGeneric.cardAllowed,'old selection cannot turn a new generic service question into a product lookup');
+
 const printOriginal='Arsenal shirt number 10 and Barcelona shirt';
 const printPending=await resolveCommerceSearchIntent({...base,userText:printOriginal,searchIntent:buildProductSearchIntent(printOriginal),classifyCommerce:async()=>({...decision,
  productRequest:{...decision.productRequest,items:[{evidence:'Arsenal shirt number 10',sharedEvidence:''},{evidence:'Barcelona shirt',sharedEvidence:''}]}})});
