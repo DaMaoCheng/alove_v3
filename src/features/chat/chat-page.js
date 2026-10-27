@@ -224,7 +224,7 @@ export function createChatPage({ agent, character, messages = [], quickReplies =
     language: pageLanguage,
     onConsumed: onChatImageToastConsumed,
   });
-  if (hasPendingChatImage(wrap)) {
+  if (hasPendingChatImage(wrap, messages)) {
     const pendingCharacterId = String(agent || currentCharacter.id || "").trim();
     window.setTimeout(() => {
       onPendingChatImageRendered?.(pendingCharacterId);
@@ -330,8 +330,10 @@ function restoreChatScroll(root, scrollRestore = {}) {
   });
 }
 
-function hasPendingChatImage(root) {
-  return Boolean(root.querySelector(".chat-image-card.is-pending, .chat-image-card.is-generating"));
+function hasPendingChatImage(root, messages = []) {
+  return Boolean(root.querySelector(".chat-image-card.is-pending, .chat-image-card.is-generating"))
+    || messages.some(message => message?.contentType === "image_generation"
+      && ["ready", "failed"].includes(message.image?.status) && message.image?.terminalReplyPending === true);
 }
 
 function escapeHtml(value) {

@@ -53,6 +53,16 @@ function normalizeRequiredKeywords(values = []) {
     .filter((value) => value.length >= 2))];
 }
 
+// Caption evidence for an existing candidate, not a broader retrieval rule.
+// Only its real catalogue title proves a literal term: subtitle/tag fallbacks
+// can echo the query. An absent term remains unverified, never proven absent.
+export function unmatchedProductSearchTerms(product = {}, values = []) {
+  const keywords = normalizeRequiredKeywords((Array.isArray(values) ? values : [])
+    .filter(value => typeof value === "string" && value.trim().length <= 80).slice(0, 32)).slice(0, 8);
+  const title = normalizeSearchText(product.name);
+  return keywords.filter(keyword => !matchesSearchKeyword(title, keyword));
+}
+
 export function filterProductsForAdmin(products = [], query = "") {
   const normalizedQuery = normalizeSearchText(query);
   const compactQuery = compactSearchText(query);

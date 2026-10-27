@@ -60,10 +60,30 @@ export const COMMERCE_INTENT_RESPONSE_FORMAT = {
   }) },
 };
 
+// Some providers represent unused string slots as explicit null. Normalize
+// only a positively inactive action; missing keys, active evidence and all
+// other fields still pass through the unchanged strict schema/evidence checks.
+export function normalizeInactiveCommerceFields(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  let result = value;
+  const candidate = value.candidateResponse;
+  if (candidate && !Array.isArray(candidate) && typeof candidate === 'object' && candidate.action === 'none') {
+    const empty = Object.fromEntries(['evidence', 'candidateId'].filter(key => candidate[key] === null).map(key => [key, '']));
+    if (Object.keys(empty).length) result = { ...result, candidateResponse: { ...candidate, ...empty } };
+  }
+  const handoff = value.humanHandoff;
+  if (handoff && !Array.isArray(handoff) && typeof handoff === 'object'
+    && handoff.explicitRequest === false && handoff.businessReviewRequired === false && handoff.evidence === null) {
+    result = { ...result, humanHandoff: { ...handoff, evidence: '' } };
+  }
+  return result;
+}
+
 // The same strict contract is checked locally for routed candidate tasks.
 // Native decoding is not an authorization or a substitute
 // for validating the complete returned object before semantic interpretation.
-export function validateCommerceIntentShape(value) {
+export function validateCommerceIntentShape(value, schema = COMMERCE_INTENT_RESPONSE_FORMAT.json_schema.schema) {
+  value = normalizeInactiveCommerceFields(value);
   const matches = (schema, input) => {
     if (schema.anyOf) return schema.anyOf.some(branch => matches(branch, input));
     if (schema.enum && !schema.enum.includes(input)) return false;
@@ -87,5 +107,5 @@ export function validateCommerceIntentShape(value) {
   const nameCompatible = compatible?.productRequirement && Array.isArray(compatible.productRequirement.updates)
     ? { ...compatible, productRequirement: { ...compatible.productRequirement, updates: compatible.productRequirement.updates.map(update =>
       update?.field === 'requestedKeywords' && !Object.hasOwn(update, 'identityType') ? { ...update, identityType: 'unknown' } : update) } } : compatible;
-  return matches(COMMERCE_INTENT_RESPONSE_FORMAT.json_schema.schema, nameCompatible);
+  return matches(schema, nameCompatible);
 }

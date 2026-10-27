@@ -92,3 +92,21 @@ assert.match(chatCss, /\.chat-image-ready-toast/, "chat CSS should style ready i
 assert.match(chatCss, /aspect-ratio:\s*4\/7/, "chat image preview should match 1024x1792 ratio");
 
 console.log("chat image frontend UX self-check passed");
+
+assert.equal(hasActiveChatImage([{contentType:"image_generation",image:{status:"ready",terminalReplyPending:true}}]),true,"ready image must continue existing polling while its caption job is pending");
+assert.equal(hasActiveChatImage([{contentType:"image_generation",image:{status:"ready",terminalReplyPending:false}}]),false,"finished ready caption stops polling");
+
+const {mapMessageRow}=await import("../server/chat-message-store.js");
+const readyPending=mapMessageRow({content_type:"image_generation",image_asset_id:"fixture",image_status:"ready",image_terminal_reply_pending:1});
+assert.equal(readyPending.image.terminalReplyPending,true);
+assert.equal(readyPending.image.failureReplyPending,false);
+const failedPending=mapMessageRow({content_type:"image_generation",image_asset_id:"fixture",image_status:"failed",image_terminal_reply_pending:1});
+assert.equal(failedPending.image.failureReplyPending,true,"legacy failed API flag stays compatible");
+assert(!JSON.stringify(readyPending.image).includes("_terminalReply"),"private ledger must not become public");
+
+const pendingHookSource=chatPageSource.match(/function hasPendingChatImage\([^]*?\n}/)[0];
+const pendingHook=Function(`${pendingHookSource}; return hasPendingChatImage;`)();
+const noPendingCard={querySelector:()=>null};
+assert.equal(pendingHook(noPendingCard,[{contentType:"image_generation",image:{status:"ready",terminalReplyPending:true}}]),true,"ready-before-initial-reply must restart existing polling from render hook");
+assert.equal(pendingHook(noPendingCard,[{contentType:"image_generation",image:{status:"ready",terminalReplyPending:false}}]),false);
+assert.equal(pendingHook(noPendingCard,[{contentType:"text",image:{status:"ready",terminalReplyPending:true}}]),false);

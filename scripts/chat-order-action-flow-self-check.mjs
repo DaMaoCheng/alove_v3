@@ -30,6 +30,8 @@ async function runFlowChecks() {
     commit: async () => { fixture.events.push("commit"); }, rollback: async () => { fixture.events.push("rollback"); }, release() {},
     execute: async (sql) => {
       fixture.sql.push(sql);
+      if (sql.includes('FROM user_feedback uf') && sql.includes('JOIN chat_sessions cs')) return [[]];
+      if (sql.includes('FROM chat_messages cm JOIN chat_sessions cs') && sql.includes("cm.content_type = 'feedback_action'")) return [[]];
       if (sql === "SELECT slug FROM sites WHERE id = ? LIMIT 1") return [[{ slug: "fixture" }]];
       if (/^SELECT id FROM chat_messages WHERE session_id = \? AND source_ref = \? LIMIT 1$/.test(sql)) return [[]];
       if (/^UPDATE chat_sessions SET last_message_at/.test(sql)) return [{}];
@@ -40,7 +42,12 @@ async function runFlowChecks() {
     "ai-json-provider-service.js": { isAiJsonProviderConfigured: () => false, requestAiJsonWithProviderFallback: async () => { throw new Error("unexpected secondary intent classifier"); } },
     "db.js": { getDbPool: () => ({ getConnection: async () => db }) },
     "db-core.js": { getDbPool: () => ({ getConnection: async () => db }) },
-    "chat-image-status-context-service.js": { resolveChatImageStatusContext: async (_db, options) => options.directive || null, refreshChatImageStatusContext: async (_db, context) => context },
+    "chat-image-status-context-service.js": { resolveChatImageStatusContext: async (_db, options) => options.directive || null, refreshChatImageStatusContext: async (_db, context) => context,
+      withChatImageReplySnapshot: reply => reply },
+    "chat-image-failure-reply-job-service.js": { registerChatImageInitialReplyForDb: async (_db, options) => {
+      assert.equal(options.snapshot, undefined, 'ordinary order fixtures must not register an image task');
+      return '';
+    } },
     "chat-image-reply-recovery-service.js": { buildImageReplyRecoveryPrompt: () => { throw new Error("order flow must not regenerate image text"); } },
     "chat-intent-turn-service.js": { prepareChatIntentTurn: async () => ({ decision: { ok: true, confident: true, orderIntent: "lookup" }, classify: async () => { fixture.classifications++; fixture.events.push("order_classify"); return { ok: true, confident: true, orderIntent: "lookup", unsupported: false }; } }) },
     "ttmall-runtime-access-service.js": {
@@ -100,7 +107,7 @@ async function runFlowChecks() {
   };
   globalThis.__orderActionFlowStubs = stubs;
   stubs["guest-product-reply-copy.js"] = { buildGuestProductReplyCopy: () => "Unavailable." };
-  const realModules = new Set(["product-name-candidate-service.js", "guest-product-sanitizer.js", "product-source-provenance.js", "product-source-error-service.js","product-alternative-service.js", "product-search-match-service.js", "product-response-sanitizer.js","business-claim-audit-service.js", "tts-emotion-tag-service.js", "product-candidate-source-proof.js", "chat-reply-purpose-service.js", "chat-reply-recovery-state.js", "chat-language-clarification-policy.js", "chat-prompt-utils.js", "chat-reply-review-outcome.js", "product-sizing-guidance-service.js", "product-size-chart-catalog.js", "product-candidate-confirmation-service.js", "chat-product-routing-context-service.js", "product-requirement-fields.js", "commerce-classification-failure-service.js","product-search-decision-service.js", "product-request-scope-service.js", "product-candidate-state-service.js", "product-candidate-context-service.js", "product-attribute-evidence-service.js", "product-edition-service.js", "product-request-scope-service.js", "product-request-scope-copy.js", "chat-reply-orchestrator-service.js", "chat-text-message-service.js", "chat-order-intent-service.js", "checkout-support-guidance.js", "chat-global-reply-policy.js"]);
+  const realModules = new Set(["chat-feedback-submission-service.js", "product-name-candidate-service.js", "guest-product-sanitizer.js", "product-source-provenance.js", "product-source-error-service.js","product-alternative-service.js", "product-search-match-service.js", "product-response-sanitizer.js","business-claim-audit-service.js", "tts-emotion-tag-service.js", "product-candidate-source-proof.js", "chat-reply-purpose-service.js", "chat-reply-recovery-state.js", "chat-language-clarification-policy.js", "chat-prompt-utils.js", "chat-reply-review-outcome.js", "product-sizing-guidance-service.js", "product-size-chart-catalog.js", "product-candidate-confirmation-service.js", "chat-product-routing-context-service.js", "product-requirement-fields.js", "commerce-classification-failure-service.js","product-search-decision-service.js", "product-request-scope-service.js", "product-candidate-state-service.js", "product-candidate-context-service.js", "product-attribute-evidence-service.js", "product-edition-service.js", "product-request-scope-service.js", "product-request-scope-copy.js", "chat-reply-orchestrator-service.js", "chat-text-message-service.js", "chat-order-intent-service.js", "checkout-support-guidance.js", "chat-global-reply-policy.js"]);
   const serverUrl = new URL("../server/", import.meta.url).href;
   // Async loaders run in another thread. Transfer only serializable export
   // names; the generated modules read function stubs in the worker's realm.

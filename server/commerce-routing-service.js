@@ -222,7 +222,18 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
   // image/order or unsupported action into a new product search/card.
   const deterministicNonShopping = Boolean(searchIntent.nonShoppingReason && searchIntent.nonShoppingReason !== "business_contact");
   const commerceRoute = explicitTrigger && !deterministicNonShopping && replyBoundary.salesAllowed ? "product_search" : decision.route;
-  const shouldSearch = (decision.route === "product_question" && decision.needsLiveProductData)
+  // Legacy decisions predate typed candidate requirements. Retain their explicit
+  // single-target query without letting modern generic service queries bypass
+  // the current product-target evidence requirement.
+  const legacySingleTarget = decision.candidateDecisionRequired !== true
+    && decision.productRequest?.relation === 'single' && Boolean(decision.searchQuery);
+  const specificQuestionTarget = Boolean(legacySingleTarget || decision.referencedProductId
+    || decision.referencedProductIds?.length || buildChatProductRoutingContext(recentMessages, { siteId, characterId })
+    || decision.commerceConstraints?.team?.role === 'product_target'
+    || decision.productRequirement?.updates?.some(update => ['requestedTeam', 'requestedKeywords'].includes(update.field)
+      && (Array.isArray(update.value) ? update.value.length > 0 : Boolean(update.value))));
+  const questionNeedsLive = decision.route === "product_question" && decision.needsLiveProductData && specificQuestionTarget;
+  const shouldSearch = questionNeedsLive
     || (!primaryBlocksSearch && !deterministicNonShopping && replyBoundary.salesAllowed && commerceRoute === "product_search");
   const queryIntent = decision.searchQuery ? buildProductSearchIntent(decision.searchQuery) : {};
   const result = {
@@ -236,7 +247,7 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
     commerceConfidence: decision.confidence,
     primarySearchBlocked: primaryBlocksSearch,
     primarySearchVerified: Boolean(jevDecision?.ok && jevDecision.confident && primaryAllowsSearch),
-    needsLiveProductData: Boolean(decision.needsLiveProductData),
+    needsLiveProductData: Boolean(decision.route === "product_question" ? questionNeedsLive : decision.needsLiveProductData),
     cardAllowed: commerceRoute === "product_search" && shouldSearch && replyBoundary.salesAllowed,
     customerServiceKnowledgeRequest: catalogueOnly ? false : knowledgeRequest,
     ...(catalogueOnly || decision.childSizingUpdateOnly ? { businessKnowledgeRequired: false } : {}),
@@ -248,11 +259,12 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
     boundaryRequired: !replyBoundary.salesAllowed || !replyBoundary.contactAllowed,
     // Bounded current-user evidence for coordinating merchandise and image
     // actions. It is not a stock fact or a permission to generate a picture.
-    imageProductEvidence: [decision.productRequirement?.evidence,
-      ...(Array.isArray(decision.productRequirement?.updates) ? decision.productRequirement.updates : []).slice(0, 12).map(update => update?.evidence),
+    imageProductEvidence: ['product_search', 'product_question'].includes(commerceRoute) ? [
+      ...(Array.isArray(decision.productRequirement?.updates) && decision.productRequirement.updates.length
+        ? decision.productRequirement.updates.slice(0, 12).map(update => update?.evidence) : [decision.productRequirement?.evidence]),
       ...(Array.isArray(decision.productRequest?.items) ? decision.productRequest.items : []).slice(0, 4).flatMap(item => [item?.evidence, item?.sharedEvidence])]
       .filter(value => typeof value === "string" && value.trim() && value.length <= 500 && userText.includes(value.trim()))
-      .map(value => value.trim()).slice(0, 6),
+      .map(value => value.trim()).slice(0, 6) : [],
     ...assistance,
   };
   if (shouldSearch && decision.searchQuery) {

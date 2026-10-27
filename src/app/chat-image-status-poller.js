@@ -3,7 +3,7 @@ import { getGuestChatSession } from "../services/guest-chat-service.js";
 import { mergeChatMessages } from "./chat-action-utils.js";
 
 const POLL_INTERVAL_MS = 2500;
-// Image total deadline plus bounded generation of its natural failure reply.
+// Image total deadline plus bounded generation of its natural terminal reply.
 const MAX_POLL_MS = 30 * 60 * 1000;
 const FAILED_POLL_GRACE_MS = 60000;
 const ACTIVE_STATUSES = new Set(["queued", "generating"]);
@@ -113,6 +113,7 @@ export function hasActiveChatImage(messages = []) {
     if (getMessageContentType(message) !== "image_generation") return false;
     const status = getMessageImageStatus(message);
     if (ACTIVE_STATUSES.has(status)) return true;
+    if (["ready", "failed"].includes(status) && message?.image?.terminalReplyPending === true) return true;
     if (status === "failed") return message?.image?.failureReplyPending === true || isRecentFailedChatImage(message);
     return false;
   });
@@ -140,6 +141,7 @@ function collectImageStatusSnapshot(messages = []) {
       String(message?.image?.imageUrl || message?.image_url || ""),
       String(message?.text || message?.text_content || ""),
       message?.image?.failureReplyPending === true ? "failure_reply_pending" : "",
+      message?.image?.terminalReplyPending === true ? "terminal_reply_pending" : "",
     ].join("|"));
   });
   return snapshot;

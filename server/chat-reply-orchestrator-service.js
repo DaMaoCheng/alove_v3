@@ -1,3 +1,5 @@
+import { registerChatImageInitialReplyForDb } from "./chat-image-failure-reply-job-service.js";
+import { resolveFeedbackConversationHistory, attachFeedbackSubmissionContext, applyFeedbackSubmissionPrompt, isSubmittedFeedbackFollowup } from './chat-feedback-submission-service.js';
 import { projectChildSizingUpdatePrompt } from './product-sizing-guidance-service.js';
 import { buildCommerceClassificationFailureReply } from "./commerce-classification-failure-service.js";
 import { finalizeProductCandidateState } from "./product-candidate-state-service.js";
@@ -5,7 +7,7 @@ import { getCandidateConfirmationProduct } from './product-candidate-confirmatio
 import { hasPendingProductRequest } from "./product-request-scope-service.js";
 import { productScopeResultLabel } from "./product-request-scope-copy.js";
 import { getDbPool } from "./db-core.js";
-import { resolveChatImageStatusContext, refreshChatImageStatusContext } from "./chat-image-status-context-service.js";
+import { resolveChatImageStatusContext, refreshChatImageStatusContext, withChatImageReplySnapshot } from "./chat-image-status-context-service.js";
 import { buildImageReplyRecoveryPrompt } from "./chat-image-reply-recovery-service.js";
 import { buildReplyPurposeRecoveryPrompt } from "./chat-reply-purpose-service.js";
 import { prepareChatIntentTurn } from "./chat-intent-turn-service.js";
@@ -69,7 +71,11 @@ export async function buildCharacterReplyGenerationForDb(db, {
     recentMessages,
   });
   const commerceSite = await resolveProductRecommendationSite(db, { character: promptCharacter, userId });
-  let commerceSearchIntent = await (intentTurn.resolveCommerce?.bind(intentTurn) || resolveCommerceSearchIntent)({ userText, recentMessages,
+  const feedbackHistory = await resolveFeedbackConversationHistory(db, { sessionId: session.id,
+    character: promptCharacter, siteId: commerceSite?.id || '', userId, beforeDisplayOrder: userDisplayOrder });
+  const commerceRecentMessages = feedbackHistory?.entries?.length
+    ? [...recentMessages, ...feedbackHistory.entries].sort((a, b) => Number(a.displayOrder || 0) - Number(b.displayOrder || 0)) : recentMessages;
+  let commerceSearchIntent = await (intentTurn.resolveCommerce?.bind(intentTurn) || resolveCommerceSearchIntent)({ userText, recentMessages: commerceRecentMessages,
     searchIntent: buildProductSearchIntent(userText, productTrigger, { recentProductContext: buildRecentProductContext(recentMessages) }),
     logContext, enrichAllTurns: true, explicitTrigger: Boolean(productTrigger), jevDecision: intentTurn.decision, siteId: commerceSite?.id || "", siteSlug: commerceSite?.slug || "", characterId: characterId || promptCharacter.id });
   const productStartedAt = Date.now();
@@ -102,6 +108,8 @@ export async function buildCharacterReplyGenerationForDb(db, {
     topicHint: commerceSearchIntent.customerServiceKnowledgeRequest ? commerceSearchIntent.commerceTopic : "",
     limit: 4,
   });
+  knowledgeContext = attachFeedbackSubmissionContext(knowledgeContext, feedbackHistory, {
+    searchIntent: commerceSearchIntent, userText });
   const knowledgeMs = Date.now() - knowledgeStartedAt;
   const factualContext = await resolveChatFactualContext({
     userText, jevDecision: intentTurn.decision, searchIntent: commerceSearchIntent,
@@ -112,7 +120,7 @@ export async function buildCharacterReplyGenerationForDb(db, {
   await recordCommerceDecisionLog({ searchIntent: productContext?.searchIntent || commerceSearchIntent, knowledgeContext, productContext, factualContext, stageDurations: { productMs, knowledgeMs },
     requestId: logContext.requestId, sessionId: session.id, characterId, userId });
   // Only callers that persist an order action supply this site. Voice currently does not.
-  const orderAction = !orderLookupSiteSlug || (isStorefrontGuidanceCharacter(promptCharacter) && shouldSkipOrderLookupForCheckout(commerceSearchIntent))
+  const orderAction = !orderLookupSiteSlug || isSubmittedFeedbackFollowup(knowledgeContext, commerceSearchIntent, userText) || (isStorefrontGuidanceCharacter(promptCharacter) && shouldSkipOrderLookupForCheckout(commerceSearchIntent))
     ? null : await resolveTtmallOrderAction({ text: userText, siteSlug: orderLookupSiteSlug, classifyJev: intentTurn.classify,
       conversationContext: intentTurn.conversationContext });
   const feedbackActionCandidate = resolveChatFeedbackActionCandidate({
@@ -137,7 +145,7 @@ export async function buildCharacterReplyGenerationForDb(db, {
   }
   chatImageContext = await resolveChatImageStatusContext(getDbPool(), { session, character: promptCharacter, userDisplayOrder, directive: chatImageContext });
   const sizeUpdatePrompt = projectChildSizingUpdatePrompt({ searchIntent: commerceSearchIntent, productContext, recentMessages });
-  const promptContext = applyCheckoutSupportPromptPolicy(applyReplyBoundaryPromptPolicy(applyCommerceQuestionPromptPolicy(buildChatReplyPrompt({
+  let promptContext = applyCheckoutSupportPromptPolicy(applyReplyBoundaryPromptPolicy(applyCommerceQuestionPromptPolicy(buildChatReplyPrompt({
     character: promptCharacter, trustedSite: commerceSite,
     recentMessages: sizeUpdatePrompt.recentMessages,
     userText,
@@ -151,6 +159,7 @@ export async function buildCharacterReplyGenerationForDb(db, {
     chatImageContext,
     visionInputs,
   }), commerceSearchIntent, { userText, recentMessages }), commerceSearchIntent), commerceSearchIntent, promptCharacter);
+  promptContext = applyFeedbackSubmissionPrompt(promptContext, knowledgeContext);
   const generatedReplyResult = classificationFailureReply || await generateChatReply({
     deferIdentityToBoundaryReview: true,
     promptContext,
@@ -214,6 +223,7 @@ export async function buildCharacterReplyGenerationForDb(db, {
         promptContext: recoveryPrompt, userText, feedbackActionCandidate, logContext, regeneration: true, regenerationProvider: previousReply, regenerationUseAlternateProvider: recovery?.kind === "purpose",
       }));
     } });
+  if (classificationFailureReply) replyResult = withChatImageReplySnapshot(replyResult, chatImageContext);
   replyResult = { ...replyResult, answerRequired: replyResult.answerRequired === true || commerceSearchIntent.answerRequired === true || hasReplyBoundary(commerceSearchIntent), replyBoundary: commerceSearchIntent.replyBoundary, productRequestState: commerceSearchIntent.productRequestState, productCandidateState: commerceSearchIntent.productCandidateState };
   if (voiceMetaFallback) {
     replyResult.voiceMeta = resolveReplyVoiceMetaModel(replyResult.voiceMeta, voiceMetaFallback);
@@ -348,6 +358,7 @@ export async function persistCharacterReplyForDb(db, {
     [session.id]
   );
 
+  await registerChatImageInitialReplyForDb(db, { snapshot: replyResult._imageDeliveryReply, replyMessage, triggerMessageId: replyTriggerMessageId });
   return {
     ok: true,
     session: mapSessionRow({

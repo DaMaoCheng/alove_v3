@@ -38,6 +38,7 @@ export function resolveChatFeedbackActionCandidate({ character = {}, productCont
     const label = HUMAN_HANDOFF_LABELS[resolveCharacterLanguage(character)];
     return label ? { kind: "feedback", label, reason: handoff.explicitRequest ? "human_request" : "business_review" } : null;
   }
+  if (knowledgeContext?.feedbackSubmission?.relation === 'submitted_followup') return null;
   if (hasCheckoutIssue(searchIntent)) {
     const failedWithoutKnowledge = searchIntent.checkoutIssue.failedAttempts.length > 0
       && Array.isArray(knowledgeContext?.items) && knowledgeContext.items.length === 0;

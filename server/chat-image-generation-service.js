@@ -118,7 +118,10 @@ async function createGuestImageTurn(db, {
   }
 
   const guestSessionId = String(guest.id || guest.guest_session_id || "").trim();
-  const explicitGeneration = Boolean(trigger.explicitGeneration);
+  // A concrete approved composition cannot be satisfied by an arbitrary
+  // gallery image even if the classifier also used the library label.
+  const explicitGeneration = Boolean(trigger.explicitGeneration || trigger.conditions?.wants_clothing === true
+    || trigger.conditions?.wants_no_clothing === true);
   if (!explicitGeneration && !isMockChatImageRequest(userText)) {
     const libraryMessage = await createMascotLibraryImageMessage(db, { sessionId: session?.id, guestSessionId, character });
     if (libraryMessage) return buildGuestImageResult({ taskCreated: true, trigger, message: libraryMessage });
@@ -354,6 +357,7 @@ export async function createChatImagePlaceholder(db, {
       messageId: message.id,
       phase: isMockChatImageRequest(userText) ? "mock" : "real",
       triggerReason: trigger?.matchedIntent || "",
+      terminalReplyVersion: 1,
       guestSessionId: normalizedGuestSessionId || "",
       imageConditions: trigger?.conditions || null,
       productReferenceRequired: trigger?.productReferenceRequired === true,
@@ -372,6 +376,9 @@ function buildGuestImageResult({ taskCreated = false, reason = "", trigger = nul
         "The image request was accepted. Discuss digital image creation, not physically taking a photo, traveling or posing. Acknowledge only the supplied task status.",
         "Use the active conversation language. Let the image message carry its status, and answer any other explicit question in this same turn using its trusted product/knowledge context. Do not replace that answer with only a photo acknowledgement.",
       ]
+    : reason === 'appearance_uncertain'
+      ? ["The current photo request is valid, but it is uncertain whether to depict the user's earlier outfit or a different/plain look.",
+          "No image was created or sent. Ask one brief natural clarification of the desired appearance in the active language; do not refuse character photos or claim a quota problem. Preserve independent answers in a mixed request."]
     : reason === CHAT_IMAGE_BLOCK_REASONS.ACTIVE_GENERATION
       ? [
           "The current guest image is still queued or generating.",
@@ -443,6 +450,10 @@ async function hasImageGenerationAfterUserMessage(db, { sessionId, userDisplayOr
 function buildChatImageReplyDirective(decision) {
   const reason = decision.reason || CHAT_IMAGE_REPLY_REASONS.DISALLOWED_REQUEST;
   const instructions = {
+    appearance_uncertain: [
+      "The current character-photo request needs clarification of whether to continue the earlier USER outfit or use a different/plain appearance.",
+      "Ask one brief natural appearance clarification, without creating or promising an image, claiming a quota block or refusing all character photos. Preserve independent mixed-question answers.",
+    ],
     [CHAT_IMAGE_BLOCK_REASONS.ACTIVE_GENERATION]: [
       "The user is asking for another chat photo, but this conversation already has a queued or generating image task.",
       "Do not create or promise another image. Reply naturally in character and say the current shot is still being handled.",
@@ -514,7 +525,8 @@ async function analyzeChatImageTriggerWithIntent(userText = "", {
     ...classified,
     hasIntent: true,
     allowed: classified.allowed,
-    reason: classified.allowed ? "" : CHAT_IMAGE_BLOCK_REASONS.DISALLOWED_REQUEST,
+    reason: classified.allowed ? "" : classified.appearanceClarificationRequired === true
+      ? 'appearance_uncertain' : CHAT_IMAGE_BLOCK_REASONS.DISALLOWED_REQUEST,
     matchedIntent: `ai_intent:${classified.intentType || "chat_photo"}`,
     matchedBlocker: classified.allowed ? "" : "ai_intent_disallowed",
     intentType: classified.intentType || "library_photo",

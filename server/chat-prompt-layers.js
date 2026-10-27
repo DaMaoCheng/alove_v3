@@ -26,7 +26,9 @@ export function buildKnowledgeContextLayer(knowledgeContext = null, { orderActio
       title: "Knowledge Context",
       content: knowledgeContext?.source === "brave_web" && knowledgeContext?.webSearchError
         ? "Live factual search was unavailable. You cannot verify the requested fact here. Preserve that uncertainty, do not guess or treat past assistant claims or a user correction as verified public facts, and do not claim that a search succeeded. Reply in the active conversation language."
-        : "",
+        : knowledgeContext?.customerServiceIntent === true
+          ? "No verified current-site policy reference was found for this question. Do not infer service availability, cancellation eligibility, a future response, or resolution from the persona, general sales scripts or previous assistant messages. Acknowledge the user's report without claiming independent verification. State the specific verification limit briefly, preserve the actual current request and any supplied server action; ask a missing detail only if it helps, not to restart an already submitted complaint. Missing evidence does not mean the service is unavailable."
+          : "",
     };
   }
   const lines = items.map((item, index) => {
@@ -358,7 +360,7 @@ export function buildProductContextLayer(character, productContext = null, userT
           content: [
             "The user means customization of a football jersey, not creating or editing a virtual character.",
             `No exact catalogue match was confirmed for this request${requestedTeam ? ` for ${requestedTeam}` : ""}${requestedAgeRange ? ` in ${requestedAgeRange}` : ""}.`,
-            "Confirm that jersey customization is available through the site team. Because product details cannot complete customization directly yet, do not mention email, feedback, or a contact route in your generated reply: the system appends that one standardized contact handoff after your reply.",
+            "Confirm a customization option only when supplied current-site knowledge or this actual product verifies it. Otherwise acknowledge the requested customization and explain the verification limit without asserting that the service exists or is absent. Do not invent email, feedback, future contact or UI navigation: the server alone appends an available real contact action.",
             "Do not send, recommend, or describe an adult or different-size product as a substitute. Do not promise custom printing, a player choice, name, number, patch, price, stock, or completion status.",
           ].join("\n"),
         };
@@ -368,7 +370,7 @@ export function buildProductContextLayer(character, productContext = null, userT
         title: "Site Product Context",
           content: [
             "The user means customization of a football jersey, not creating or editing a virtual character.",
-            "Confirm that jersey customization is available through the site team. Because product details cannot complete customization directly yet, do not mention email, feedback, or a contact route in your generated reply: the system appends that one standardized contact handoff after your reply.",
+            "Confirm a customization option only when supplied current-site knowledge or this actual product verifies it. Otherwise acknowledge the requested customization and explain the verification limit without asserting that the service exists or is absent. Do not invent email, feedback, future contact or UI navigation: the server alone appends an available real contact action.",
             "Do not invent a player choice, name, number, patch, price, stock, or completion status, and do not claim that the user-provided name or number is already available.",
         ].join("\n"),
       };

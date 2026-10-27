@@ -246,6 +246,13 @@ export function applyProductCandidateState(intent = {}, decision = {}, { userTex
     return previous?.status === 'active' ? { ...intent, productCandidateState: clearProductCandidateState({ siteId, characterId }), candidateSearchAllowed: false } : intent;
   }
   if (delta.action === 'cancel') return { ...intent, productCandidateState: clearProductCandidateState({ siteId, characterId }), candidateSearchAllowed: false };
+  // A redundant `new` label in ordinary chat/policy metadata is not a new
+  // merchandise target. Keep historical owned state readable for later source
+  // checks, but do not manufacture a current active target from a photo or form.
+  if (delta.action === 'new' && ['chat', 'store_policy'].includes(intent.commerceRoute)) {
+    const { productCandidateState: ignoredState, ...currentIntent } = intent;
+    return { ...currentIntent, candidateSearchAllowed: false };
+  }
   if (hasPendingProductRequest(intent) || intent.teamConstraintUnverified || intent.searchState === 'clarification_exhausted') {
     return previous?.status === 'active' ? { ...intent, productCandidateState: clearProductCandidateState({ siteId, characterId }), candidateSearchAllowed: false } : intent;
   }

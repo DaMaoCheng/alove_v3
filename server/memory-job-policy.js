@@ -34,5 +34,5 @@ export function getMemoryJobExecutionBudgetMs(job = {}) {
 // Only these handlers already provide interruption-safe resumability. Unknown
 // side-effect jobs and proactive messages require reconciliation, not replay.
 export function canRetryInterruptedMemoryJob(job = {}) {
-  return ['backfill_claimed_guest_context', 'send_mascot_campaign_batch'].includes(job.jobType);
+  return ['backfill_claimed_guest_context', 'send_mascot_campaign_batch', 'generate_chat_image_failure_reply'].includes(job.jobType);
 }

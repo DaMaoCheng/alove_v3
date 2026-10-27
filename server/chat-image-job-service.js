@@ -17,10 +17,10 @@ import {
   saveGeneratedChatImageAsset,
   saveMockChatImageAsset,
 } from "./chat-image-asset-service.js";
-import { generateRealChatImage, isRealChatImageProviderConfigured } from "./chat-image-provider-service.js";
+import { buildChatImagePrompt, generateRealChatImage, isRealChatImageProviderConfigured } from "./chat-image-provider-service.js";
 import { collectChatImageReferenceImages } from "./chat-image-reference-material-service.js";
 import { CHAT_IMAGE_STATUSES, recordChatImageUsage, lockChatImageQuota } from "./chat-image-quota-service.js";
-import { enqueueChatImageFailureReplyIfNeeded } from "./chat-image-failure-reply-job-service.js";
+import { enqueueChatImageFailureReplyIfNeeded, enqueueChatImageTerminalReplyIfNeeded } from "./chat-image-failure-reply-job-service.js";
 import {
   consumeGuestImageEntitlementForAsset,
   releaseGuestImageEntitlementForAsset,
@@ -147,6 +147,10 @@ async function generateAndSaveChatImage({ assetId, messageId, reportStage = null
   }
 
   const referenceImages = requiredReferences || await collectChatImageReferenceImages(context);
+  // Preserve the exact deterministic request before a provider can reject it.
+  // The existing successful write below remains the final prompt metadata.
+  await updateChatImagePromptAndProvider({ assetId, messageId, provider: "openai", context,
+    fullPrompt: buildChatImagePrompt(context), beforeRequest: true });
   reportStage?.("image_provider");
   const generated = await generateRealChatImage({
     ...context,
@@ -381,21 +385,23 @@ async function markChatImageReady({ messageId, assetId, saved, job = null }) {
       throw new Error("Guest daily image quota could not be consumed");
     }
     await recordReadyChatImageUsage({ messageId, assetId }, db);
+    await enqueueChatImageTerminalReplyIfNeeded(db, { assetId, messageId });
   });
 }
 
-async function updateChatImagePromptAndProvider({ assetId, messageId, provider, context, fullPrompt = "" }) {
+async function updateChatImagePromptAndProvider({ assetId, messageId, provider, context, fullPrompt = "", beforeRequest = false }) {
   const contextPayload = buildChatImagePromptContextPayload(context);
-  await getDbPool().execute(
+  const [result] = await getDbPool().execute(
     `UPDATE chat_image_assets
      SET provider = ?,
          prompt_summary = ?,
-         prompt_context_json = ?,
+         prompt_context_json = JSON_MERGE_PATCH(?,
+           JSON_OBJECT('_terminalReply', JSON_EXTRACT(prompt_context_json, '$._terminalReply'))),
          prompt_full_text = ?,
          updated_at = NOW(3)
      WHERE id = ?
        AND message_id = ?
-       AND status IN ('queued', 'generating')`,
+       AND ${beforeRequest ? "status = 'generating'" : "status IN ('queued', 'generating')"}`,
     [
       provider,
       safeChatImagePromptSummary(context),
@@ -405,6 +411,9 @@ async function updateChatImagePromptAndProvider({ assetId, messageId, provider, 
       messageId,
     ]
   );
+  if (beforeRequest && Number(result.affectedRows || 0) !== 1) {
+    throw nonRetryableImageError("Chat image asset changed before the provider request");
+  }
 }
 
 function safeChatImagePromptSummary(context = {}) {
@@ -509,6 +518,7 @@ async function reconcileReadyImageJob({ messageId, assetId, job = null }) {
     if (dailyQuota.enforced && !dailyQuota.consumed) {
       throw new Error("Ready guest daily image quota could not be reconciled");
     }
+    await enqueueChatImageTerminalReplyIfNeeded(db, { assetId, messageId });
     return { ready: true, provider: asset.provider || "" };
   });
 }

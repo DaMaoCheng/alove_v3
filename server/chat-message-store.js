@@ -357,7 +357,8 @@ function mapChatImageAssetRow(row) {
     errorMessage: "",
     updatedAt: row.image_updated_at || null,
     completedAt: row.image_completed_at || null,
-    failureReplyPending: Boolean(Number(row.image_failure_reply_pending || 0)),
+    terminalReplyPending: Boolean(Number(row.image_terminal_reply_pending ?? row.image_failure_reply_pending ?? 0)),
+    failureReplyPending: row.image_status === "failed" && Boolean(Number(row.image_terminal_reply_pending ?? row.image_failure_reply_pending ?? 0)),
   };
 }
 
@@ -409,11 +410,11 @@ export function buildMessageSelectSql(whereClause) {
      v.waveform_json AS voice_waveform_json,
      img.id AS image_asset_id,
      img.status AS image_status,
-     CASE WHEN img.status = 'failed' THEN EXISTS (
+     CASE WHEN img.status IN ('ready', 'failed') THEN EXISTS (
        SELECT 1 FROM memory_jobs image_failure_job
        WHERE image_failure_job.id = CONCAT('mem_job_img_fail_', LEFT(SHA2(img.id, 256), 32))
          AND image_failure_job.job_status IN ('queued', 'running')
-     ) ELSE 0 END AS image_failure_reply_pending,
+     ) ELSE 0 END AS image_terminal_reply_pending,
      img.storage_path AS image_storage_path,
      img.protected_path AS image_protected_path,
      img.width AS image_width,

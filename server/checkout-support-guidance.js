@@ -30,6 +30,14 @@ export function normalizeCheckoutIssue(value, { userText = "", recentMessages = 
   const stageEvidence = quote(value.stageEvidence);
   const orderEvidence = quote(value.orderEvidence);
   const lookupEvidence = quote(value.lookupEvidence, value.lookupRequested === false);
+  // A sole request about an already-created order cannot be an unfinished
+  // checkout. Keep a separately evidenced mixed purchase problem available.
+  if (value.orderPlaced === true && orderEvidence) {
+    const distinct = ref => ref && (ref.messageIndex !== orderEvidence.messageIndex
+      || ref.end <= orderEvidence.start || ref.start >= orderEvidence.end);
+    // The word mixed alone does not establish another unfinished purchase.
+    if (value.requestScope !== "mixed" || ![STAGES.has(value.stage) && value.stage !== 'unknown' ? stageEvidence : null, quote(value.errorEvidence)].some(distinct)) return null;
+  }
   const failedAttempts = (Array.isArray(value.failedAttempts) ? value.failedAttempts : []).slice(0, 3).map((item) => quote(item)).filter(Boolean);
   const uniqueAttempts = [...new Map(failedAttempts.map((item) => [JSON.stringify(item), item])).values()];
   const issue = Object.freeze({

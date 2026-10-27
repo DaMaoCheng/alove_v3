@@ -65,6 +65,7 @@ function fixture({ status = "queued", jobStatus = "queued", retryCount = 0, ageM
     releaseGuestImageEntitlementForAsset: async () => { events.push("release-entitlement"); },
     releaseGuestImageDailyQuotaForAsset: async () => { events.push("release-reservation"); },
     enqueueChatImageFailureReplyIfNeeded: async () => { events.push("enqueue-failure-reply"); },
+    enqueueChatImageTerminalReplyIfNeeded: async () => { events.push("enqueue-terminal-reply"); },
     deleteStoredChatImageAsset: async () => { events.push("delete-file"); },
     findRecoverableChatImageAsset: async () => staged,
     lockChatImageQuota: async () => {},

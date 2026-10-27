@@ -44,6 +44,7 @@ export async function generateRealChatImage({
     size: SERVER_CONFIG.imageGeneration.openai.size || DEFAULT_CHAT_IMAGE_SIZE,
     filenamePrefix: "chat-image",
     referenceImages,
+    veniceSafeMode: SERVER_CONFIG.imageGeneration.chatVeniceSafeMode,
   });
   return {
     ...generated,

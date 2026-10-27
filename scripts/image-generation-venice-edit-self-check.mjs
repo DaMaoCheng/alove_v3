@@ -79,7 +79,7 @@ try {
   blurred = true;
   await assert.rejects(requestGeneratedImage("portrait", {
     referenceImages: [{ buffer: imageBytes, contentType: "image/png", filename: "reference.png" }],
-  }), /隐私模糊图/, "blurred output must fail instead of consuming a successful image quota");
+  }), /模糊结果/, "blurred output must fail instead of consuming a successful image quota");
   console.log(`venice image edit provider self-check passed: ${editModel}`);
 } finally {
   globalThis.fetch = originalFetch;

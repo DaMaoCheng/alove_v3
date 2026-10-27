@@ -122,6 +122,8 @@ export const SERVER_CONFIG = Object.freeze({
   knowledgeAi: resolveKnowledgeAiConfig(process.env, AI_REPLY_CONFIG),
   imageGeneration: Object.freeze({
     provider: String(process.env.IMAGE_GENERATION_PROVIDER || "openai").trim().toLowerCase(),
+    // Chat-only opt-out; unset or mistyped values keep the provider filter on.
+    chatVeniceSafeMode: !["false", "0", "no", "off"].includes(String(process.env.CHAT_IMAGE_VENICE_SAFE_MODE || "").trim().toLowerCase()),
     openai: Object.freeze({
       apiKey: process.env.IMAGE_GENERATION_API_KEY || process.env.OPENAI_API_KEY || "",
       baseUrl: String(process.env.IMAGE_GENERATION_BASE_URL || process.env.OPENAI_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, ""),

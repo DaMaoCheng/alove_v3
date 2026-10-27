@@ -14,7 +14,7 @@ import {
   prepareProductCandidates,
   productIdentityKeys,
 } from "./product-candidate-ranking-service.js";
-import { filterProductsBySearchCriteria } from "./product-search-match-service.js";
+import { filterProductsBySearchCriteria, normalizeSearchText, unmatchedProductSearchTerms } from "./product-search-match-service.js";
 import { buildProductSearchQueryVariants } from "./product-search-query-service.js";
 import {
   fetchProductSummary,
@@ -167,6 +167,18 @@ function catalogueNameDistance(name, query) {
 
 export function productCandidateContext(products = [], searchIntent = {}, location = {}) {
   const candidates = products.filter(product => product.matchStatus === "candidate").slice(0, 2);
+  const unmatchedTerms = product => {
+    const nameTerms = unmatchedNameCandidateTerms(product, searchIntent);
+    if (nameTerms !== null) return nameTerms;
+    const keywords = (Array.isArray(searchIntent.requestedKeywords) ? searchIntent.requestedKeywords : [])
+      .filter(value => typeof value === 'string' && value.trim().length <= 80).slice(0, 8);
+    // Old source metadata cannot resurrect an earlier/withdrawn condition.
+    const current = keywords.map(normalizeSearchText);
+    const retained = (Array.isArray(product.unmatchedSearchTerms) ? product.unmatchedSearchTerms : [])
+      .filter(term => typeof term === 'string' && term.trim().length <= 80 && normalizeSearchText(term)
+        && current.some(value => ` ${value} `.includes(` ${normalizeSearchText(term)} `))).slice(0, 8);
+    return unmatchedProductSearchTerms(product, [...keywords, ...retained]);
+  };
   const entityConfirmed = Boolean(searchIntent.confirmedCandidateId);
   const proposal = searchIntent.productCandidateState?.proposal;
   const sameProposal = entityConfirmed && proposal?.status === 'confirmed' && proposal.candidateId === searchIntent.confirmedCandidateId
@@ -180,7 +192,7 @@ export function productCandidateContext(products = [], searchIntent = {}, locati
       priorConfirmationQuestion: sameProposal ? bounded(proposal.reply, 2000) : '' } : {}), products: candidates.map(product => ({
     id: String(product.productId || product.id || "").slice(0, 128), name: String(product.name || "").slice(0, 255),
     price: typeof product.price === 'string' ? product.price.slice(0, 80) : '',
-    unknownFields: product.candidateUnknownFields || [], unmatchedSearchTerms: unmatchedNameCandidateTerms(product, searchIntent) || product.unmatchedSearchTerms || [],
+    unknownFields: product.candidateUnknownFields || [], unmatchedSearchTerms: unmatchedTerms(product),
     attributeEvidence: product.attributeEvidence || null,
     ...(product.matchStatus === 'candidate' && product.alternative ? { catalogueDifference: product.alternative } : {}),
   })) }, searchIntent, candidates, location) : null;

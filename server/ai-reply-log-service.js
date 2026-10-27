@@ -21,6 +21,21 @@ function formatRateLimitDetails(error) {
   return '; ' + parts.join('; ');
 }
 
+function formatImageProviderDetails(error) {
+  const raw = error?.imageProviderDiagnostic;
+  if (!raw || typeof raw !== 'object') return '';
+  const text = (value, pattern) => typeof value === 'string' && pattern.test(value)
+    && !/sk[-_]|bearer|api.?key|authorization|password|secret|token/i.test(value) ? value : '';
+  const details = {
+    model: text(raw.model, /^[a-z0-9_.:-]{1,100}$/i),
+    contentType: text(raw.contentType, /^[a-z0-9.+-]{1,40}\/[a-z0-9.+-]{1,40}$/i),
+    blurred: typeof raw.blurred === 'boolean' ? raw.blurred : null,
+    violation: typeof raw.violation === 'boolean' ? raw.violation : null,
+    requestId: text(raw.requestId, /^[a-z0-9_:-]{1,100}$/i),
+  };
+  return `; image=${JSON.stringify(details)}`;
+}
+
 function formatProtocolDetails(error) {
   if (error?.code === "AI_JSON_PARSE_ERROR") return '; phase=output_protocol; protocol=parse';
   if (error?.code === "AI_JSON_INVALID_OUTPUT") return `; phase=output_protocol; protocol=${error.aiJsonProtocolKind === 'evidence' ? 'evidence' : 'shape'}`;
@@ -282,7 +297,7 @@ export function buildImageDecisionLogEvent({ session = {}, guest = {}, character
   const score = value => Number.isFinite(value) && value >= 0 && value <= 1 ? Math.round(value * 1000) / 1000 : null;
   const trigger = result?.trigger || decision?.trigger || imageDecision || {};
   const message = result?.message || (result?.contentType ? result : null);
-  const reason = skipImageGeneration ? "product_image_card" : ["quota_exhausted", "active_generation", "disallowed_request", "image_task_created"].includes(result?.reason || decision?.reason) ? result?.reason || decision.reason : "";
+  const reason = skipImageGeneration ? "product_image_card" : ["quota_exhausted", "active_generation", "disallowed_request", "image_task_created", "appearance_uncertain"].includes(result?.reason || decision?.reason) ? result?.reason || decision.reason : "";
   const failure = ["timeout", "invalid_json", "provider_error", "not_configured"].includes(trigger.classificationFailure) ? trigger.classificationFailure : "";
   const classification = ["accepted", "model_no_intent", "low_confidence", "grounding_rejected"].includes(trigger.classificationOutcome) ? trigger.classificationOutcome : "";
   const requestScope = ["image_only", "mixed", "unknown"].includes(trigger.requestScope) ? trigger.requestScope : "";
@@ -626,6 +641,7 @@ function normalizeSafeBaseUrl(value = "") {
 
 function resolveProviderFailureReason(error = null) {
   const statusCode = Number(error?.statusCode || error?.status || 0);
+  if (error?.code === "IMAGE_PROVIDER_BLURRED") return "image_blurred";
   if (error?.code === "AI_REPLY_TIMEOUT" || error?.name === "AbortError") return "timeout";
   if (error?.code === "AI_REPLY_NETWORK_ERROR") return "network";
   if (error?.code === "AI_REPLY_PROTOCOL_ERROR") return "protocol";
@@ -639,7 +655,7 @@ function formatProviderFailureMessage(error = null) {
   const statusCode = Number(error?.statusCode || error?.status || 0);
   const reason = resolveProviderFailureReason(error);
   const retryCount = Math.max(0, Number(error?.retryCount || 0));
-  return `provider_call_failed; reason=${reason}; HTTP=${statusCode || "n/a"}${retryCount ? `; retries=${retryCount}` : ""}${formatRateLimitDetails(error)}${formatProtocolDetails(error)}`;
+  return `provider_call_failed; reason=${reason}; HTTP=${statusCode || "n/a"}${retryCount ? `; retries=${retryCount}` : ""}${formatRateLimitDetails(error)}${formatProtocolDetails(error)}${formatImageProviderDetails(error)}`;
 }
 
 function normalizePositiveInt(value) {

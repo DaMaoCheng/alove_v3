@@ -9,12 +9,12 @@ process.env.OPENAI_API_KEY = "chat-image-failure-reply-self-check";
 process.env.OPENAI_BASE_URL = "https://chat-image-failure-reply-self-check.invalid/v1";
 process.env.OPENAI_MODEL = "self-check";
 
-const { closeDbPool, getDbPool, initializeDatabase } = await import("../server/db.js");
+const { closeDbPool, getDbPool, initializeDatabase, withTransaction } = await import("../server/db.js");
 const { createId, createToken, hashSessionToken } = await import("../server/security.js");
 const { createChatImagePlaceholder } = await import("../server/chat-image-generation-service.js");
 const { claimNextMemoryJob } = await import("../server/memory-job-service.js");
 const { generateChatImageFromJob } = await import("../server/chat-image-job-service.js");
-const { enqueueChatImageFailureReplyIfNeeded, generateChatImageFailureReplyFromJob } = await import("../server/chat-image-failure-reply-job-service.js");
+const { enqueueChatImageFailureReplyIfNeeded, generateChatImageFailureReplyFromJob, registerChatImageInitialReplyForDb } = await import("../server/chat-image-failure-reply-job-service.js");
 const { insertMessage, mapMessageRow, buildMessageSelectSql } = await import("../server/chat-message-store.js");
 const { renderChatImageMessage } = await import("../src/features/chat/chat-image-message.js");
 const { renderChatMessages } = await import("../src/features/chat/chat-message-renderer.js");
@@ -176,7 +176,7 @@ async function seedGuestSession() {
 }
 
 async function createFailedImage({ session, userId = "", guestSessionId = "", messageId, userText }) {
-  await insertMessage(db, {
+  const triggerMessage = await insertMessage(db, {
     sessionId: session.id, guestSessionId, characterId: null, senderType: "user", senderLabel: "You", contentType: "text", text: userText,
     displayOrder: 10, sourceType: "self-check", sourceRef: `image-failure-user:${messageId}`,
   });
@@ -186,6 +186,15 @@ async function createFailedImage({ session, userId = "", guestSessionId = "", me
   });
   assert.ok(placeholder?.image?.id, "placeholder should be created");
   const assetId = placeholder.image.id;
+  const initialReply = await insertMessage(db, {
+    sessionId: session.id, guestSessionId, characterId, senderType: "character", senderLabel: "Image Failure Check",
+    contentType: "text", text: "Your photo is being prepared.", displayOrder: 20,
+    sourceType: "self-check", sourceRef: `image-failure-initial:${messageId}`,
+  });
+  await withTransaction(connection => registerChatImageInitialReplyForDb(connection, {
+    snapshot: { assetId, messageId: placeholder.id, status: "queued", userDisplayOrder: 10, natural: true, requestScope: "image_only" },
+    replyMessage: initialReply, triggerMessageId: triggerMessage.id,
+  }));
   return {
     assetId, messageId: placeholder.id, sessionId: session.id,
     guestSessionId,

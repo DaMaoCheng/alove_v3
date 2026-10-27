@@ -1,3 +1,5 @@
+import { registerChatImageInitialReplyForDb } from "./chat-image-failure-reply-job-service.js";
+import { resolveFeedbackConversationHistory, attachFeedbackSubmissionContext, applyFeedbackSubmissionPrompt, isSubmittedFeedbackFollowup } from './chat-feedback-submission-service.js';
 import { projectChildSizingUpdatePrompt } from './product-sizing-guidance-service.js';
 import { buildCommerceClassificationFailureReply } from "./commerce-classification-failure-service.js";
 import { finalizeProductCandidateState } from "./product-candidate-state-service.js";
@@ -51,7 +53,7 @@ import { resolveReviewedReplyVoiceLanguage } from "./chat-language-clarification
 import { PRODUCT_CLARIFICATION_SOURCE_MARKER } from "./product-search-decision-service.js";
 import { resolveTtmallOrderAction } from "./chat-order-intent-service.js";
 import { parseExternalSourceContext } from "./external-source-context-service.js";
-import { resolveChatImageStatusContext, refreshChatImageStatusContext } from "./chat-image-status-context-service.js";
+import { resolveChatImageStatusContext, refreshChatImageStatusContext, withChatImageReplySnapshot } from "./chat-image-status-context-service.js";
 import { buildGuestBenefitContext, appendGuestBenefitGuide, isGuestBenefitReplyReviewed } from "./guest-benefit-guidance-service.js";
 
 export async function prepareStoredGuestReply({
@@ -163,7 +165,12 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
   const intentTurn = prepared.intentTurn || await prepareChatIntentTurn(getDbPool(), { session: guestSessionForImage(prepared.guest), character: promptCharacter, userText: prepared.text, userDisplayOrder: prepared.message.display_order, logContext: { requestId: prepared.message.id }, siteId: prepared.guest.site_id, siteSlug: prepared.guest.site_slug });
   if (!prepared.languagePreference) languagePreference = await applySessionLanguagePreference(getDbPool(), { character, session, userText: prepared.text, jevDecision: intentTurn.decision });
   promptCharacter = languagePreference.character;
-  const precomputedSearchIntent = await (intentTurn.resolveCommerce?.bind(intentTurn) || resolveCommerceSearchIntent)({ userText: prepared.text, recentMessages,
+  const feedbackHistory = await resolveFeedbackConversationHistory(getDbPool(), { sessionId: prepared.guest.chat_session_id,
+    character: promptCharacter, siteId: prepared.guest.site_id, guestSessionId: prepared.guest.id,
+    beforeDisplayOrder: prepared.promptBeforeDisplayOrder || prepared.message.display_order });
+  const commerceRecentMessages = feedbackHistory?.entries?.length
+    ? [...recentMessages, ...feedbackHistory.entries].sort((a, b) => Number(a.displayOrder || 0) - Number(b.displayOrder || 0)) : recentMessages;
+  const precomputedSearchIntent = await (intentTurn.resolveCommerce?.bind(intentTurn) || resolveCommerceSearchIntent)({ userText: prepared.text, recentMessages: commerceRecentMessages,
     searchIntent: buildProductSearchIntent(prepared.text, "", { recentProductContext: buildRecentProductContext(recentMessages) }),
     enrichAllTurns: true, jevDecision: intentTurn.decision, siteId: prepared.guest.site_id, characterId: promptCharacter.id,
     logContext: { requestId: prepared.message.id, sessionId: prepared.guest.chat_session_id, characterId: promptCharacter.id } });
@@ -186,7 +193,7 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
     : null;
   const classificationFailureReply = buildCommerceClassificationFailureReply(productRecommendation.searchIntent, { userText: prepared.text, language: languagePreference.languageCode || "en" });
   const knowledgeStartedAt = Date.now();
-  const knowledgeContext = await retrieveChatKnowledgeSections({
+  let knowledgeContext = await retrieveChatKnowledgeSections({
     query: prepared.text,
     logContext: { requestId: prepared.message.id, sessionId: prepared.guest.chat_session_id, characterId: promptCharacter.id },
     knowledgeQuery: productRecommendation.searchIntent?.knowledgeQuery,
@@ -196,6 +203,8 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
     topicHint: productRecommendation.searchIntent?.customerServiceKnowledgeRequest ? productRecommendation.searchIntent?.commerceTopic : "",
     limit: 4,
   });
+  knowledgeContext = attachFeedbackSubmissionContext(knowledgeContext, feedbackHistory, {
+    searchIntent: productRecommendation.searchIntent, userText: prepared.text });
   const knowledgeMs = Date.now() - knowledgeStartedAt;
   const factualContext = await resolveChatFactualContext({
     userText: prepared.text, jevDecision: intentTurn.decision, searchIntent: productRecommendation.searchIntent,
@@ -207,7 +216,7 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
     searchIntent: productRecommendation.searchIntent, knowledgeContext, productContext, factualContext, stageDurations: { productMs, knowledgeMs },
     requestId: prepared.message.id, sessionId: prepared.guest.chat_session_id, characterId: promptCharacter.id,
   });
-  const resolvedOrderAction = shouldSkipOrderLookupForCheckout(productRecommendation.searchIntent) ? null : await resolveTtmallOrderAction({ text: prepared.text, siteSlug: prepared.guest.site_slug, classifyJev: intentTurn.classify,
+  const resolvedOrderAction = (shouldSkipOrderLookupForCheckout(productRecommendation.searchIntent) || isSubmittedFeedbackFollowup(knowledgeContext, productRecommendation.searchIntent, prepared.text)) ? null : await resolveTtmallOrderAction({ text: prepared.text, siteSlug: prepared.guest.site_slug, classifyJev: intentTurn.classify,
     conversationContext: intentTurn.conversationContext });
   const orderAction = resolvedOrderAction ? { ...resolvedOrderAction, status: "login_required", label: "Sign in to check order" } : null;
   const feedbackActionCandidate = resolveChatFeedbackActionCandidate({
@@ -235,7 +244,7 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
     directive: prepared.imageResult?.directive || null, currentImageMessageId: prepared.imageResult?.message?.id || "",
   });
   const sizeUpdatePrompt = projectChildSizingUpdatePrompt({ searchIntent: productRecommendation.searchIntent, productContext, recentMessages });
-  const promptContext = applyCheckoutSupportPromptPolicy(applyReplyBoundaryPromptPolicy(applyCommerceQuestionPromptPolicy(buildChatReplyPrompt({
+  let promptContext = applyCheckoutSupportPromptPolicy(applyReplyBoundaryPromptPolicy(applyCommerceQuestionPromptPolicy(buildChatReplyPrompt({
       character: promptCharacter, trustedSite: { id: prepared.guest.site_id, slug: prepared.guest.site_slug, name: prepared.guest.site_name, identity_mascot_character_id: prepared.guest.site_mascot_character_id },
       recentMessages: sizeUpdatePrompt.recentMessages,
       userText: prepared.text,
@@ -249,6 +258,7 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
       chatImageContext,
       visionInputs,
     }), productRecommendation.searchIntent, { userText: prepared.text, recentMessages }), productRecommendation.searchIntent), productRecommendation.searchIntent, promptCharacter);
+  promptContext = applyFeedbackSubmissionPrompt(promptContext, knowledgeContext);
   const guestPromptContext = applyGuestPromptPolicy(applyGuestProductClarificationPromptPolicy(promptContext, {
     productRequested: productRecommendation.requested,
     product: productContext?.products?.[0] || null,
@@ -325,6 +335,7 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
         promptContext: recoveryPrompt, userText: prepared.text, logContext: generationLogContext, regeneration: true, regenerationProvider: previousReply, regenerationUseAlternateProvider: recovery?.kind === "purpose",
       }));
     } });
+  if (classificationFailureReply) reply = withChatImageReplySnapshot(reply, chatImageContext);
   const { normalizationOptions } = replyNormalizationContext(reply);
 
   if (guestBenefitContext && isGuestBenefitReplyReviewed(guestBenefitContext, reply.text)) {
@@ -450,6 +461,7 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
       "UPDATE chat_sessions SET last_message_at = NOW(3), updated_at = NOW(3) WHERE id = ?",
       [guest.chat_session_id]
     );
+    await registerChatImageInitialReplyForDb(db, { snapshot: reply._imageDeliveryReply, replyMessage, triggerMessageId: prepared.message.id });
     return replyVoice.id;
   });
 }

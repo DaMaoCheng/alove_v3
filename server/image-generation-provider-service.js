@@ -18,6 +18,7 @@ export async function requestGeneratedImage(prompt, {
   size = SERVER_CONFIG.imageGeneration.openai.size,
   filenamePrefix = "ai-image",
   referenceImages = [],
+  veniceSafeMode,
 } = {}) {
   const images = Array.isArray(referenceImages) ? referenceImages.filter((image) => image?.buffer?.length) : [];
   if (images.length) {
@@ -26,6 +27,7 @@ export async function requestGeneratedImage(prompt, {
       size,
       filenamePrefix,
       referenceImages: images,
+      veniceSafeMode,
     });
   }
 
@@ -46,10 +48,15 @@ export async function requestGeneratedImage(prompt, {
         prompt,
         n: Math.max(1, Number(count || 1)),
         size: normalizeGenerationSize(size),
+        ...(isVeniceImageProvider() && typeof veniceSafeMode === "boolean"
+          ? { moderation: veniceSafeMode ? "auto" : "low" } : {}),
       }),
       signal: controller.signal,
     });
 
+    if (response.ok && isVeniceImageProvider() && typeof veniceSafeMode === "boolean") {
+      await assertVeniceImageNotBlurred(response, SERVER_CONFIG.imageGeneration.openai.model);
+    }
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
       throwServiceError(readImageGenerationError(payload, response.status), response.status >= 400 && response.status < 600 ? response.status : 502);
@@ -97,6 +104,7 @@ async function requestGeneratedImageEdit(prompt, {
   size = SERVER_CONFIG.imageGeneration.openai.size,
   filenamePrefix = "ai-image",
   referenceImages = [],
+  veniceSafeMode,
 } = {}) {
   if (isVeniceImageProvider()) {
     return requestVeniceGeneratedImageEdit(prompt, {
@@ -104,6 +112,7 @@ async function requestGeneratedImageEdit(prompt, {
       size,
       filenamePrefix,
       referenceImages,
+      veniceSafeMode,
     });
   }
 
@@ -178,6 +187,7 @@ async function requestVeniceGeneratedImageEdit(prompt, {
   size = SERVER_CONFIG.imageGeneration.openai.size,
   filenamePrefix = "ai-image",
   referenceImages = [],
+  veniceSafeMode,
 } = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), SERVER_CONFIG.imageGeneration.openai.timeoutMs);
@@ -204,12 +214,13 @@ async function requestVeniceGeneratedImageEdit(prompt, {
         ...(multiple ? { modelId: editModel } : { model: editModel }),
         aspect_ratio: resolveVeniceAspectRatio(size),
         output_format: "png",
+        ...(typeof veniceSafeMode === "boolean" ? { safe_mode: veniceSafeMode } : {}),
         ...(VENICE_RESOLUTION_SUPPORT.has(editModel) ? { resolution: "1K" } : {}),
       }),
       signal: controller.signal,
     });
 
-    const payload = await readVeniceImageResponse(response);
+    const payload = await readVeniceImageResponse(response, editModel);
     if (!payload.buffer?.length) {
       throwServiceError("图片编辑服务没有返回图片数据", 502);
     }
@@ -281,19 +292,47 @@ function resolveVeniceAspectRatio(size = "") {
   return "16:9";
 }
 
-async function readVeniceImageResponse(response) {
+function veniceImageDiagnostic(response, model) {
+  const flag = name => {
+    const value = String(response.headers.get(name) || '').trim().toLowerCase();
+    return value === 'true' ? true : value === 'false' ? false : null;
+  };
+  const type = String(response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  const id = String(response.headers.get('x-request-id') || response.headers.get('x-venice-request-id') || '').trim();
+  // Explicit response fields only: never serialize headers, response bodies,
+  // credentials or account/balance headers into errors and audit records.
+  return Object.freeze({ model: String(model || '').slice(0, 100),
+    contentType: /^[a-z0-9.+-]{1,40}\/[a-z0-9.+-]{1,40}$/.test(type) ? type : '',
+    blurred: flag('x-venice-is-blurred'), violation: flag('x-venice-is-content-violation'),
+    requestId: /^[a-z0-9_:-]{1,100}$/i.test(id) && !/sk[-_]|bearer|api.?key|authorization|password|secret|token/i.test(id) ? id : '' });
+}
+
+async function readVeniceImageResponse(response, model) {
+  const diagnostic = veniceImageDiagnostic(response, model);
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
-    throwServiceError(readImageGenerationError(payload, response.status), response.status >= 400 && response.status < 600 ? response.status : 502);
+    const error = new Error(readImageGenerationError(payload, response.status));
+    error.statusCode = response.status >= 400 && response.status < 600 ? response.status : 502;
+    error.imageProviderDiagnostic = diagnostic;
+    throw error;
   }
-  if (String(response.headers.get("x-venice-is-blurred") || "").trim().toLowerCase() === "true") {
-    await response.arrayBuffer().catch(() => {});
-    throwServiceError("图片服务返回了隐私模糊图，请重试", 502);
-  }
+  await assertVeniceImageNotBlurred(response, model, diagnostic);
   return {
     buffer: Buffer.from(await response.arrayBuffer()),
     contentType: String(response.headers.get("content-type") || "image/png").split(";")[0].trim().toLowerCase() || "image/png",
   };
+}
+
+async function assertVeniceImageNotBlurred(response, model, diagnostic = veniceImageDiagnostic(response, model)) {
+  if (diagnostic.blurred === true) {
+    await response.arrayBuffer().catch(() => {});
+    const error = new Error('图片服务返回了模糊结果，本次图片未完成');
+    error.statusCode = 502;
+    error.code = 'IMAGE_PROVIDER_BLURRED';
+    error.retryable = false;
+    error.imageProviderDiagnostic = diagnostic;
+    throw error;
+  }
 }
 
 async function readGeneratedImagePayload(payload) {

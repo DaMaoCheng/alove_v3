@@ -52,6 +52,7 @@ try {
   const nearlyExpired = { jobType: 'generate_chat_image', createdAt: new Date(Date.now() - 15 * 60 * 1000 + 2000).toISOString() };
   assert(getMemoryJobExecutionBudgetMs(nearlyExpired) <= 2000, 'request age caps image attempt budget rather than refreshing it');
   assert.equal(canRetryInterruptedMemoryJob({ jobType: 'send_proactive_message' }), false);
+  assert.equal(canRetryInterruptedMemoryJob({ jobType: 'generate_chat_image_failure_reply' }), true, 'asset ledger makes terminal reply resumption safe');
   assert.equal(canRetryInterruptedMemoryJob({ jobType: 'backfill_claimed_guest_context' }), true);
   assert.equal(canRetryInterruptedMemoryJob({ jobType: 'send_mascot_campaign_batch' }), true);
   assert.equal(canRetryInterruptedMemoryJob({ jobType: 'unknown_side_effect' }), false);
