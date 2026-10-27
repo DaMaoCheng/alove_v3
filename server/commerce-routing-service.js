@@ -227,7 +227,11 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
   // the current product-target evidence requirement.
   const legacySingleTarget = decision.candidateDecisionRequired !== true
     && decision.productRequest?.relation === 'single' && Boolean(decision.searchQuery);
-  const specificQuestionTarget = Boolean(legacySingleTarget || decision.referencedProductId
+  // A validated, owned selection is a concrete target even before a catalogue
+  // card exists. The normal scope application below still validates continuation.
+  const selectedQuestionTarget = ['continue', 'select'].includes(decision.productRequest?.action)
+    && readProductRequestState(recentMessages, { siteId, characterId })?.status === 'selected';
+  const specificQuestionTarget = Boolean(legacySingleTarget || selectedQuestionTarget || decision.referencedProductId
     || decision.referencedProductIds?.length || buildChatProductRoutingContext(recentMessages, { siteId, characterId })
     || decision.commerceConstraints?.team?.role === 'product_target'
     || decision.productRequirement?.updates?.some(update => ['requestedTeam', 'requestedKeywords'].includes(update.field)
