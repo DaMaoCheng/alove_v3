@@ -19,7 +19,9 @@ export async function applySessionLanguagePreference(db, { character, session, u
     && candidate.confidence >= .8 && candidate.confidence <= 1
     && SUPPORTED_CHARACTER_LANGUAGES.some(language => language.code === candidate.targetCode)
     ? { ...normalizeCharacterLanguage(candidate.targetCode), scope: candidate.scope } : null;
-  const requested = resolveOnly ? null : semantic || detectRequestedLanguageSwitch(userText);
+  // Active turns carry the shared decision, including valid uncertainty. A
+  // language keyword must not replace it; keep the utility for legacy callers.
+  const requested = resolveOnly ? null : semantic || (jevDecision == null ? detectRequestedLanguageSwitch(userText) : null);
   const activationPreference = await loadActivationLanguagePreference(db, {
     userId,
     characterId: character?.id || session?.character_id || session?.characterId,

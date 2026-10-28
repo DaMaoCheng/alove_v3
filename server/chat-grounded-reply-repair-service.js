@@ -9,7 +9,7 @@ import { isGeneralCommerceExplanation, GENERAL_COMMERCE_EXPLANATION_CONTRACT } f
 import { languageReviewerConfig } from './chat-language-quality-service.js';
 import { requestOpenAiText } from './ai-reply-provider-service.js';
 import { requestAiJsonWithProviderFallback } from './ai-json-provider-service.js';
-import { independentJsonProviderChain, independentLanguageReviewerChain } from './ai-independent-review-config.js';
+import { independentJsonProviderChain, independentLanguageReviewerChain, applyReviewRequestProfile } from './ai-independent-review-config.js';
 import { recordProviderCallLog } from './ai-reply-log-service.js';
 import { isAiTransportFallback } from './ai-reply-fallback-service.js';
 import { isStorefrontGuidanceCharacter, resolveOrderActionPromptState } from './chat-global-reply-policy.js';
@@ -331,7 +331,7 @@ export async function repairGroundedCommerceReply(options = {}) {
         : [config, ...independentLanguageReviewerChain(replyResult.aiModel)];
       const providers = configured.filter((provider, index) => configured.findIndex(other =>
         String(other.baseUrl).replace(/\/+$/, '') === String(provider.baseUrl).replace(/\/+$/, '') && other.model === provider.model) === index)
-        .slice(0, 2).map(provider => ({ ...provider, timeoutMs: budget }));
+        .slice(0, 2).map(applyReviewRequestProfile).map(provider => ({ ...provider, timeoutMs: budget }));
       parsed = await requestAiJsonWithProviderFallback([{ role: 'system', content: prompt.systemPrompt }, ...prompt.messages], {
         config: providers, fetchImpl: options.fetchImpl || fetch, timeoutMs: budget, perProviderTimeout: true, providerTimeoutMs: budget,
         ...(trustedCandidate && !matchedCatalogue ? { validateParsed: value => ({ valid: value !== null && typeof value === 'object' && !Array.isArray(value)

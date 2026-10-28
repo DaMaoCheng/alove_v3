@@ -1,12 +1,13 @@
 import { isAiJsonProviderConfigured, requestAiJsonWithProviderFallback } from "./ai-json-provider-service.js";
 import { classifyJevIntent, mapJevImageIntent } from "./jev-intent-service.js";
+import { classifyJevImageDetails } from "./jev-image-decision-service.js";
 import { resolveCharacterImageFollowupContext } from "./chat-image-conversation-context-service.js";
 import { pendingAppearanceUserContext, resolveImageAppearance } from './chat-image-appearance-context-service.js';
 
 const CLASSIFIER_TIMEOUT_MS = 30000;
 const MIN_CONFIDENCE = 0.7;
 
-export async function classifyChatImageIntent(userText = "", { character = null, jevDecision = null, conversationContext = null, cacheKey = "", forceTargetVerification = false } = {}) {
+export async function classifyChatImageIntent(userText = "", { character = null, jevDecision = null, conversationContext = null, cacheKey = "", forceTargetVerification = false, classifyImageJev = classifyJevImageDetails, logContext = {} } = {}) {
   const text = normalizeText(userText);
   if (!shouldRunIntentClassifier(text)) {
     return {
@@ -19,6 +20,7 @@ export async function classifyChatImageIntent(userText = "", { character = null,
   const jev = jevDecision || await classifyJevIntent({
     userText: text,
     cacheKey,
+    logContext,
     conversationContext,
     capabilities: {
       canGenerateImage: true,
@@ -29,11 +31,25 @@ export async function classifyChatImageIntent(userText = "", { character = null,
   });
   const verifyCharacterTarget = isProductCapableCharacter(character);
   const followupContext = text.length <= 80 ? resolveCharacterImageFollowupContext(conversationContext) : null;
-  if (jev.ok && jev.confident) {
+  const sharedFallback = jev.routingSource === "llm_fallback" && jev.jevFailure?.attempts === 2
+    && jev.llmFallbackAllowed === true;
+  let fallbackAllowed = jev.llmFallbackAllowed === true;
+  if (jev.ok && !sharedFallback) {
     const mapped = normalizeJevImageResult(mapJevImageIntent(jev));
+    if (!jev.confident && !followupContext && !forceTargetVerification) return {
+      ...mapped, classificationOutcome: jev.confident ? "model_no_intent" : "low_confidence",
+      requestScope: "unknown",
+    };
     if ((!verifyCharacterTarget && (mapped.hasIntent || !followupContext))
       || (!mapped.hasIntent && !forceTargetVerification && !followupContext)) return mapped;
+    const detailed = await classifyImageJev(text, { character, conversationContext, followupContext, logContext,
+      pendingAppearance: verifyCharacterTarget && !followupContext ? pendingAppearanceUserContext(conversationContext) : null });
+    if (detailed.ok) return { ...normalizeClassifierResult(detailed.parsed, { text, verifyCharacterTarget, followupContext,
+      pendingAppearance: verifyCharacterTarget && !followupContext ? pendingAppearanceUserContext(conversationContext) : null }), detectionSource: "jev" };
+    fallbackAllowed = detailed.llmFallbackAllowed === true;
   }
+  if (!fallbackAllowed) return { hasIntent: false, allowed: false, confidence: 0, intentType: "",
+    detectionSource: "jev", classificationFailure: jev.fallbackReason || "unavailable" };
 
   if (!isAiJsonProviderConfigured()) {
     return {
@@ -46,7 +62,7 @@ export async function classifyChatImageIntent(userText = "", { character = null,
   }
 
   try {
-    return normalizeClassifierResult(await requestClassifier(text, { conversationContext, verifyCharacterTarget, character, followupContext }), {
+    return normalizeClassifierResult(await requestClassifier(text, { conversationContext, verifyCharacterTarget, character, followupContext, logContext }), {
       text, verifyCharacterTarget, followupContext,
       pendingAppearance: verifyCharacterTarget && !followupContext ? pendingAppearanceUserContext(conversationContext) : null,
     });
@@ -100,7 +116,7 @@ export function isProductCapableCharacter(character = null) {
   return categoryId === "mascot" || categoryId === "creator" || id === "mascot_template" || id.startsWith("mascot_");
 }
 
-async function requestClassifier(userText, { conversationContext = null, verifyCharacterTarget = false, character = null, followupContext = null } = {}) {
+async function requestClassifier(userText, { conversationContext = null, verifyCharacterTarget = false, character = null, followupContext = null, logContext = {} } = {}) {
   const recentConversation = (conversationContext?.recentConversation || []).slice(-6);
   const pendingAppearance = verifyCharacterTarget && !followupContext ? pendingAppearanceUserContext(conversationContext) : null;
   const latestImage = [...recentConversation].reverse().find((item) => ["attachment", "image_generation", "product", "mascot_greeting_image", "mascot_library_image"].includes(item.kind));
@@ -149,7 +165,7 @@ async function requestClassifier(userText, { conversationContext = null, verifyC
               ...(pendingAppearance ? { pendingUserAppearance: pendingAppearance } : {}),
             }),
           },
-  ], { timeoutMs: CLASSIFIER_TIMEOUT_MS, perProviderTimeout: true, providerTimeoutMs: CLASSIFIER_TIMEOUT_MS, sourceRef: "chat-image-intent-classifier" });
+  ], { timeoutMs: CLASSIFIER_TIMEOUT_MS, perProviderTimeout: true, providerTimeoutMs: CLASSIFIER_TIMEOUT_MS, sourceRef: "chat-image-intent-classifier", logContext });
 }
 
 function normalizeClassifierResult(parsed = {}, { text = "", verifyCharacterTarget = false, followupContext = null, pendingAppearance = null } = {}) {

@@ -168,7 +168,36 @@ for (const semantic of [{ matches: [] }, { matches: [{ ...validEvidence.matches[
   assert.equal(probe.calls, 1, 'valid semantic empty/refusal/low score must not shop for approval');
   assert.deepEqual(probe.result, semantic);
 }
+// A model may select several exact excerpts from one authorized passage.
+// Validate every excerpt, then reuse the final selector's existing ID dedup.
+const repeatedEvidence = { matches: [
+  { ...validEvidence.matches[0], quote: 'Only card payments are supported.' },
+  { ...validEvidence.matches[0], quote: 'Cash is not supported.' },
+] };
+const repeatedProbe = await protocolProbe(evidenceInput, repeatedEvidence);
+assert.equal(repeatedProbe.calls, 1, 'valid repeated IDs must not spend a fallback call');
+assert.deepEqual(repeatedProbe.result, repeatedEvidence);
+for (const matches of [repeatedEvidence.matches,
+  [{ ...repeatedEvidence.matches[0], answersQuestion: false }, repeatedEvidence.matches[1]],
+  [{ ...repeatedEvidence.matches[0], confidence: .79 }, repeatedEvidence.matches[1]]]) {
+  const deduped = await selectBusinessKnowledgeReferences({ query: 'Payment?', sections: [reference],
+    select: async input => input.stage === 'directory' ? { ids: [reference.id] }
+      : (await protocolProbe(evidenceInput, { matches })).result });
+  assert.equal(deduped.items.length, 1, 'a later accepted quote survives an earlier refusal or low score');
+  assert.equal(deduped.items[0].content, reference.content, 'dedup preserves the full qualified source');
+}
+for (const patch of [{ quote: 'Cash is accepted everywhere.' }, { id: 'foreign' },
+  { confidence: '0.95' }, { answersQuestion: 'true' }]) {
+  const invalidDuplicate = await protocolProbe(evidenceInput, {
+    matches: [repeatedEvidence.matches[0], { ...repeatedEvidence.matches[1], ...patch }],
+  });
+  assert.equal(invalidDuplicate.calls, 2, 'dedup must not hide an invalid later excerpt');
+}
+assert.equal((await protocolProbe(evidenceInput, { matches: Array(5).fill(validEvidence.matches[0]) })).calls, 2,
+  'duplicate IDs must not bypass the existing raw match count bound');
 const directoryInput = { ...evidenceInput, stage: 'directory' };
+assert.equal((await protocolProbe(directoryInput, { ids: [reference.id, reference.id] }, { ids: [reference.id] })).calls, 2,
+  'directory ID uniqueness remains unchanged');
 assert.equal((await protocolProbe(directoryInput, { ids: ['foreign'] }, { ids: [reference.id] })).calls, 2);
 assert.equal((await protocolProbe(directoryInput, { ids: [] }, { ids: [reference.id] })).calls, 1);
 await assert.rejects(protocolProbe(evidenceInput, { matches: 'bad' }, { matches: 'bad' }),

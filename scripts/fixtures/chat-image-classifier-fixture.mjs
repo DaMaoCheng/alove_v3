@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 
-// Keep this DB/lease regression independent of paid routing providers. Configure
-// before importing config consumers; #mock-image still follows its real path.
-process.env.TYPESAFE_API_KEY = "";
+// Keep DB/lease regressions independent of paid providers while exercising the
+// actual successful JEV decision path. #mock-image retains its task bypass.
+process.env.TYPESAFE_API_KEY = "chat-image-final-jev-self-check";
+process.env.TYPESAFE_BASE_URL = "https://chat-image-final-jev.invalid/v1";
 process.env.VENICE_API_KEY = "chat-image-final-classifier-self-check";
 process.env.VENICE_BASE_URL = "https://chat-image-final-classifier.invalid/v1";
 process.env.VENICE_MODEL = "self-check";
@@ -14,21 +15,22 @@ export const classifiedMessages = [];
 const transportViolations = [];
 globalThis.fetch = async (url, options = {}) => {
   try {
-    assert.equal(String(url), "https://chat-image-final-classifier.invalid/v1/chat/completions", "this regression must not contact JEV or any real provider");
+    assert.equal(String(url), "https://chat-image-final-jev.invalid/v1/systemone", "valid JEV decisions must not contact a reply model for image routing");
     const body = JSON.parse(options.body || "{}");
-    assert.match(body.messages?.[0]?.content || "", /You classify whether a chat message asks an AI character for a personal chat image/, "only the image-intent classifier may use this fixture transport");
-    const input = JSON.parse(body.messages?.[1]?.content || "{}");
-    classifiedMessages.push(input.latestMessage);
-    assert.ok(!String(input.latestMessage).includes("#mock-image"), "explicit mock generation must retain its existing classifier-free path");
-    return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({
-      communicativeAction: "other", requestKind: "non_image", hasIntent: false, allowed: false,
-      confidence: .99, intentType: "none", imageSubject: "none", requestScope: "unknown",
-      requestEvidence: "", actorEvidence: "", actionEvidence: "", clothingTarget: "none",
-      explicitGeneration: false, wants_no_clothing: false, wants_clothing: false,
-    }) } }] }), { status: 200, headers: { "content-type": "application/json" } });
+    assert(body.questions && body.state, "routing fixture requires the actual JEV protocol");
+    const message = String(body.state.message || body.state.latestMessage || '');
+    if (message && !message.includes('#mock-image')) classifiedMessages.push(message);
+    const answers = Object.fromEntries(Object.entries(body.questions).map(([key, q]) => {
+      if (q.type === 'noul') return [key, { noul: 0 }];
+      if (q.type === 'score') return [key, { score: 0 }];
+      const options = Object.keys(q.criteria || {});
+      const safe = ['daily_chat', 'chat', 'none', 'neutral', 'other', 'unknown', 'no', 'false', 'unrelated'];
+      const selected = safe.find(value => options.includes(value)) || options[0];
+      assert(selected, 'JEV choice needs supplied options');
+      return [key, { choice: selected, confidence: .99 }];
+    }));
+    return new Response(JSON.stringify({ model: 'jev-fixture', answers }), { status: 200, headers: { 'content-type': 'application/json' } });
   } catch (error) {
-    // Classifier failures are intentionally caught in production. Retain the
-    // fixture violation so the test cannot silently pass on that fallback.
     transportViolations.push(error);
     throw error;
   }

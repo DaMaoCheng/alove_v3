@@ -8,7 +8,8 @@ const check=(value,message)=>{assert(value,message);checks++;};
 const review=async({candidateText='',reply,expectedStage,context=recentMessages})=>{
  let observed;
  const decision=await classifyProactiveContent({
-  recentMessages:context,candidateText,language:'en',config,recordProviderCallFn:async()=>{},recordDecisionLogFn:async()=>{},
+  recentMessages:context,candidateText,language:'en',config,
+  trustedState:{state:reply.state},classifyJevState:async()=>({ok:false,llmFallbackAllowed:true,exhausted:true,attempts:2}),recordProviderCallFn:async()=>{},recordDecisionLogFn:async()=>{},
   fetchImpl:async(_url,options)=>{
    calls++;observed=JSON.parse(options.body);
    return {ok:true,json:async()=>({choices:[{message:{content:JSON.stringify(reply)}}]})};
@@ -20,7 +21,7 @@ const review=async({candidateText='',reply,expectedStage,context=recentMessages}
  check(packet.reviewStage===expectedStage,'actual request explicitly labels the current state/candidate stage');
  check(packet.proposedProactiveMessage===candidateText,'stage labeling does not rewrite user or candidate text');
  check(system.includes(expectedStage),'system contract receives the same derived stage');
- check(system.includes('proposed proactive message cannot establish shopping intent'),'candidate never establishes shopping state');
+ check(expectedStage==='state_classification' ? system.includes('proposed proactive message cannot establish shopping intent') : system.includes('Do not classify USER intent')&&packet.trustedState.state===reply.state,'candidate never establishes shopping state');
  if(expectedStage==='state_classification')check(system.includes('confidence concerns only the USER conversation-state classification')&&system.includes('Do not lower state confidence'),'empty candidate quality is not a state-confidence penalty');
  else check(system.includes('confidence concerns your assessment of the actual proposed candidate')&&system.includes('whether approving or rejecting it'),'candidate confidence measures verdict certainty, including a justified rejection');
  return decision;

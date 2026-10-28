@@ -1,6 +1,7 @@
 import { SERVER_CONFIG } from "./config.js";
 import { generateCharacterText, isCharacterTextGenerationConfigured } from "./character-text-generation-service.js";
 import { recordProviderCallLog } from "./ai-reply-log-service.js";
+import { extractResponseText } from "./ai-reply-provider-service.js";
 
 const OPENAI_RESPONSES_PATH = "/responses";
 const MAX_BACKSTORY_LENGTH = 1200;
@@ -49,6 +50,8 @@ export async function deriveCharacterRoleTitle(payload = {}) {
 
   const fields = normalizePolishPayload(payload);
   const controller = new AbortController();
+  const startedAt = Date.now();
+  let providerCallLogged = false;
   const timeout = setTimeout(() => controller.abort(), SERVER_CONFIG.aiReply.openai.timeoutMs);
 
   try {
@@ -85,7 +88,7 @@ export async function deriveCharacterRoleTitle(payload = {}) {
       throw error;
     }
 
-    const roleTitle = normalizeRoleTitle(extractResponseText(responsePayload));
+    const roleTitle = normalizeRoleTitle(extractResponseText(responsePayload, { apiMode: 'responses' }));
     if (!roleTitle) {
       await recordProviderCallLog({
         provider: "openai", model: SERVER_CONFIG.aiReply.openai.model, baseUrl: SERVER_CONFIG.aiReply.openai.baseUrl,
@@ -191,18 +194,6 @@ function buildRoleTitleInstructions(fields) {
     fields.language ? `Language: ${fields.language}` : "",
     fields.openingLine ? `Opening line: ${fields.openingLine}` : "",
   ].filter(Boolean).join("\n");
-}
-
-function extractResponseText(payload) {
-  if (typeof payload?.output_text === "string") return payload.output_text;
-
-  const output = Array.isArray(payload?.output) ? payload.output : [];
-  return output
-    .flatMap((item) => Array.isArray(item?.content) ? item.content : [])
-    .map((content) => content?.text || "")
-    .filter(Boolean)
-    .join("\n")
-    .trim();
 }
 
 function normalizePolishedText(value) {

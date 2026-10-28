@@ -1,10 +1,16 @@
+import { jevImageAnswerFixture } from './fixtures/jev-image-answer-fixture.mjs';
 import assert from "node:assert/strict";
 
 process.env.AIOVE_PROVIDER_LOG_WRITE_ENABLED = "false";
 process.env.VENICE_API_KEY = "isolated-image-followup";
-process.env.TYPESAFE_API_KEY = "";
+process.env.TYPESAFE_API_KEY = "fixture-image-jev";
 const { resolveCharacterImageFollowupContext, resolveRecentImageConversationContext } = await import("../server/chat-image-conversation-context-service.js");
-const { classifyChatImageIntent } = await import("../server/chat-image-intent-classifier-service.js");
+const { classifyChatImageIntent: actualClassifyImage } = await import("../server/chat-image-intent-classifier-service.js");
+const { classifyJevImageDetails } = await import('../server/jev-image-decision-service.js');
+const { evaluateJevQuestions } = await import('../server/jev-intent-service.js');
+const classifyChatImageIntent = (text, options) => actualClassifyImage(text, { ...options,
+ classifyImageJev: (message, context) => classifyJevImageDetails(message, { ...context,
+  evaluate: request => evaluateJevQuestions({ ...request, forceRefresh: true }) }) });
 const { evaluateChatImageRequest } = await import("../server/chat-image-generation-service.js");
 const character = { id: "mascot_test", category_id: "mascot" };
 const prior = "Mándame una foto de ti";
@@ -22,8 +28,11 @@ const originalFetch = globalThis.fetch;
 let response, calls = 0, lastPayload, lastPrompt;
 globalThis.fetch = async (_url, options) => {
   calls += 1;
-  lastPrompt = JSON.parse(options.body).messages[0].content;
-  lastPayload = JSON.parse(JSON.parse(options.body).messages[1].content);
+  const body = JSON.parse(options.body);
+ if (body.questions?.actor_is_character) return { ok: true, json: async () => jevImageAnswerFixture(body, response) };
+  lastPrompt = body.questions ? Object.values(body.questions).map(q => q.instructions).join('\n') : body.messages[0].content;
+  lastPayload = body.state || JSON.parse(body.messages[1].content);
+  if (body.questions) return { ok: true, json: async () => jevImageAnswerFixture(body, response) };
   return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(response) } }] }) };
 };
 let checks = 0;
@@ -48,7 +57,7 @@ try {
     assert.equal(result.allowed, true, text);
     assert.equal(result.explicitGeneration, false, "elliptical requests keep gallery-first behavior");
     assert.equal(result.requestScope, "image_only");
-    assert.equal(calls, before + 1, "one existing verifier call, no new JEV or repeated classification");
+    assert.equal(calls, before + 2, "one JEV facet selection plus one focused grounding verification, no LLM classification");
     assert.deepEqual(lastPayload.characterImageFollowup, { imageKind: "mascot_library_image", requestText: prior }); checks++;
   }
   assert.equal(lastPayload.latestImageKind, "character", "a real library image must not be confused with an unsupported welcome-only context"); checks++;
@@ -78,8 +87,8 @@ try {
     "do not expand the six-message bound or use an image alone when the original subject is out of scope"); checks++;
   assert.doesNotMatch(lastPrompt, /Only current user language that addresses the character/,
     "current-only subject wording must not contradict bounded elliptical requests");
-  assert.match(lastPrompt, /latest message need not repeat the photo noun, character name, pronoun or visual verb/);
-  assert.match(lastPrompt, /plain additional-photo request as library_photo with explicitGeneration false/); checks++;
+  assert.match(lastPrompt, /additional.photo/);
+  assert.match(lastPrompt, /additional photo never inherits old clothing/); checks++;
   response = positive("otra");
   const afterLocation = { ...context, recentConversation: [...context.recentConversation,
     { role: "user", kind: "text", text: "¿Dónde está la foto anterior?" },
@@ -98,11 +107,14 @@ try {
     { actorEvidence: "made up actor" }, { actionEvidence: "not in latest text" }, { requestEvidence: "not in latest text" },
     { imageSubject: "product" }, { requestKind: "non_image" }, { communicativeAction: "merchandise_question" },
     { confidence: .69 }, { wants_no_clothing: true }, { wants_clothing: true },
-    { explicitGeneration: true }, { intentType: "try_on" },
+    { intentType: "try_on" },
   ]) {
     response = { ...positive("otra"), ...bad };
     assert.equal((await classifyChatImageIntent("otra", { character, jevDecision: noImage, conversationContext: context })).hasIntent, false, JSON.stringify(bad)); checks++;
   }
+  response = { ...positive("otra"), explicitGeneration: true };
+  const contradictoryLegacyFlag = await classifyChatImageIntent("otra", { character, jevDecision: noImage, conversationContext: context });
+  assert.equal(contradictoryLegacyFlag.explicitGeneration, false, "JEV library choice derives a non-generation action; a legacy raw flag cannot widen it"); checks++;
   const before = calls;
   response = positive("otra");
   for (const empty of [null, {}, { recentConversation: [{ role: "assistant", kind: "mascot_greeting_image", text: "Welcome" }] }]) {

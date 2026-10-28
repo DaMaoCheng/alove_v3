@@ -1,6 +1,7 @@
+// This script exercises the retained LLM fallback transport/contract only; JEV admission has its own integration checks.
 import assert from 'node:assert/strict';
 Object.assign(process.env,{AIOVE_PROVIDER_LOG_WRITE_ENABLED:'false',VENICE_API_KEY:'fixture',OPENAI_API_KEY:'fixture',OPENAI_FALLBACK_API_KEY:'fixture',OPENAI_FALLBACK_MODEL:'fixture-fallback'});
-const{classifyCommerceIntent,commerceClassificationTimeout}=await import('../server/product-intent-classifier-service.js');
+const{classifyCommerceIntentFallback: classifyCommerceIntent,commerceClassificationTimeout}=await import('../server/product-intent-classifier-service.js');
 const text='Ya he rellenado el formulario';
 const history=[{id:'entry_owned',senderType:'character',contentType:'feedback_action',text:'',displayOrder:20}];
 assert.equal(commerceClassificationTimeout(text,{recentMessages:history}),40000,'the added feedback-state protocol gets the existing full protocol budget');

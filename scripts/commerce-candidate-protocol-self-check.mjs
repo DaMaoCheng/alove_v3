@@ -1,7 +1,8 @@
+// This script exercises the retained LLM fallback transport/contract only; JEV admission has its own integration checks.
 import assert from 'node:assert/strict';
 Object.assign(process.env, { AIOVE_PROVIDER_LOG_WRITE_ENABLED: 'false', VENICE_API_KEY: 'fixture', VENICE_MODEL: 'protocol-primary',
   OPENAI_API_KEY: 'fixture', OPENAI_MODEL: 'protocol-secondary', OPENAI_FALLBACK_API_KEY: 'fixture', OPENAI_FALLBACK_MODEL: 'protocol-tertiary' });
-const { classifyCommerceIntent } = await import('../server/product-intent-classifier-service.js');
+const { classifyCommerceIntentFallback: classifyCommerceIntent } = await import('../server/product-intent-classifier-service.js');
 const { requestAiJsonWithProviderFallback } = await import('../server/ai-json-provider-service.js');
 const { resolveCommerceSearchIntent } = await import('../server/commerce-routing-service.js');
 const { buildProductSearchIntent } = await import('../server/product-intent-service.js');

@@ -1,6 +1,7 @@
 import { createId } from "./security.js";
 import { getKnowledgeAiConfig, isKnowledgeAiConfigured } from "./knowledge-ai-config.js";
 import { recordProviderCallLog } from "./ai-reply-log-service.js";
+import { extractResponseText } from "./ai-reply-provider-service.js";
 
 const OPENAI_RESPONSES_PATH = "/responses";
 const OPENAI_CHAT_COMPLETIONS_PATH = "/chat/completions";
@@ -143,7 +144,7 @@ async function requestOpenAiCompatibleJson({ config, task, requestId, payload })
       throw error;
     }
 
-    const text = extractResponseText(responsePayload);
+    const text = extractResponseText(responsePayload, { apiMode: config.openai.apiMode }).trim();
     if (!text) {
       throw createKnowledgeAiError("Knowledge AI returned an empty response", "knowledge_ai_empty_response");
     }
@@ -196,21 +197,6 @@ function buildRequestBody({ config, task, payload }) {
     input: [{ role: "user", content: userContent }],
     text: { format: { type: "json_object" } },
   };
-}
-
-function extractResponseText(payload) {
-  const chatCompletionText = payload?.choices?.[0]?.message?.content;
-  if (typeof chatCompletionText === "string") return chatCompletionText.trim();
-
-  if (typeof payload?.output_text === "string") return payload.output_text.trim();
-
-  const output = Array.isArray(payload?.output) ? payload.output : [];
-  return output
-    .flatMap((item) => Array.isArray(item?.content) ? item.content : [])
-    .map((content) => content?.text || "")
-    .filter(Boolean)
-    .join("\n")
-    .trim();
 }
 
 function stripJsonFence(text) {

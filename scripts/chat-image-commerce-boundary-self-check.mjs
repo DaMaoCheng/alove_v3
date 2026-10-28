@@ -1,9 +1,23 @@
+import { jevImageAnswerFixture } from './fixtures/jev-image-answer-fixture.mjs';
 import assert from 'node:assert/strict';
 process.env.AIOVE_PROVIDER_LOG_WRITE_ENABLED = 'false';
 process.env.VENICE_API_KEY = 'isolated-image-boundary';
-process.env.TYPESAFE_API_KEY = '';
-const { classifyChatImageIntent } = await import('../server/chat-image-intent-classifier-service.js');
-const { evaluateChatImageRequest, maybeCreateGuestChatImagePlaceholder } = await import('../server/chat-image-generation-service.js');
+process.env.TYPESAFE_API_KEY = 'fixture-image-jev';
+const { classifyChatImageIntent: actualClassifyImage } = await import('../server/chat-image-intent-classifier-service.js');
+const { classifyJevImageDetails } = await import('../server/jev-image-decision-service.js');
+const { evaluateJevQuestions } = await import('../server/jev-intent-service.js');
+const classifyChatImageIntent = (text, options) => actualClassifyImage(text, { ...options,
+ classifyImageJev: (message, context) => classifyJevImageDetails(message, { ...context,
+  evaluate: request => evaluateJevQuestions({ ...request, forceRefresh: true }) }) });
+const { evaluateChatImageRequest: actualEvaluateImage, maybeCreateGuestChatImagePlaceholder } = await import('../server/chat-image-generation-service.js');
+const evaluateChatImageRequest = async (db, options) => {
+ if (!options.imageDecision && options.jevDecision) {
+  const imageDecision = await classifyChatImageIntent(options.userText, { character: options.character,
+   jevDecision: options.jevDecision, conversationContext: options.conversationContext, forceTargetVerification: true });
+  return actualEvaluateImage(db, { ...options, imageDecision });
+ }
+ return actualEvaluateImage(db, options);
+};
 const { normalizeGuestReplyText } = await import('../server/guest-chat-output-policy.js');
 const { getChatImageStatusCopy } = await import('../server/chat-image-copy-service.js');
 const character = { id: 'mascot_test', category_id: 'mascot' };
@@ -11,8 +25,11 @@ const mistaken = { ok: true, confident: true, confidence: .99, imageIntent: 'try
 const originalFetch = globalThis.fetch;
 let response, calls = 0, lastBody, fail = false;
 globalThis.fetch = async (_url, options) => {
-  calls++; lastBody = JSON.parse(options.body);
+  calls++; const body = JSON.parse(options.body);
+ if (body.questions?.actor_is_character) return { ok: true, json: async () => jevImageAnswerFixture(body, response) };
+  lastBody = body.questions ? { ...body, messages: [{ content: Object.values(body.questions).map(q => q.instructions).join('\n') }, { content: JSON.stringify(body.state) }] } : body;
   if (fail) throw new Error('isolated timeout');
+  if (body.questions) return { ok: true, json: async () => jevImageAnswerFixture(body, response) };
   return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(response) } }] }) };
 };
 const { applyChatImageCommercePolicy } = await import('../server/chat-image-commerce-policy-service.js');
@@ -74,7 +91,7 @@ try {
     true, 'pending merchandise must preserve an independent current character photo request'); checks++;
   // Preserve the prior payload assertion's original scenario.
   response = { hasIntent: true, allowed: true, confidence: .98, intentType: 'group_photo', communicativeAction: 'request_visual_output', requestKind: 'character_image', imageSubject: 'character', requestEvidence: 'Create a photo of us together', actorEvidence: 'us', actionEvidence: 'Create a photo of us together', wants_clothing: false, wants_no_clothing: false };
-  await evaluateChatImageRequest(null, { character, userText: 'Create a photo of us together', jevDecision: mistaken, conversationContext: { recentConversation: [{ role: 'user', text: 'Arsenal shirt' }], latestImageKind: 'product' } });
+  await classifyChatImageIntent('Create a photo of us together', { character, jevDecision: mistaken, conversationContext: { recentConversation: [{ role: 'user', text: 'Arsenal shirt' }], latestImageKind: 'product' } });
   const payload = JSON.parse(lastBody.messages[1].content);
   assert.equal(payload.recentConversation[0].text, 'Arsenal shirt'); assert.equal(payload.latestImageKind, 'product'); checks++;
   for (const bad of [

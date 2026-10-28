@@ -18,7 +18,7 @@ export function looksLikeTtmallOrderLookup(text = "") {
   return Boolean(extractTtmallOrderNumber(value)) || TRACKING.test(value);
 }
 
-export async function resolveTtmallOrderAction({ text = "", siteSlug = "", dependencies = {}, classifyJev = classifyJevIntent, conversationContext = null } = {}) {
+export async function resolveTtmallOrderAction({ text = "", siteSlug = "", dependencies = {}, classifyJev = classifyJevIntent, conversationContext = null, jevDecision = null } = {}) {
   const value = String(text || "").replace(/\s+/g, " ").trim();
   if (!value || !String(siteSlug || "").trim()) return null;
   const access = await (dependencies.resolveSiteAccess || resolveTtmallRuntimeAccess)(siteSlug);
@@ -27,7 +27,11 @@ export async function resolveTtmallOrderAction({ text = "", siteSlug = "", depen
   const standaloneNumber = orderNumber && value.toUpperCase() === orderNumber && /[0-9]/.test(orderNumber);
   // Vocabulary cannot decide action permission: existing-order requests may be
   // elliptical, misspelled or mixed with an independent policy question.
-  if (!standaloneNumber && !await (dependencies.classify || classifyOrderLookup)(value, { classifyJev, conversationContext })) return null;
+  // This adapter has now verified the real site supports order lookup. The
+  // shared primary turn deliberately does not grant that permission itself.
+  const permittedDecision = jevDecision?.ok && jevDecision.unsupportedIntent === "order_lookup"
+    ? { ...jevDecision, unsupported: false } : jevDecision;
+  if (!standaloneNumber && !await (dependencies.classify || classifyOrderLookup)(value, { classifyJev, conversationContext, jevDecision: permittedDecision })) return null;
   return {
     kind: "ttmall_order_lookup",
     status: "binding_required",
@@ -37,13 +41,13 @@ export async function resolveTtmallOrderAction({ text = "", siteSlug = "", depen
   };
 }
 
-export async function classifyOrderLookup(text = "", { classifyJev = classifyJevIntent, conversationContext = null } = {}) {
+export async function classifyOrderLookup(text = "", { classifyJev = classifyJevIntent, conversationContext = null, jevDecision = null } = {}) {
   const context = conversationContext ? {
     ...normalizeConversationContext(conversationContext),
     recentConversation: (Array.isArray(conversationContext.recentConversation) ? conversationContext.recentConversation : []).slice(-6)
       .map(row => ({ role: row?.role === "user" ? "user" : "assistant", kind: String(row?.kind || "text").slice(0, 32), text: String(row?.text || "").slice(0, 600) })),
   } : null;
-  const jev = await classifyJev({
+  const jev = jevDecision || await classifyJev({
     userText: text,
     conversationContext: context,
     capabilities: {
@@ -53,9 +57,12 @@ export async function classifyOrderLookup(text = "", { classifyJev = classifyJev
       canSearchWeb: true,
     },
   });
-  if (jev.ok && jev.confident) {
-    return jev.orderIntent === "lookup" && !jev.unsupported;
+  if (jev.ok) {
+    return jev.confident === true && jev.orderIntent === "lookup" && !jev.unsupported;
   }
+  // Low confidence is a valid semantic result. Only exhausted JEV failures
+  // may enter the shared configured LLM fallback chain.
+  if (jev.llmFallbackAllowed !== true) return false;
   if (!isAiJsonProviderConfigured()) return false;
   const candidate = String(text || "").replace(/\s+/g, " ").trim().slice(0, 800);
   if (!candidate) return false;

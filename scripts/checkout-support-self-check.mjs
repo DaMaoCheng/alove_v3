@@ -1,3 +1,4 @@
+// This script exercises the retained LLM fallback transport/contract only; JEV admission has its own integration checks.
 import assert from "node:assert/strict";
 import { normalizeCheckoutIssue, shouldSkipOrderLookupForCheckout, buildCheckoutSupportPrompt, buildCheckoutReviewContext, hasCheckoutIssue, CHECKOUT_CLASSIFICATION_CONTRACT } from "../server/checkout-support-guidance.js";
 import { buildCheckoutNextStepCopy } from "../server/checkout-support-copy.js";
@@ -71,7 +72,7 @@ console.log("checkout support pure self-check passed: evidence, state, no-contac
 // Production classification and routing with an injected in-memory provider.
 // Configuration is imported only after logs are disabled and fetch is blocked.
 process.env.AIOVE_PROVIDER_LOG_WRITE_ENABLED = "false";
-const { classifyCommerceIntent } = await import("../server/product-intent-classifier-service.js");
+const { classifyCommerceIntentFallback: classifyCommerceIntent } = await import("../server/product-intent-classifier-service.js");
 const { resolveCommerceSearchIntent } = await import("../server/commerce-routing-service.js");
 const history = [
   { senderType: "user", text: "old unrelated line" },

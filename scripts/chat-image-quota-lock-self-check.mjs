@@ -1,3 +1,4 @@
+import { assertFixtureTransport, restore } from "./fixtures/chat-image-classifier-fixture.mjs";
 import { claimNextMemoryJob } from "../server/memory-job-service.js";
 import assert from "node:assert/strict";
 import { rm } from "node:fs/promises";
@@ -172,6 +173,8 @@ try {
 } finally {
   await cleanup();
   await closeDbPool();
+  restore();
+  assertFixtureTransport();
 }
 
 function findImage(result) {

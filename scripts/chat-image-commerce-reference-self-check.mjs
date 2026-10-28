@@ -3,7 +3,7 @@ process.env.AIOVE_PROVIDER_LOG_WRITE_ENABLED='false';process.env.VENICE_API_KEY=
 const {classifyChatImageIntent}=await import('../server/chat-image-intent-classifier-service.js');
 const text='La quiero en manga corta. Muéstrame la candidata y dime si el nombre del catálogo es diferente.';
 globalThis.fetch=async()=>({ok:true,json:async()=>({choices:[{message:{content:JSON.stringify({hasIntent:true,allowed:true,confidence:.99,intentType:'try_on',communicativeAction:'request_visual_output',requestKind:'character_image',imageSubject:'character',requestEvidence:'Muéstrame la candidata',explicitGeneration:true,wants_clothing:true,wants_no_clothing:false})}}]})});
-const result=await classifyChatImageIntent(text,{character:{id:'mascot_test',category_id:'mascot'},jevDecision:{ok:false,confident:false}});
+const result=await classifyChatImageIntent(text,{character:{id:'mascot_test',category_id:'mascot'},jevDecision:{ok:false,confident:false,llmFallbackAllowed:true,exhausted:true,attempts:2}});
 assert.equal(result.hasIntent,false,'catalogue viewing span alone cannot establish an independently requested depicted actor');
 console.log('image reference routing reproduced and guarded');
 const {applyChatImageCommercePolicy}=await import('../server/chat-image-commerce-policy-service.js');
@@ -57,7 +57,7 @@ assert.equal(calls,1,'same request must classify commerce only once');
 console.log('image commerce admission self-check passed: no image jobs, DB writes or external calls');
 const {maybeCreateGuestChatImagePlaceholder}=await import('../server/chat-image-generation-service.js');
 globalThis.fetch=async()=>({ok:true,json:async()=>({choices:[{message:{content:JSON.stringify({hasIntent:true,allowed:true,confidence:.99,intentType:'try_on',communicativeAction:'request_visual_output',requestKind:'character_image',imageSubject:'character',requestEvidence:'Muéstrame la candidata',actorEvidence:'Muéstrame',actionEvidence:'Muéstrame la candidata',clothingTarget:'catalogue_product',explicitGeneration:true,wants_clothing:true,wants_no_clothing:false})}}]})});
-const denied=await maybeCreateGuestChatImagePlaceholder({execute:()=>{throw new Error('must defer before DB/quota');}},{character:{id:'mascot_test',category_id:'mascot'},userText:text,jevDecision:{ok:false,confident:false},commerceIntent,commerceSiteId:'site_a',recentMessages:[]});
+const denied=await maybeCreateGuestChatImagePlaceholder({execute:()=>{throw new Error('must defer before DB/quota');}},{character:{id:'mascot_test',category_id:'mascot'},userText:text,jevDecision:{ok:false,confident:false,llmFallbackAllowed:true,exhausted:true,attempts:2},commerceIntent,commerceSiteId:'site_a',recentMessages:[]});
 assert.equal(denied.taskCreated,false);assert.equal(denied.trigger.deferredToProduct,true,'even a confident semantic mistake with distinct actor text cannot use avatar-only reference');
 assert.equal(applyChatImageCommercePolicy(role,{...context,commerceIntent:{...commerceIntent,commerceRoute:'unclear'}}).hasIntent,false,'uncertain current target cannot reuse old product');
 console.log('image quota admission entry guarded against false-positive classification');

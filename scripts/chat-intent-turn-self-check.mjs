@@ -111,8 +111,12 @@ for (const [label, start, end, expectedHash] of ruleRegions) {
 for (const unchangedLine of [
   'const MIN_ROUTE_CONFIDENCE = 0.72;',
   'const MIN_PRODUCT_ACTION_CONFIDENCE = 0.72;',
-  'const CACHE_TTL_MS = 15_000;',
   'if (!text || text.length > 1200) return unavailableDecision("invalid_input");',
-  'const timeout = setTimeout(() => controller.abort(), config.timeoutMs);',
 ]) assert.ok(source.includes(unchangedLine), `approved Jev threshold/deadline changed: ${unchangedLine}`);
+// The retry transport/cache now has a dedicated module; preserve the original
+// routing-rule hash checks above and assert the moved cache/deadline separately.
+const evaluationSource = await readFile(new URL('../server/jev-evaluation-service.js', import.meta.url), 'utf8');
+assert.ok(evaluationSource.includes('const CACHE_TTL_MS = 15_000;'));
+assert.ok(evaluationSource.includes('Number(config.timeoutMs)'));
+assert.ok(evaluationSource.includes('const timeout = setTimeout(() => controller.abort(), timeoutMs);'));
 console.log("chat intent turn self-check passed (request parity, isolation, reuse, mixed signals, immutable decisions, Jev baseline)");

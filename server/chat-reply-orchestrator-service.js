@@ -122,7 +122,7 @@ export async function buildCharacterReplyGenerationForDb(db, {
   // Only callers that persist an order action supply this site. Voice currently does not.
   const orderAction = !orderLookupSiteSlug || isSubmittedFeedbackFollowup(knowledgeContext, commerceSearchIntent, userText) || (isStorefrontGuidanceCharacter(promptCharacter) && shouldSkipOrderLookupForCheckout(commerceSearchIntent))
     ? null : await resolveTtmallOrderAction({ text: userText, siteSlug: orderLookupSiteSlug, classifyJev: intentTurn.classify,
-      conversationContext: intentTurn.conversationContext });
+      conversationContext: intentTurn.conversationContext, jevDecision: intentTurn.decision });
   const feedbackActionCandidate = resolveChatFeedbackActionCandidate({
     character: promptCharacter,
     productContext,

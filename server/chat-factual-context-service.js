@@ -10,11 +10,14 @@ export async function resolveChatFactualContext({ userText = "", jevDecision = n
   const date = new Date(now);
   const context = { required: false, status: "not_required", reason: "not_requested", asOfUtc: Number.isFinite(date.getTime()) ? date.toISOString() : new Date().toISOString(), timeZone: "UTC", items: [], searched: false, decisionSource: "none", webSearchScore: null };
   if (!query) return { ...context, reason: "empty_input" };
-  const reliableDecision = jevDecision?.ok === true && jevDecision?.confident === true && typeof jevDecision.webSearchIntent === "boolean";
-  // Diagnostics only: source/score never grant evidence or change an action threshold.
+  const reliableDecision = jevDecision?.ok === true && typeof jevDecision.webSearchIntent === "boolean"
+    && (jevDecision.confident === true || Number.isFinite(jevDecision.webSearchScore)
+      && jevDecision.webSearchScore >= .7 && jevDecision.webSearchScore <= 1);
+  // Diagnostic metadata does not grant factual evidence; the independent JEV
+  // signal above uses the same existing action threshold.
   context.webSearchScore = jevDecision?.ok === true && Number.isFinite(jevDecision.webSearchScore)
     && jevDecision.webSearchScore >= 0 && jevDecision.webSearchScore <= 1 ? jevDecision.webSearchScore : null;
-  context.decisionSource = reliableDecision ? "jev" : "lexical_fallback";
+  context.decisionSource = reliableDecision ? (jevDecision.routingSource || "jev") : jevDecision != null ? "jev_unavailable" : "lexical_fallback";
   // A validated pure merchandise request owns its catalogue words. A weak
   // keyword fallback cannot turn those words into a separate public-fact task.
   const pureShopping = searchIntent.commerceRoute === 'product_search' && searchIntent.knowledgeScope === 'business'
@@ -25,7 +28,8 @@ export async function resolveChatFactualContext({ userText = "", jevDecision = n
     && jevDecision?.webSearchIntent !== true && !['web_search', 'order_lookup', 'library_photo', 'explicit_generation', 'try_on', 'group_photo', 'image_inspection'].includes(jevDecision?.primaryIntent)
     && jevDecision?.orderIntent !== 'lookup' && !(jevDecision?.imageIntent && jevDecision.imageIntent !== 'none');
   if (!reliableDecision && pureShopping) return { ...context, decisionSource: "catalogue_scope" };
-  const required = reliableDecision ? jevDecision.webSearchIntent : shouldTriggerBraveSearch(text, { config: { enabled: true } });
+  const required = reliableDecision ? jevDecision.webSearchIntent
+    : jevDecision != null ? false : shouldTriggerBraveSearch(text, { config: { enabled: true } });
   if (!required) return context;
   context.required = true;
   const businessScope = searchIntent?.knowledgeScope === "business"

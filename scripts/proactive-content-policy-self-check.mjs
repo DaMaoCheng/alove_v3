@@ -29,26 +29,19 @@ for (const invalid of [null, [], {}, { state: "neutral", candidateKind: "shoppin
   check(!policy.allowsProactiveShopping(decision), "malformed or uncertain assessment fails closed for shopping");
 }
 const config = { apiKey: "isolated-key", model: "test", baseUrl: "https://classifier.invalid" };
+// User state now belongs to JEV. These fixtures preserve the same semantic
+// cases and assert a valid state never reaches an LLM classification request.
 for (const [text, state] of [["The complaint is still pending", "unresolved_after_sales"], ["The parcel arrived, thank you", "resolved"], ["Please help me choose a new Arsenal jersey", "shopping"], ["How many days is your standard delivery before I order?", "neutral"], ["まだ荷物を待っています", "unresolved_after_sales"]]) {
-  const decision = await policy.classifyProactiveContent({ recentMessages: [{ senderType: "user", text }], candidateText: care, config, fetchImpl: async (_url, options) => {
-    const body = JSON.parse(options.body);
-    check(body.messages[0].content.includes("An assistant's reassurance") && body.messages[0].content.includes("General delivery"), "semantic contract distinguishes personal unresolved state from general policy");
-    assert.equal(JSON.parse(body.messages[1].content).recentConversation[0].text, text);
-    return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ state, candidateKind: "care", confidence: .95 }) } }] }) };
-  } });
-  check(decision.state === state, "validated semantic state is usable without language-specific matching");
+  const decision = await policy.classifyProactiveContent({ recentMessages: [{ senderType: "user", text }], config,
+    classifyJevState: async ({context}) => { assert.equal(context[0].text,text); return {ok:true,decision:{state,candidateKind:'care',confidence:.95}}; },
+    fetchImpl: async () => { throw Error('Valid JEV cannot trigger LLM state classification'); } });
+  check(decision.state === state, "validated JEV semantic state is usable without language-specific matching");
 }
 for (const [latestText, expectedState] of [["Now help me choose a new Arsenal shirt.", "shopping"], ["Okay", "unresolved_after_sales"]]) {
   const recentMessages = [{ senderType: "user", text: "My order has still not arrived." }, { senderType: "user", text: latestText }];
-  const decision = await policy.classifyProactiveContent({ recentMessages, candidateText: "Would you like to browse our new shirts?", config, fetchImpl: async (_url, options) => {
-    const body = JSON.parse(options.body);
-    const contract = body.messages[0].content;
-    check(contract.includes("most recent explicit user intent") && contract.includes("takes precedence over an earlier unresolved after-sales concern"), "prompt gives current explicit shopping priority over earlier after-sales");
-    check(contract.includes("Neutral acknowledgments, casual conversation and assistant reassurance do not release") && contract.includes("proposed proactive message cannot establish shopping intent"), "prompt prevents neutral acknowledgments or generated sales copy from restoring shopping");
-    const context = JSON.parse(body.messages[1].content).recentConversation;
-    check(context[0].text === recentMessages[0].text && context[1].text === latestText, "classifier receives user intent in chronological order");
-    return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ state: expectedState, candidateKind: "shopping", confidence: .95 }) } }] }) };
-  } });
+  const decision = await policy.classifyProactiveContent({ recentMessages, config,
+    classifyJevState: async ({context}) => { check(context[0].text===recentMessages[0].text&&context[1].text===latestText,'JEV receives chronological user context');return {ok:true,decision:{state:expectedState,candidateKind:'shopping',confidence:.95}}; },
+    fetchImpl:async()=>{throw Error('No LLM state classification after JEV success');} });
   const candidate = policy.resolveProactiveCandidate({ text: "Would you like to browse our new shirts?", decision });
   check(decision.state === expectedState && candidate.replaced === (expectedState !== "shopping"), "new explicit shopping permits sales while ordinary acknowledgment retains after-sales protection");
 }

@@ -217,7 +217,7 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
     requestId: prepared.message.id, sessionId: prepared.guest.chat_session_id, characterId: promptCharacter.id,
   });
   const resolvedOrderAction = (shouldSkipOrderLookupForCheckout(productRecommendation.searchIntent) || isSubmittedFeedbackFollowup(knowledgeContext, productRecommendation.searchIntent, prepared.text)) ? null : await resolveTtmallOrderAction({ text: prepared.text, siteSlug: prepared.guest.site_slug, classifyJev: intentTurn.classify,
-    conversationContext: intentTurn.conversationContext });
+    conversationContext: intentTurn.conversationContext, jevDecision: intentTurn.decision });
   const orderAction = resolvedOrderAction ? { ...resolvedOrderAction, status: "login_required", label: "Sign in to check order" } : null;
   const feedbackActionCandidate = resolveChatFeedbackActionCandidate({
     character: promptCharacter,

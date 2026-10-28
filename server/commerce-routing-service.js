@@ -105,6 +105,17 @@ function primaryConversationPurpose({ decision, jevDecision, searchIntent, recen
 }
 
 export async function resolveCommerceSearchIntent({ userText = "", recentMessages = [], searchIntent = {}, classifyCommerce = classifyCommerceIntent, explicitTrigger = false, siteId = "", siteSlug = "", characterId = "", jevDecision = null, enrichAllTurns = false, logContext = {} } = {}) {
+  // The product parser still supplies literal catalogue attributes, not user
+  // action/purpose authority. An active shared decision (including uncertainty
+  // or failure) must not be overruled by its legacy language keyword flags.
+  // Explicit UI productTrigger and scoped requirement/ownership guards remain.
+  if (jevDecision != null) {
+    const lexical = buildProductSearchIntent(userText);
+    searchIntent = { ...searchIntent,
+      ...(lexical.nonShoppingReason && searchIntent.nonShoppingReason === lexical.nonShoppingReason ? { nonShoppingReason: '' } : {}),
+      ...(lexical.customerServiceKnowledgeRequest && searchIntent.customerServiceKnowledgeRequest === true ? { customerServiceKnowledgeRequest: false } : {}),
+    };
+  }
   if (searchIntent.replyBoundaryReason === 'product_action_closed') {
     searchIntent = { ...searchIntent, replyBoundaryReason: '', replyTopicHint: '', replyClarificationContext: null };
   }
@@ -146,7 +157,12 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
     // normalizeCommerceDecision closes answer/action flags below its confidence
     // threshold. The retained route is only a read-only question-purpose hint,
     // never permission to search, issue cards, contact anyone or assert policy.
-    const existingBusinessQuestion = searchIntent.customerServiceKnowledgeRequest === true
+    // A failed optional detail lane cannot erase a reliable existing-order
+    // purpose. This read-only hint authorizes knowledge retrieval only, never
+    // catalogue search, contact, account binding or actual order access.
+    const primaryOrderQuestion = Boolean(jevDecision?.ok && jevDecision.confident
+      && jevDecision.primaryIntent === 'order_lookup' && jevDecision.orderIntent === 'lookup');
+    const existingBusinessQuestion = primaryOrderQuestion || searchIntent.customerServiceKnowledgeRequest === true
       || searchIntent.answerRequired === true && searchIntent.knowledgeScope === "business";
     const replyTopicHint = !classificationFailure && decision?.topic === "sizing"
       && ["store_policy", "product_question"].includes(decision.route) ? "sizing" : replyClarificationContext ? knownBusinessQuestion ? "commerce_question" : "product_selection" : "";
@@ -154,11 +170,12 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
       replyTopicHint, replyClarificationContext,
       shouldLoadProductContext: false, cardAllowed: false, replyBoundary: { salesAllowed: false, contactAllowed: false }, boundaryRequired: true,
       replyBoundaryReason: clarificationAllowed ? "classification_uncertain" : "",
-      answerRequired: searchIntent.answerRequired === true || searchIntent.customerServiceKnowledgeRequest === true || knownBusinessQuestion,
+      answerRequired: primaryOrderQuestion || searchIntent.answerRequired === true || searchIntent.customerServiceKnowledgeRequest === true || knownBusinessQuestion,
       ...(knownBusinessQuestion || existingBusinessQuestion ? {
         knowledgeScope: "business", customerServiceKnowledgeRequest: true,
-        commerceTopic: knownBusinessQuestion ? decision.topic : searchIntent.commerceTopic || "other",
-        knowledgeQuery: knownBusinessQuestion && typeof decision.knowledgeQuery === "string" ? decision.knowledgeQuery.trim().slice(0, 240) : searchIntent.knowledgeQuery || "",
+        commerceTopic: primaryOrderQuestion ? 'delivery' : knownBusinessQuestion ? decision.topic : searchIntent.commerceTopic || "other",
+        knowledgeQuery: primaryOrderQuestion ? String(userText).trim().slice(0, 240)
+          : knownBusinessQuestion && typeof decision.knowledgeQuery === "string" ? decision.knowledgeQuery.trim().slice(0, 240) : searchIntent.knowledgeQuery || "",
       } : {}),
       ...normalizeCommerceAssistance({}, { userText }),
       commerceClassificationFailure: classificationFailure, commerceClassificationFailures: decision?.commerceClassificationFailures, commerceClassificationUnavailable: productFailure };

@@ -1,14 +1,12 @@
 import { SUPPORTED_CHARACTER_LANGUAGES } from "../shared/language-library.js";
 import { SERVER_CONFIG } from "./config.js";
-import { recordProviderCallLog } from "./ai-reply-log-service.js";
+import { evaluateJevQuestions } from "./jev-evaluation-service.js";
+export { evaluateJevQuestions } from "./jev-evaluation-service.js";
 import { normalizeChatProductRoutingContext } from "./chat-product-routing-context-service.js";
 import { normalizeUnansweredUserQuestion } from "./chat-reply-recovery-state.js";
 
-const SYSTEM_ONE_PATH = "/systemone";
 const MIN_ROUTE_CONFIDENCE = 0.72;
 const MIN_PRODUCT_ACTION_CONFIDENCE = 0.72;
-const CACHE_TTL_MS = 15_000;
-const decisionCache = new Map();
 
 const ROUTE_CRITERIA = Object.freeze({
   daily_chat: "Normal conversation, a general question, a compliment, or a comment about an earlier character image or message that does not ask the system to perform a specialized action. Product mentions used as comments such as 'Bonito bikini', 'Nice shirt', or a bare team name belong here.",
@@ -32,6 +30,7 @@ export async function classifyJevIntent({
   forceRefresh = false,
   fetchImpl = fetch,
   configOverride = null,
+  logContext = {},
 } = {}) {
   const text = normalizeText(userText);
   if (!text || text.length > 1200) return unavailableDecision("invalid_input");
@@ -39,72 +38,29 @@ export async function classifyJevIntent({
   if (!config.enabled || !config.apiKey) return unavailableDecision("missing_api_key");
 
   const normalizedConversationContext = normalizeConversationContext(conversationContext);
-  const key = buildCacheKey(text, capabilities, normalizedConversationContext, cacheKey);
-  if (!forceRefresh) {
-    const cached = readCache(key);
-    if (cached) return { ...cached, cached: true };
-  }
-
-  const startedAt = Date.now();
-  let providerCallLogged = false;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), config.timeoutMs);
-  try {
-    const response = await fetchImpl(`${config.baseUrl}${SYSTEM_ONE_PATH}`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify({
-        state: {
-          message: text,
-          capabilities: normalizeCapabilities(capabilities),
-          conversation_context: normalizedConversationContext,
-        },
-        model: config.model,
-        questions: buildQuestions(capabilities),
-      }),
-      signal: controller.signal,
-    });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) {
-      const error = new Error(`jev HTTP ${response.status}`);
-      error.statusCode = response.status;
-      throw error;
-    }
-    if (!payload?.answers?.route?.choice) throw new Error("jev invalid response");
-    const decision = normalizeJevResponse(payload, capabilities, normalizedConversationContext);
-    await recordProviderCallLog({
-      provider: "typesafe",
-      model: config.model,
-      baseUrl: config.baseUrl,
-      sourceRef: "jev-intent-router",
-      status: "success",
-      startedAt,
-    });
-    providerCallLogged = true;
-    writeCache(key, decision);
-    return decision;
-  } catch (error) {
-    if (!providerCallLogged) {
-      await recordProviderCallLog({
-        provider: "typesafe",
-        model: config.model,
-        baseUrl: config.baseUrl,
-        sourceRef: "jev-intent-router",
-        status: "error",
-        startedAt,
-        error,
-      });
-    }
-    const decision = unavailableDecision(resolveFailureReason(error));
-    writeCache(key, decision);
-    return decision;
-  } finally {
-    clearTimeout(timeout);
-  }
+  const result = await evaluateJevQuestions({
+    state: { message: text, capabilities: normalizeCapabilities(capabilities), conversation_context: normalizedConversationContext },
+    questions: buildQuestions(capabilities), configOverride: config, fetchImpl, forceRefresh, logContext,
+    // Existing primary callers and older fixtures omit optional secondary answers.
+    // A missing/malformed primary route is a protocol failure, not uncertainty.
+    validatePayload: validPrimaryPayload,
+  });
+  if (!result.ok) return { ...unavailableDecision(result.fallbackReason), ...failureMeta(result) };
+  return { ...normalizeJevResponse(result.payload, capabilities, normalizedConversationContext),
+    attempts: result.attempts, exhausted: false, llmFallbackAllowed: false, ...(result.cached ? { cached: true } : {}) };
 }
+
+function failureMeta(result) {
+  return { attempts: result.attempts, exhausted: result.exhausted, llmFallbackAllowed: result.llmFallbackAllowed };
+}
+
+function validPrimaryPayload(payload) {
+  const answer = payload?.answers?.route;
+  return isPlainObject(answer) && Object.hasOwn(ROUTE_CRITERIA, answer.choice)
+    && typeof answer.confidence === "number" && Number.isFinite(answer.confidence)
+    && answer.confidence >= 0 && answer.confidence <= 1;
+}
+
 
 export function buildQuestions() {
   return {
@@ -244,15 +200,6 @@ function resolveSupport({ primaryIntent, imageIntent, productIntent, orderIntent
   return { unsupported: false, intent: "" };
 }
 
-function buildCacheKey(text, capabilities, conversationContext, cacheKey) {
-  const capabilityKey = JSON.stringify(normalizeCapabilities(capabilities));
-  // Keep the cache independent of request ids so the image, product, and order
-  // adapters can share one Jev result during the same short turn. Only the
-  // normalized message and capability shape are cached; no user identity is stored.
-  const contextKey = JSON.stringify(conversationContext);
-  return `${text}|${capabilityKey}|${contextKey}`;
-}
-
 function normalizeCapabilities(value = {}) {
   return {
     canGenerateImage: value.canGenerateImage !== false,
@@ -303,6 +250,7 @@ function unavailableDecision(reason) {
   return {
     ok: false,
     source: "jev_unavailable",
+    attempts: 0, exhausted: false, llmFallbackAllowed: false,
     fallbackReason: String(reason || "unavailable"),
     primaryIntent: "",
     confidence: 0,
@@ -318,32 +266,6 @@ function unavailableDecision(reason) {
     unsupportedIntent: "",
     probabilities: {},
   };
-}
-
-function resolveFailureReason(error = {}) {
-  if (error?.name === "AbortError") return "timeout";
-  if (Number(error?.statusCode) === 429) return "rate_limit";
-  if (Number(error?.statusCode) >= 500) return "provider_error";
-  if (String(error?.message || "").startsWith("jev invalid response")) return "invalid_response";
-  return "request_failed";
-}
-
-function readCache(key) {
-  const entry = decisionCache.get(key);
-  if (!entry) return null;
-  if (Date.now() - entry.createdAt > CACHE_TTL_MS) {
-    decisionCache.delete(key);
-    return null;
-  }
-  return entry.value;
-}
-
-function writeCache(key, value) {
-  decisionCache.set(key, { createdAt: Date.now(), value });
-  if (decisionCache.size > 256) {
-    const oldestKey = decisionCache.keys().next().value;
-    if (oldestKey) decisionCache.delete(oldestKey);
-  }
 }
 
 function isPlainObject(value) {

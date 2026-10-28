@@ -58,7 +58,7 @@ export function buildKnowledgeContextLayer(knowledgeContext = null, { orderActio
       knowledgeContext?.customerServiceTopic === "delivery"
         ? resolveOrderActionPromptState(orderActionCandidate)
           ? "A tracking number cannot be checked or verified by the assistant. For the existing-order lookup use the server-supplied order action and its access requirements, not a guessed external tracking page or a request for delivery-address details in chat. Explain any supplied tracking-status text only from verified evidence; preserve supported general delivery-policy answers."
-          : "A tracking number cannot be checked or verified live in this chat. State that boundary politely, direct the user to the carrier tracking page or store support with their order number and delivery address, and offer to explain any tracking-status text they share."
+          : "A tracking number cannot be checked or verified live in this chat. State that boundary politely. Give a next step, contact or tracking channel, and any required customer information only when explicitly supported by the applicable references; do not infer these requirements from general practice. Where no next step is supported, do not invent one: retain the supported policy answer, explain the relevant capability limitation briefly, and offer to explain tracking-status text the user supplies. Preserve every independently supported part of a mixed question."
         : "",
       "Use them only when they directly help answer the current message.",
       "Do not mention knowledge bases, retrieval, sections, scores, or internal IDs to the user.",

@@ -1,7 +1,16 @@
 import assert from 'node:assert/strict';
 
 process.env.AIOVE_PROVIDER_LOG_WRITE_ENABLED = 'false';
+// Direct role-title consumers read this compatible slot; keep all their tests
+// isolated from developer credentials and real network endpoints.
+process.env.AI_REPLY_PROVIDER = 'openai';
+process.env.OPENAI_API_KEY = 'fixture';
+process.env.OPENAI_BASE_URL = 'https://fixture.invalid';
+process.env.OPENAI_MODEL = 'deepseek-flash';
+process.env.OPENAI_API_MODE = 'responses';
 const { requestOpenAiText } = await import('../server/ai-reply-provider-service.js');
+const { buildProviderCallLogEvent } = await import('../server/ai-reply-log-service.js');
+const { requestAiJsonWithProviderFallback } = await import('../server/ai-json-provider-service.js');
 const config = { id: 'fixture', model: 'fixture-backup', apiKey: 'fixture', baseUrl: 'https://fixture.invalid', apiMode: 'chat_completions', stream: true };
 const prompt = { systemPrompt: 'Fixture', messages: [{ role: 'user', content: 'Fixture' }] };
 const encoder = new TextEncoder();
@@ -102,6 +111,52 @@ await check('normal JSON non-stream response retains output and default false', 
     return new Response(JSON.stringify({ choices: [{ message: { content: 'Normal answer' } }] }), { headers: { 'content-type': 'application/json' } });
   }, { modelConfig: normalConfig }), 'Normal answer');
 });
+for (const content of ['', '{"allowed":true}']) await check(`non-stream token limit rejects ${content ? 'apparently complete' : 'reasoning-only'} output`, async () => {
+  let captured;
+  await assert.rejects(invoke(async () => new Response(JSON.stringify({
+    choices: [{ finish_reason: 'length', message: { content, reasoning_content: 'private-reasoning-fixture' } }],
+    usage: { prompt_tokens: 6733, completion_tokens: 3000, completion_tokens_details: { reasoning_tokens: 3000 } },
+  })), { modelConfig: { ...config, stream: false, requestBodyExtras: { max_tokens: 3000 } },
+    recordProviderCallFn: async event => { captured = event; } }), error => error?.code === 'AI_REPLY_PROTOCOL_ERROR'
+      && error.protocolKind === 'output_truncated');
+  assert.equal(captured.error.providerOutputDiagnostic.reasoningTokens, 3000);
+  assert.equal(captured.error.providerOutputDiagnostic.completionTokens, 3000);
+  const log = buildProviderCallLogEvent(captured);
+  assert.match(log.errorMessage, /protocol=output_truncated; stop=length/);
+  assert.match(log.errorMessage, /reasoning_tokens=3000/);
+  assert.match(log.errorMessage, /max_tokens=3000/);
+  assert(!JSON.stringify(captured.error).includes('private-reasoning-fixture'));
+  assert(log.errorMessage.length <= 500);
+});
+await check('complete non-stream answer ignores reasoning text and preserves stop behavior', async () => {
+  assert.equal(await invoke(async () => new Response(JSON.stringify({ choices: [{ finish_reason: 'stop',
+    message: { content: 'Formal answer', reasoning_content: 'private-reasoning-fixture' } }] })),
+  { modelConfig: { ...config, stream: false } }), 'Formal answer');
+});
+await check('output diagnostics persist only bounded numeric counters and fixed stop reasons', async () => {
+  const log = buildProviderCallLogEvent({ status: 'error', error: { code: 'AI_REPLY_PROTOCOL_ERROR', protocolKind: 'output_truncated',
+    message: 'secret-fixture', providerOutputDiagnostic: { finishReason: 'length', promptTokens: 'secret-fixture',
+      completionTokens: -1, reasoningTokens: Infinity, maxTokens: 1e15, headersMs: 12, bodyMs: 21,
+      raw: 'secret-fixture', authorization: 'secret-fixture' } } });
+  assert.match(log.errorMessage, /headers_ms=12; body_ms=21/);
+  assert(!log.errorMessage.includes('secret-fixture'));
+  assert(!/prompt_tokens|completion_tokens|reasoning_tokens|max_tokens/.test(log.errorMessage));
+});
+await check('non-stream truncation uses the finite JSON backup and preserves its valid rejection', async () => {
+  let calls = 0;
+  const result = await requestAiJsonWithProviderFallback([{ role: 'user', content: 'Fixture' }], {
+    config: ['first', 'second', 'third'].map(id => ({ ...config, id, model: id, stream: false })),
+    timeoutMs: 1000, recordProviderCallFn: async () => {},
+    validateParsed: value => ({ valid: typeof value?.allowed === 'boolean' }),
+    fetchImpl: async () => {
+      calls++;
+      return new Response(JSON.stringify({ choices: [{ finish_reason: calls === 1 ? 'length' : 'stop',
+        message: { content: JSON.stringify({ allowed: calls === 1 }) } }] }));
+    },
+  });
+  assert.equal(calls, 2, 'the third provider must not be asked to overturn a valid rejection');
+  assert.deepEqual(result, { allowed: false });
+});
 await check('Responses API rejects the unsupported chat-only stream flag', async () => {
   await assert.rejects(invoke(async () => { throw new Error('must not send'); }, { modelConfig: { ...config, apiMode: 'responses' } }), protocol);
 });
@@ -111,6 +166,105 @@ await check('normal Responses API remains non-streaming', async () => {
     assert.equal(JSON.parse(init.body).stream, false);
     return new Response(JSON.stringify({ output_text: 'Normal responses answer' }), { headers: { 'content-type': 'application/json' } });
   }, { modelConfig: { ...config, apiMode: 'responses', stream: false } }), 'Normal responses answer');
+});
+
+const responsesConfig = { ...config, model: 'deepseek-flash', apiMode: 'responses', stream: false, reasoningEffort: 'low' };
+const formalMessage = text => ({ type: 'message', role: 'assistant', status: 'completed', content: [{ type: 'output_text', text }] });
+await check('official Responses reasoning items never become formal answer text', async () => {
+  assert.equal(await invoke(async () => new Response(JSON.stringify({ status: 'completed', output: [
+    { type: 'reasoning', content: [{ type: 'reasoning_text', text: 'PRIVATE_REASONING_FIXTURE' }] }, formalMessage('{"allowed":false}'),
+  ] })), { modelConfig: responsesConfig }), '{"allowed":false}');
+});
+await check('reasoning-only Responses payload is not an answer', async () => {
+  await assert.rejects(() => invoke(async () => new Response(JSON.stringify({ status: 'completed', output: [
+    { type: 'reasoning', content: [{ type: 'reasoning_text', text: 'PRIVATE_REASONING_FIXTURE' }] },
+  ] })), { modelConfig: responsesConfig }), error => protocol(error) && error.protocolKind === 'empty_answer');
+});
+for (const status of ['incomplete', 'failed', 'in_progress', 'queued', 'cancelled']) {
+  await check(`Responses ${status} cannot certify even complete-looking JSON`, async () => {
+    await assert.rejects(() => invoke(async () => new Response(JSON.stringify({ status, output_text: '{"allowed":true}',
+      incomplete_details: status === 'incomplete' ? { reason: 'max_output_tokens' } : undefined,
+    })), { modelConfig: responsesConfig }), protocol);
+  });
+}
+await check('incomplete Responses message cannot certify a completed envelope', async () => {
+  await assert.rejects(() => invoke(async () => new Response(JSON.stringify({ status: 'completed', output: [
+    { ...formalMessage('{"allowed":true}'), status: 'incomplete' },
+  ] })), { modelConfig: responsesConfig }), protocol);
+});
+await check('untyped legacy Responses still rejects explicit incomplete message status', async () => {
+  await assert.rejects(() => invoke(async () => new Response(JSON.stringify({ output: [
+    { status: 'incomplete', content: [{ text: '{"allowed":true}' }] },
+  ] })), { modelConfig: responsesConfig }), error => protocol(error) && error.protocolKind === 'incomplete_response');
+});
+await check('Responses failure falls back once and valid rejection remains terminal', async () => {
+  let calls = 0;
+  const actual = await requestAiJsonWithProviderFallback([{ role: 'user', content: 'Fixture JSON.' }], {
+    config: [responsesConfig, { ...responsesConfig, model: 'other-fixture' }, { ...responsesConfig, model: 'unused-fixture' }],
+    validateParsed: raw => ({ valid: typeof raw?.allowed === 'boolean' }), recordProviderCallFn: async () => {},
+    fetchImpl: async () => new Response(JSON.stringify(++calls === 1
+      ? { status: 'incomplete', output_text: '{"allowed":true}' }
+      : { status: 'completed', output: [formalMessage('{"allowed":false}')] })),
+  });
+  assert.equal(calls, 2);
+  assert.deepEqual(actual, { allowed: false });
+});
+await check('legacy untyped Responses text stays compatible and explicit non-answer content is ignored', async () => {
+  assert.equal(await invoke(async () => new Response(JSON.stringify({ output: [
+    { content: [{ text: 'Legacy' }] },
+    { type: 'message', role: 'assistant', content: [{ type: 'reasoning_text', text: 'PRIVATE_REASONING_FIXTURE' }, { type: 'output_text', text: 'answer' }] },
+  ] })), { modelConfig: responsesConfig }), 'Legacy\nanswer');
+});
+await check('official Responses keeps native schema, reasoning field, instructions and system role', async () => {
+  const format = { type: 'json_schema', json_schema: { name: 'audit', strict: true, schema: { type: 'object', properties: { allowed: { type: 'boolean' } }, required: ['allowed'], additionalProperties: false } } };
+  const actual = await requestAiJsonWithProviderFallback([{ role: 'system', content: 'Audit JSON.' }, { role: 'system', content: 'Preserve evidence.' }, { role: 'user', content: 'Fixture.' }], {
+    config: [{ ...responsesConfig, apiKey: 'fixture', baseUrl: 'https://official.example.test', requestBodyExtras: { max_output_tokens: 3000 } }],
+    responseFormat: format, recordProviderCallFn: async () => {}, fetchImpl: async (url, init) => {
+      const body = JSON.parse(init.body);
+      assert.equal(url, 'https://official.example.test/responses');
+      assert.equal(body.model, 'deepseek-flash');
+      assert.deepEqual(body.reasoning, { effort: 'low' });
+      assert.equal(body.stream, false);
+      assert.equal(body.max_output_tokens, 3000);
+      assert.equal(body.instructions, 'Audit JSON.');
+      assert.deepEqual(body.input[0], { role: 'system', content: 'Preserve evidence.' });
+      assert.deepEqual(body.text.format, { type: 'json_schema', ...format.json_schema });
+      assert.equal(body.response_format, undefined);
+      return new Response(JSON.stringify({ status: 'completed', output: [formalMessage('{"allowed":false}')] }));
+    },
+  });
+  assert.deepEqual(actual, { allowed: false });
+});
+await check('role-title consumer uses shared formal extraction without exposing reasoning', async () => {
+  const { deriveCharacterRoleTitle } = await import('../server/character-polish-service.js');
+  const original = globalThis.fetch;
+  try {
+    globalThis.fetch = async url => {
+      assert.equal(url, 'https://fixture.invalid/responses');
+      return new Response(JSON.stringify({ status: 'completed', output: [
+        { type: 'reasoning', content: [{ type: 'reasoning_text', text: 'PRIVATE_REASONING_FIXTURE' }] }, formalMessage('Matchday Spark'),
+      ] }));
+    };
+    const result = await deriveCharacterRoleTitle({ name: 'Fixture', backstory: 'A football guide.' });
+    assert.equal(result.ok, true);
+    assert.equal(result.text, 'Matchday Spark');
+  } finally { globalThis.fetch = original; }
+});
+for (const status of ['completed', 'incomplete']) await check(`knowledge consumer handles official Responses ${status}`, async () => {
+  const { requestKnowledgeAiJson } = await import('../server/knowledge-ai-service.js');
+  const original = globalThis.fetch;
+  try {
+    globalThis.fetch = async url => {
+      assert.equal(url, 'https://fixture.invalid/responses');
+      return new Response(JSON.stringify({ status, output: [
+        { type: 'reasoning', content: [{ type: 'reasoning_text', text: 'PRIVATE_REASONING_FIXTURE' }] }, formalMessage('{"sections":[]}'),
+      ] }));
+    };
+    const run = () => requestKnowledgeAiJson({ task: 'outline', payload: { sourceText: 'Fixture.' },
+      config: { provider: 'openai', openai: { apiKey: 'fixture', baseUrl: 'https://fixture.invalid', model: 'deepseek-flash', apiMode: 'responses', timeoutMs: 1000 } } });
+    if (status === 'completed') assert.deepEqual((await run()).data, { sections: [] });
+    else await assert.rejects(run);
+  } finally { globalThis.fetch = original; }
 });
 for (const status of [402, 429]) await check(`HTTP ${status} retains status semantics`, async () => {
   await assert.rejects(invoke(async () => new Response(JSON.stringify({ error: { message: 'fixture failure' } }), { status, headers: { 'content-type': 'application/json', 'retry-after': '3' } })), (error) => error?.statusCode === status && error?.code !== 'AI_REPLY_PROTOCOL_ERROR');

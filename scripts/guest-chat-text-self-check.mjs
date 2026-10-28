@@ -25,6 +25,7 @@ const productSanitizerSource = readFileSync("server/guest-product-sanitizer.js",
 const outputPolicySource = readFileSync("server/guest-chat-output-policy.js", "utf8");
 const { toGuestSafeProductSearchResult, toGuestSafeResolvedProduct } = await import("../server/guest-product-sanitizer.js");
 const { normalizeGuestReplyText, sanitizeGuestReplyText } = await import("../server/guest-chat-output-policy.js");
+const { normalizeCheckoutIssue } = await import("../server/checkout-support-guidance.js");
 const {
   GUEST_MESSAGE_LIMIT,
   GUEST_RATE_LIMIT,
@@ -143,9 +144,40 @@ assert.equal(sanitizeGuestReplyText("This shirt is 20% off today."), "Discounts 
 assert.equal(sanitizeGuestReplyText("I can get you a member-only benefit."), "Discounts are available after you create an account.", "guest replies should strip generic member benefits");
 assert.equal(sanitizeGuestReplyText("Discounts are available after you create an account."), "Discounts are available after you create an account.", "guest replies should preserve the approved registration notice");
 assert.equal(sanitizeGuestReplyText("At the moment I can only see 2XXL in that listing."), "At the moment I can only see 2XXL in that listing.", "size tokens must not be mistaken for discount codes");
+for (const [languageCode, boundary, inventedRequirements, explanation] of [
+  ["en", /can’t check live tracking/i, /order number|delivery address|carrier|store support/i, /help explain/i],
+  ["zh", /不能实时查询或核验物流单号/, /订单号|收货地址|承运商|客服/, /解释/],
+  ["es", /no puedo comprobar el seguimiento/i, /número de pedido|dirección de entrega|transportista|tienda/i, /entenderlo/i],
+  ["fr", /ne peux pas encore vérifier/i, /numéro de commande|adresse de livraison|transporteur|boutique/i, /comprendre/i],
+  ["hu", /nem tudom élőben ellenőrizni/i, /rendelési szám|szállítási cím|fuvarozó|ügyfélszolgálat/i, /értelmezni/i],
+  ["tr", /kontrol edemiyor/i, /sipariş numar|teslimat adres|taşıyıcı|mağaza/i, /açıklayabilirim/i],
+  ["ar", /لا أستطيع من هنا التحقق/, /رقم الطلب|عنوان التسليم|شركة الشحن|المتجر/, /فهمه/],
+]) {
+  const copy = normalizeGuestReplyText({ text: "Candidate response", userText: "GV634408625GB", languageCode });
+  assert.match(copy, boundary, "the existing selected language keeps the live-lookup limitation");
+  assert.doesNotMatch(copy, inventedRequirements, "tracking fallback cannot invent a channel or collect customer information");
+  assert.match(copy, explanation, "the fallback may explain status text supplied by the user");
+}
+const actionResponse = "Use the available order lookup action.";
+for (const status of ["login_required", "binding_required"]) {
+  assert.equal(normalizeGuestReplyText({ text: actionResponse, userText: "GV634408625GB", orderActionCandidate: {
+    kind: "ttmall_order_lookup", siteSlug: "fixture", status,
+  } }), actionResponse, "a real order action must not be replaced with the no-action tracking fallback");
+}
+const checkoutUserText = "Checkout failed; the reference is GV634408625GB.";
+const checkoutIssue = normalizeCheckoutIssue({ active: true, evidence: "Checkout failed", stage: "unknown" }, {
+  userText: checkoutUserText, confidence: .95,
+});
+assert(checkoutIssue);
+assert.equal(normalizeGuestReplyText({ text: "Please check the checkout error shown.", userText: checkoutUserText,
+  productSearchIntent: { checkoutIssue, answerRequired: true } }), "Please check the checkout error shown.",
+  "a validated checkout problem remains excluded from the tracking fallback");
+assert.equal(normalizeGuestReplyText({ text: "Glad to hear from you.", userText: "Hello there" }), "Glad to hear from you.",
+  "ordinary chat without a tracking reference retains its generated reply");
+
 assert.equal(
   normalizeGuestReplyText({ text: "Yes, please send the tracking code.", userText: "Can I send you the tracking code they sent me?" }),
-  "Thanks for sending it. I’m sorry, but I can’t check live tracking or verify a tracking number in this chat yet. Please use the carrier’s tracking page or contact the store support team with your order number and delivery address. If you share the tracking status text, I can help explain it.",
+  "Thanks for sending it. I’m sorry, but I can’t check live tracking or verify a tracking number in this chat yet. If you share the tracking status text, I can help explain it.",
   "guest tracking questions should receive the official live-tracking capability boundary instead of a discount notice"
 );
 assert.match(

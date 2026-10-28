@@ -2,7 +2,8 @@ import { resolveCommerceSearchIntent } from "./commerce-routing-service.js";
 import { buildProductSearchIntent, buildRecentProductContext } from "./product-intent-service.js";
 import { listRecentMessagesBeforeOrder } from "./chat-message-store.js";
 import { resolveProductRecommendationSite } from "./product-recommendation-site-service.js";
-import { classifyJevIntent, normalizeConversationContext } from "./jev-intent-service.js";
+import { normalizeConversationContext } from "./jev-intent-service.js";
+import { resolvePrimaryChatIntent } from "./resolve-primary-chat-intent-service.js";
 import { buildChatProductRoutingContext } from "./chat-product-routing-context-service.js";
 import { analyzeChatImageTrigger, isMockChatImageRequest } from "./chat-image-trigger-service.js";
 import { classifyChatImageIntent, isProductCapableCharacter } from "./chat-image-intent-classifier-service.js";
@@ -11,7 +12,7 @@ import { buildUnansweredUserQuestionContext } from "./chat-reply-recovery-state.
 
 // Request-local reuse only. Different legacy inputs intentionally remain different
 // requests: changing a capability or image context can change Jev's decision.
-export function createChatIntentTurn({ classify = classifyJevIntent, logContext = {} } = {}) {
+export function createChatIntentTurn({ classify = resolvePrimaryChatIntent, logContext = {} } = {}) {
   const requests = new Map();
   const references = new Map();
   let commerceRequest = null;
@@ -41,7 +42,8 @@ export function createChatIntentTurn({ classify = classifyJevIntent, logContext 
         referenceId(options.fetchImpl), referenceId(options.configOverride),
       ]);
       if (options.forceRefresh || !requests.has(key)) {
-        requests.set(key, Promise.resolve().then(() => classify(options)).then((value) => freezeDecision(value)));
+        requests.set(key, Promise.resolve().then(() => classify(classify === resolvePrimaryChatIntent
+          ? { ...options, logContext: { ...logContext, ...options.logContext } } : options)).then((value) => freezeDecision(value)));
       }
       return requests.get(key);
     },
@@ -73,7 +75,8 @@ export async function prepareChatIntentTurn(db, { session = {}, character = {}, 
     const deterministic = analyzeChatImageTrigger(userText);
     if (isMockChatImageRequest(userText)) return turn;
     turn.imageDecision = await classifyImage(userText, { character, jevDecision: turn.decision,
-      conversationContext: turn.conversationContext, forceTargetVerification: deterministic.hasIntent });
+      conversationContext: turn.conversationContext, forceTargetVerification: deterministic.hasIntent,
+      logContext: { sessionId: session.id, characterId: character.id || session.character_id, ...logContext } });
     if (!turn.imageDecision.hasIntent || !turn.imageDecision.allowed) return turn;
   }
   if (isProductCapableCharacter(character)) {

@@ -155,13 +155,13 @@ async function runFlowChecks() {
     reset({ bound });
     const result = await buildCharacterReplyGenerationForDb(db, { promptCharacter: character, session, userId: "user_fixture", characterId: character.id, userText: fixture.userText, recentMessages: [], orderLookupSiteSlug: "fixture" });
     check(result.orderAction === fixture.promptCandidate && result.orderAction === fixture.generatedCandidate && result.orderAction === fixture.reviewedCandidate, `${bound ? "bound" : "unbound"} generation returns precisely the candidate given to prompt and review`);
-    check(fixture.accessCalls === 1 && fixture.classifications === 1 && fixture.events.indexOf("order_resolve") < fixture.events.indexOf("generate"), "real resolver/classification runs once and precedes generation");
+    check(fixture.accessCalls === 1 && fixture.classifications === 0 && fixture.events.indexOf("order_resolve") < fixture.events.indexOf("generate"), "real resolver reuses the shared primary decision without another classification and precedes generation");
     check(fixture.sql.length === 0 && fixture.inserted.length === 0, "generation never reads orders, binding status or creates bindings");
     reset({ bound });
     const response = await createUserReply({ characterId: character.id, userId: "user_fixture", sinceMessageId: "user_turn" });
     const persisted = fixture.inserted.filter((m) => m.contentType === "order_action");
     const returned = response.items.filter((m) => m.contentType === "order_action");
-    check(fixture.accessCalls === 1 && fixture.classifications === 1, `${bound ? "bound" : "unbound"} text reply resolves order action only once`);
+    check(fixture.accessCalls === 1 && fixture.classifications === 0, `${bound ? "bound" : "unbound"} text reply resolves once using the already shared decision`);
     check(persisted.length === 1 && returned.length === 1 && persisted[0].product === fixture.promptCandidate && returned[0].product === fixture.promptCandidate, "same generated candidate is persisted and returned without a second resolution");
     check(fixture.events.at(-1) === "commit" && !fixture.events.includes("rollback"), "real text reply commits the in-memory message flow");
     check(!fixture.sql.some((sql) => /orders|bindings|INSERT/i.test(sql)), "signed-in flow cannot inspect orders or read/write account bindings");

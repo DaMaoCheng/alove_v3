@@ -65,10 +65,14 @@ GOOGLE_REDIRECT_URI=https://your-domain.example/api/auth/google/callback
 AI_REPLY_PROVIDER=openai
 VENICE_API_KEY=replace_with_venice_key
 VENICE_BASE_URL=https://api.venice.ai/api/v1
-VENICE_MODEL=gemma-4-uncensored
+VENICE_MODEL=deepseek-v4-1-flash-1017-uncensored
 VENICE_API_MODE=chat_completions
 VENICE_TIMEOUT_MS=20000
 VENICE_INCLUDE_DEFAULT_SYSTEM_PROMPT=false
+# Optional model-bound output-review profiles; enable only after positive/negative validation.
+VENICE_REVIEW_PROFILE=
+OPENAI_REVIEW_PROFILE=
+OPENAI_FALLBACK_REVIEW_PROFILE=
 TYPESAFE_API_KEY=replace_with_typesafe_key
 TYPESAFE_BASE_URL=https://api.typesafe.ai/v1
 TYPESAFE_MODEL=jev-latest

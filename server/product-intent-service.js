@@ -625,7 +625,7 @@ function shouldLoadProductContext(userText = "", intent = {}) {
   return PRODUCT_TRIGGER_PATTERNS.some((pattern) => pattern.test(text));
 }
 
-function buildStructuredProductQuery({
+export function buildStructuredProductQuery({
   requestedTeam = "",
   requestedVariant = "",
   requestedVariants = [],

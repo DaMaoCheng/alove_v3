@@ -52,7 +52,8 @@ try {
   assert.equal(shouldRunIntentClassifier("あなたの写真を見せて"), true, "Japanese photo requests should enter the classifier");
   assert.equal(shouldRunIntentClassifier("发照片看看"), true, "ambiguous Chinese photo requests should enter the classifier");
 
-  const result = await classifyChatImageIntent("that kit would look great, could you send a selfie?");
+  const exhaustedJev = { ok: false, llmFallbackAllowed: true, exhausted: true, attempts: 2 };
+  const result = await classifyChatImageIntent("that kit would look great, could you send a selfie?", { jevDecision: exhaustedJev });
   assert.deepEqual(result, {
     hasIntent: true,
     classificationIntent: "try_on",
@@ -101,7 +102,7 @@ try {
   assert.equal(blocked.trigger.conditions, undefined, "disallowed intent must bypass semantic handling");
   assert.equal(requests.length, countBeforeBlocker, "deterministic blocker must not make extra provider calls");
 
-  const libraryResult = await classifyChatImageIntent("发照片看看");
+  const libraryResult = await classifyChatImageIntent("发照片看看", { jevDecision: exhaustedJev });
   assert.deepEqual(libraryResult, {
     hasIntent: true,
     classificationIntent: "library_photo",
@@ -115,7 +116,7 @@ try {
     detectionSource: "classifier",
   });
 
-  const ordinaryResult = await classifyChatImageIntent("what did you think of the match?");
+  const ordinaryResult = await classifyChatImageIntent("what did you think of the match?", { jevDecision: exhaustedJev });
   assert.deepEqual(ordinaryResult, {
     hasIntent: false,
     classificationIntent: "none",
@@ -154,7 +155,7 @@ try {
     }),
   });
   try {
-    const slow = await classifyChatImageIntent("show me a photo", { jevDecision: { ok: true, confident: false } });
+    const slow = await classifyChatImageIntent("show me a photo", { jevDecision: exhaustedJev });
     assert.equal(slow.allowed, true, "a body slower than the former 15s budget and the provider default must still be classified");
     assert.equal(budgets[0], 30000, "image classification receives the enlarged finite provider budget");
     assert(budgets.every(ms => ms > 29000 && ms <= 30000), "body read retains the enlarged attempt deadline");

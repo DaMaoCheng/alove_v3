@@ -524,6 +524,7 @@ async function analyzeChatImageTriggerWithIntent(userText = "", {
     conversationContext: resolvedConversationContext,
     cacheKey,
     forceTargetVerification: verifyCharacterTarget && deterministic.hasIntent,
+    logContext: { sessionId: session?.id, characterId: character?.id, requestId: userMessage?.id },
   });
   if (deterministic.hasIntent && !verifyCharacterTarget) {
     return { ...deterministic, conditions: classified.conditions || null };

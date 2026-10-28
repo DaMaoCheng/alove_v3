@@ -11,7 +11,7 @@ const { closeDbPool, getDbPool, initializeDatabase } = await import("../server/d
 const { CHAT_IMAGE_UPLOAD_POLICY } = await import("../server/upload-policies.js");
 const { extractFileName } = await import("../server/protected-upload-url-service.js");
 const { SERVER_CONFIG } = await import("../server/config.js");
-assert.equal(SERVER_CONFIG.typeSafe.enabled, false, "JEV must be disabled for this isolated provider fixture");
+assert.equal(SERVER_CONFIG.typeSafe.enabled, true, "isolated JEV transport must exercise the successful routing path");
 
 const USER_ID = "user_chat_image_final_self_check";
 const CHARACTER_ID = "char_chat_image_final_self_check";

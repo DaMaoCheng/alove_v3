@@ -83,8 +83,8 @@ async function run(base, { repairResult = 'valid', firstVerdict = initialNo(base
 for (const [kind, base] of [['policy', policy], ['candidate', candidate]]) {
   const result = await run(base);
   check(result.repairs.length === 1, `${kind}: valid grounded rejection invokes one repair`);
-  check(result.reviews.length === 2 && result.languages.length === 2, `${kind}: replacement receives complete primary and independent language review`);
-  check(result.reviews[1].text === result.replacement && result.languages[1].text === result.replacement
+  check(result.reviews.length === 2 && result.languages.length === (kind === 'policy' ? 1 : 2), `${kind}: replacement receives complete primary and independent language review`);
+  check(result.reviews[1].text === result.replacement && result.languages.at(-1).text === result.replacement
     && result.reviews[0].text !== result.reviews[1].text, `${kind}: new review assesses the changed text instead of obtaining another verdict on the rejected original`);
   check(result.output.text === result.replacement && result.output.speechText === result.replacement && !result.output.degraded, `${kind}: only reapproved complete text and speech survive`);
   check(result.repairs[0].language === 'es' && result.repairs[0].userText === base.userText, `${kind}: repair receives current language and USER message`);
@@ -98,12 +98,12 @@ for (const [kind, base] of [['policy', policy], ['candidate', candidate]]) {
   if (kind === 'candidate') check(result.output.candidateEvidenceVerified === true && result.output.candidateConfirmationVerified === true, 'candidate: full re-review grants evidence and confirmation flags');
   for (const firstVerdict of [{ ...initialNo(kind), boundarySupported: false }, { ...yes, allowed: false, boundarySupported: false }]) {
     const correctedBoundary = await run(base, { firstVerdict });
-    check(correctedBoundary.repairs.length === 1 && correctedBoundary.reviews.length === 2 && correctedBoundary.languages.length === 2,
+    check(correctedBoundary.repairs.length === 1 && correctedBoundary.reviews.length === 2 && correctedBoundary.languages.length === (kind === 'policy' ? 1 : 2),
       `${kind}: initial unsupported boundary content may receive one new text correction and complete re-review`);
     check(correctedBoundary.output.text === correctedBoundary.replacement && !correctedBoundary.output.degraded
       && JSON.stringify(correctedBoundary.reviews[1].boundary) === JSON.stringify(base.searchIntent.replyBoundary),
       `${kind}: boundary correction preserves the original permissions and only publishes the newly approved text`);
-    check(correctedBoundary.reviews[1].text === correctedBoundary.replacement && correctedBoundary.languages[1].text === correctedBoundary.replacement,
+    check(correctedBoundary.reviews[1].text === correctedBoundary.replacement && correctedBoundary.languages.at(-1).text === correctedBoundary.replacement,
       `${kind}: initial boundary rejection is resolved by reviewing the new text, never by re-voting on the old text`);
     const stillRejected = await run(base, { firstVerdict, secondVerdict: { ...yes, allowed: false, boundarySupported: false } });
     check(stillRejected.repairs.length === 1 && stillRejected.reviews.length === 2 && stillRejected.output.text !== stillRejected.replacement,
@@ -204,7 +204,7 @@ try {
   const clock = { now: 10000 };
   Date.now = () => clock.now;
   const bounded = await run(policy, { clock });
-  check(bounded.repairs.length === 1 && bounded.languages[1].timeoutMs === 60000,
+  check(bounded.repairs.length === 1 && bounded.languages.at(-1).timeoutMs === 60000,
     'complete language re-review keeps the configured sixty seconds regardless of earlier correction latency');
 } finally { Date.now = originalNow; }
 for (const [label, repairTimeoutMs, expected] of [['default', undefined, 15000], ['oversized', 99999, 15000],

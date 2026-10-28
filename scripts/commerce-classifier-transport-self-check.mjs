@@ -1,6 +1,7 @@
+// This script exercises the retained LLM fallback transport/contract only; JEV admission has its own integration checks.
 import assert from 'node:assert/strict';
 process.env.AIOVE_PROVIDER_LOG_WRITE_ENABLED = 'false';
-const { classifyCommerceIntent, commerceClassificationTimeout } = await import('../server/product-intent-classifier-service.js');
+const { classifyCommerceIntentFallback: classifyCommerceIntent, commerceClassificationTimeout } = await import('../server/product-intent-classifier-service.js');
 const state = { version: 1, status: 'active', owner: 'single', siteId: 's', characterId: 'c',
   targetEvidence: 'Real Madrid shirt', requirements: { requestedTeam: 'Real Madrid', requestedProductType: 'shirt' }, proposal: null };
 const continuation = { siteId: 's', characterId: 'c', recentMessages: [{ senderType: 'character', productCandidateState: state }],

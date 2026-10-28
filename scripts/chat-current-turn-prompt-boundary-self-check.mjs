@@ -162,6 +162,7 @@ function verifyProviderPayload() {
 function runProviderPayloadCheck(apiMode) {
   const code = `
     import assert from "node:assert/strict";
+    process.env.AIOVE_PROVIDER_LOG_WRITE_ENABLED = "false";
     process.env.OPENAI_API_KEY = "boundary-test-key";
     process.env.OPENAI_BASE_URL = "https://boundary.example.test/v1";
     process.env.OPENAI_MODEL = "boundary-test-model";

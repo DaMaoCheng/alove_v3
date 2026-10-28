@@ -1,7 +1,8 @@
+// This script exercises the retained LLM fallback transport/contract only; JEV admission has its own integration checks.
 import assert from 'node:assert/strict';
 Object.assign(process.env, { AIOVE_PROVIDER_LOG_WRITE_ENABLED: 'false', VENICE_API_KEY: 'fixture', VENICE_MODEL: 'candidate-original-primary',
   OPENAI_API_KEY: 'fixture', OPENAI_FALLBACK_API_KEY: 'fixture', OPENAI_FALLBACK_MODEL: 'candidate-tertiary' });
-const { classifyCommerceIntent } = await import('../server/product-intent-classifier-service.js');
+const { classifyCommerceIntentFallback: classifyCommerceIntent } = await import('../server/product-intent-classifier-service.js');
 const { COMMERCE_INTENT_RESPONSE_FORMAT, validateCommerceIntentShape } = await import('../server/commerce-intent-response-format.js');
 const payload = { route: 'product_search', topic: 'other', needsLiveProductData: true, searchQuery: 'Real Madrid away shirt 2026/27',
   referencedProductId: '', knowledgeScope: 'business', knowledgeQuery: '', answerRequired: true,

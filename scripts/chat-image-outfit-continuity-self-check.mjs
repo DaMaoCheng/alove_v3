@@ -1,11 +1,17 @@
+import { jevImageAnswerFixture } from './fixtures/jev-image-answer-fixture.mjs';
 import assert from 'node:assert/strict';
 process.env.AIOVE_PROVIDER_LOG_WRITE_ENABLED = 'false';
 process.env.VENICE_API_KEY = 'isolated-outfit-continuity';
-process.env.TYPESAFE_API_KEY = '';
+process.env.TYPESAFE_API_KEY = 'fixture-image-jev';
 const { applyProductCandidateState } = await import('../server/product-candidate-state-service.js');
 const { resolveCommerceSearchIntent } = await import('../server/commerce-routing-service.js');
 const { buildProductSearchIntent } = await import('../server/product-intent-service.js');
-const { classifyChatImageIntent } = await import('../server/chat-image-intent-classifier-service.js');
+const { classifyChatImageIntent: actualClassifyImage } = await import('../server/chat-image-intent-classifier-service.js');
+const { classifyJevImageDetails } = await import('../server/jev-image-decision-service.js');
+const { evaluateJevQuestions } = await import('../server/jev-intent-service.js');
+const classifyChatImageIntent = (text, options) => actualClassifyImage(text, { ...options,
+ classifyImageJev: (message, context) => classifyJevImageDetails(message, { ...context,
+  evaluate: request => evaluateJevQuestions({ ...request, forceRefresh: true }) }) });
 const { maybeCreateGuestChatImagePlaceholder, maybeCreateChatImagePlaceholder, resolveChatImageReplyDirective } = await import('../server/chat-image-generation-service.js');
 const { applyChatImageCommercePolicy } = await import('../server/chat-image-commerce-policy-service.js');
 const text = 'A ver pasame tu imagen';
@@ -42,7 +48,9 @@ assert.equal(applyChatImageCommercePolicy({ ...selfie, actionEvidence: 'send you
 let response, libraryReads = 0, entitlementReads = 0, lastPrompt, lastPayload;
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async (_url, options) => {
- const body = JSON.parse(options.body); lastPrompt = body.messages[0].content; lastPayload = JSON.parse(body.messages[1].content);
+ const body = JSON.parse(options.body);
+ if (body.questions?.actor_is_character) return { ok: true, json: async () => jevImageAnswerFixture(body, response) }; lastPrompt = body.questions ? Object.values(body.questions).map(q => q.instructions).join('\n') : body.messages[0].content; lastPayload = body.state || JSON.parse(body.messages[1].content);
+ if (body.questions) return { ok: true, json: async () => jevImageAnswerFixture(body, response) };
  return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(response) } }] }) };
 };
 const baseResponse = { communicativeAction: 'request_visual_output', requestKind: 'character_image', hasIntent: true, allowed: true,
@@ -52,7 +60,7 @@ const baseResponse = { communicativeAction: 'request_visual_output', requestKind
 const character = { id: 'mascot_fixture', name: 'Valeria', category_id: 'mascot' };
 const recentConversation = [{ role: 'user', kind: 'text', text: 'Como te verías con la camiseta de Perú en bikini' },
  { role: 'assistant', kind: 'text', text: 'Los colores rojo y blanco quedarían alegres.' }];
-const options = { character, userText: text, jevDecision: { ok: false, confident: false }, conversationContext: { recentConversation },
+const options = { character, userText: text, jevDecision: { ok: true, confident: true, confidence: .99, imageIntent: 'library_photo', imageConditions: { wants_clothing: false, wants_no_clothing: false } }, conversationContext: { recentConversation },
  guest: { id: 'guest_fixture' }, session: { id: 'chat_fixture', character_id: character.id }, commerceSiteId: identity.siteId,
  commerceIntent: { commerceRoute: 'chat' } };
 const db = { execute: async sql => {
@@ -69,8 +77,8 @@ try {
  const outfit = await classifyChatImageIntent(text, options);
  assert.equal(outfit.hasIntent, true);
  assert.deepEqual(lastPayload.recentConversation, recentConversation, 'a pending USER outfit survives an assistant response without a picture');
- assert.match(lastPrompt, /An assistant failure, refusal or irrelevant reply does not erase that USER description/);
- assert.match(lastPrompt, /generic includes a conceptual/);
+ assert.match(lastPrompt, /still-pending clothed USER depiction/);
+ assert.match(lastPrompt, /generic an imagined/);
  assert.doesNotMatch(lastPrompt, /wants_clothing is true only when the user explicitly asks the character to wear/);
  assert.equal(outfit.explicitGeneration, true, 'a verified outfit request cannot silently take the ordinary library path');
  await maybeCreateGuestChatImagePlaceholder(db, { ...options, imageDecision: outfit });

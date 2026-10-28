@@ -331,7 +331,7 @@ export async function buildReviewedProactiveCandidate({ character, recentMessage
     promptContext.systemPrompt += `\n\n${PROACTIVE_GROUNDING_CONTRACT}`;
     const reply = await generateReply({ promptContext, userText: "Send one proactive check-in message now.", logContext });
     const decision = await assessProactiveContent(classifyContent, { recentMessages, contextTruncated,
-      proactiveHistory, language, candidateText: reply.text, generatorModel: reply.aiModel || "", logContext });
+      proactiveHistory, language, trustedState: { state: state.state }, candidateText: reply.text, generatorModel: reply.aiModel || "", logContext });
     const quality = inspectProactiveCandidateQuality({ text: reply.text, decision, proactiveHistory });
     const candidate = resolveProactiveCandidate({ text: reply.text, decision: { ...decision, state: state.state }, recentMessages, language });
     if (quality.allowed && !candidate.replaced) return { allowed: true, candidate, reply };

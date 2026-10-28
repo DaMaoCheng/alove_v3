@@ -17,7 +17,7 @@ async function classify(parsed, conversationContext = context, userText = curren
   globalThis.fetch = async () => { calls++; return { ok: true, status: 200,
     json: async () => ({ choices: [{ message: { content: JSON.stringify(parsed) } }] }) }; };
   const result = await classifyChatImageIntent(userText, { character: { id: 'mascot_fixture', category_id: 'mascot' },
-    jevDecision: { ok: false }, conversationContext });
+    jevDecision: { ok: false, llmFallbackAllowed: true, exhausted: true, attempts: 2 }, conversationContext });
   assert.equal(calls, 1, 'appearance resolution reuses the same image classifier request');
   return result;
 }
@@ -33,7 +33,7 @@ assert.equal(uncertain.allowed, false, 'uncertain continuation requires clarific
 assert.equal(uncertain.appearanceClarificationRequired, true);
 const noTask = await maybeCreateGuestChatImagePlaceholder({ execute: async () => { throw Error('Clarification must not read gallery or reserve quota'); } }, {
   character: { id: 'mascot_fixture', category_id: 'mascot' }, userText: current, imageDecision: uncertain,
-  conversationContext: context, jevDecision: { ok: false }, session: { id: 'session_fixture' }, guest: { id: 'guest_fixture' },
+  conversationContext: context, jevDecision: { ok: false, llmFallbackAllowed: true, exhausted: true, attempts: 2 }, session: { id: 'session_fixture' }, guest: { id: 'guest_fixture' },
 });
 assert.equal(noTask.taskCreated, false); assert.equal(noTask.directive.reason, 'appearance_uncertain');
 assert.match(noTask.directive.instruction, /clarification/);

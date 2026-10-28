@@ -253,19 +253,19 @@ export function normalizeGuestReplyText({ text = "", product = null, productRequ
 function buildGuestTrackingUnavailableReply({ languageCode = "", userText = "" } = {}) {
   switch (resolveGuestProductReplyLanguage(languageCode, userText)) {
     case "zh":
-      return "谢谢你提供信息。很抱歉，这里暂时不能实时查询或核验物流单号。请通过承运商的追踪页面查询，或联系店铺客服并提供订单号和收货地址；如果你把物流状态文字发给我，我可以帮你解释。";
+      return "谢谢你提供信息。很抱歉，这里暂时不能实时查询或核验物流单号。如果你提供物流状态文字，我可以帮你解释它的含义。";
     case "es":
-      return "Gracias por enviarlo. Por ahora no puedo comprobar el seguimiento en tiempo real ni verificar ese número desde aquí. Puedes consultarlo en la página del transportista o pedir ayuda a la tienda con tu número de pedido y dirección de entrega.";
+      return "Gracias por enviarlo. Por ahora no puedo comprobar el seguimiento en tiempo real ni verificar ese número desde aquí. Si compartes el texto del estado del envío, puedo ayudarte a entenderlo.";
     case "fr":
-      return "Merci pour l’information. Je ne peux pas encore vérifier ce numéro ni suivre le colis en direct depuis ici. Consulte le suivi du transporteur ou contacte la boutique avec ton numéro de commande et ton adresse de livraison.";
+      return "Merci pour l’information. Je ne peux pas encore vérifier ce numéro ni suivre le colis en direct depuis ici. Si tu partages le texte du statut de suivi, je peux t’aider à le comprendre.";
     case "hu":
-      return "Köszönöm az információt. Sajnos innen még nem tudom élőben ellenőrizni vagy hitelesíteni a fuvarlevélszámot. A fuvarozó nyomkövető oldalán, illetve az üzlet ügyfélszolgálatán kérhetsz pontos státuszt a rendelési számmal és a szállítási címmel.";
+      return "Köszönöm az információt. Sajnos innen még nem tudom élőben ellenőrizni vagy hitelesíteni a fuvarlevélszámot. Ha megosztod a nyomkövetési állapot szövegét, segítek értelmezni.";
     case "tr":
-      return "Bilgiyi gönderdiğin için teşekkür ederim. Buradan kargo takibini canlı olarak kontrol edemiyor veya takip numarasını doğrulayamıyorum. Sipariş numaran ve teslimat adresinle taşıyıcının takip sayfasından ya da mağaza desteğinden net durum isteyebilirsin.";
+      return "Bilgiyi gönderdiğin için teşekkür ederim. Buradan kargo takibini canlı olarak kontrol edemiyor veya takip numarasını doğrulayamıyorum. Takip durumu metnini paylaşırsan ne anlama geldiğini açıklayabilirim.";
     case "ar":
-      return "شكرًا لإرسال التفاصيل. لا أستطيع من هنا التحقق المباشر من رقم التتبع أو حالة الشحنة. يمكنك مراجعة صفحة تتبع شركة الشحن أو التواصل مع المتجر مع رقم الطلب وعنوان التسليم.";
+      return "شكرًا لإرسال التفاصيل. لا أستطيع من هنا التحقق المباشر من رقم التتبع أو حالة الشحنة. إذا شاركت نص حالة التتبع، يمكنني مساعدتك في فهمه.";
     default:
-      return "Thanks for sending it. I’m sorry, but I can’t check live tracking or verify a tracking number in this chat yet. Please use the carrier’s tracking page or contact the store support team with your order number and delivery address. If you share the tracking status text, I can help explain it.";
+      return "Thanks for sending it. I’m sorry, but I can’t check live tracking or verify a tracking number in this chat yet. If you share the tracking status text, I can help explain it.";
   }
 }
 

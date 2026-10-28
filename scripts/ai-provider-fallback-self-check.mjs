@@ -1,3 +1,4 @@
+// This script exercises the retained LLM fallback transport/contract only; JEV admission has its own integration checks.
 import assert from "node:assert/strict";
 
 Object.assign(process.env, {
@@ -162,14 +163,14 @@ for (const count of [1, 2, 3]) {
   check(f.calls.length === Math.min(count + 1, 3), "main reply 402 does not consume repeated primary attempts");
   assert.deepEqual(events.filter((event) => event.type === "attempt_failure").map((event) => event.nextProvider), Array.from({ length: count }, (_, index) => chain[index + 1]?.id || ""));
 }
-const { classifyCommerceIntent, classifyProductIntent } = await import("../server/product-intent-classifier-service.js");
+const { classifyCommerceIntentFallback: classifyCommerceIntent, classifyProductIntent } = await import("../server/product-intent-classifier-service.js");
 const { classifyCatalogueEditions } = await import("../server/product-edition-service.js");
 const { classifyOrderLookup } = await import("../server/chat-order-intent-service.js");
 const { classifyChatImageIntent } = await import("../server/chat-image-intent-classifier-service.js");
 const { assessReplyBoundary } = await import("../server/chat-reply-boundary-service.js");
 const { classifyProactiveContent } = await import("../server/proactive-content-policy-service.js");
 const { selectBusinessKnowledgeReferences } = await import("../server/business-knowledge-selection-service.js");
-const unavailableJev = async () => ({ ok: false });
+const unavailableJev = async () => ({ ok: false, llmFallbackAllowed: true, exhausted: true, attempts: 2 });
 const commerceVerdict = { route: "chat", topic: "other", needsLiveProductData: false, searchQuery: "", referencedProductId: "",
   knowledgeScope: "general", knowledgeQuery: "", answerRequired: false, businessInquiry: null, humanHandoff: null, promotionInquiry: null, checkoutIssue: null,
   replyBoundary: { salesAllowed: true, contactAllowed: true }, commerceConstraints: { edition: null, team: null },
@@ -181,9 +182,9 @@ const consumers = [
   { name: "catalogue edition", run: () => classifyCatalogueEditions([{ name: "Fan shirt" }]), verdict: { items: [{ index: 0, edition: "fan", confidence: .95 }] }, valid: (result) => result[0]?.edition === "fan" },
   { name: "legacy product", run: () => classifyProductIntent("Find me a shirt", { classifyJev: unavailableJev }), verdict: { isProductRequest: true, confidence: .95 }, valid: (result) => result.isProductRequest === true },
   { name: "order", run: () => classifyOrderLookup("Where is my order?", { classifyJev: unavailableJev }), verdict: { orderLookup: true, referenceKind: "existing_order", requestEvidence: "Where is my order?" }, valid: (result) => result === true },
-  { name: "image", run: () => classifyChatImageIntent("Send your photo", { jevDecision: { ok: false } }), verdict: { hasIntent: true, allowed: true, confidence: .95, intentType: "library_photo" }, valid: (result) => result.allowed === true },
+  { name: "image", run: () => classifyChatImageIntent("Send your photo", { jevDecision: { ok: false, llmFallbackAllowed: true, exhausted: true, attempts: 2 } }), verdict: { hasIntent: true, allowed: true, confidence: .95, intentType: "library_photo" }, valid: (result) => result.allowed === true },
   { name: "reply review", protocolFallback: true, run: () => assessReplyBoundary({ text: "Hello", recordLog: async () => {} }), verdict: { allowed: true, confidence: .95 }, valid: (result) => result.allowed === true },
-  { name: "proactive review", run: () => classifyProactiveContent({ recentMessages: [{ senderType: "user", text: "Hello" }] }), verdict: { state: "neutral", candidateKind: "care", confidence: .95, quality: { natural: true, grounded: true, novel: true } }, valid: (result) => result.candidateKind === "care" },
+  { name: "proactive review", run: () => classifyProactiveContent({ recentMessages: [{ senderType: "user", text: "Hello" }], classifyJevState: unavailableJev }), verdict: { state: "neutral", candidateKind: "care", confidence: .95, quality: { natural: true, grounded: true, novel: true } }, valid: (result) => result.candidateKind === "care" },
 ];
 const originalFetch = globalThis.fetch;
 try {

@@ -1,7 +1,8 @@
+// This script exercises the retained LLM fallback transport/contract only; JEV admission has its own integration checks.
 import assert from 'node:assert/strict';
 process.env.AIOVE_PROVIDER_LOG_WRITE_ENABLED = 'false';
 globalThis.fetch = async () => { throw new Error('Unexpected external request in isolated commerce routing check'); };
-const { classifyCommerceIntent, normalizeCommerceDecision } = await import('../server/product-intent-classifier-service.js');
+const { classifyCommerceIntentFallback: classifyCommerceIntent, normalizeCommerceDecision } = await import('../server/product-intent-classifier-service.js');
 const { resolveCommerceSearchIntent, applyCommerceQuestionPromptPolicy } = await import('../server/commerce-routing-service.js');
 const { buildProductSearchIntent } = await import('../server/product-intent-service.js');
 const { resolveGuestProductRecommendation } = await import('../server/guest-chat-product-service.js');

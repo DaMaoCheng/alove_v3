@@ -2,11 +2,28 @@ import { SERVER_CONFIG } from './config.js';
 
 const modelIdentity = value => String(value || '').trim().toLowerCase();
 
+// Call only at output-review/repair seams. The base generator and the legacy
+// intent fallback retain their configured requests and independent budgets.
+export function applyReviewRequestProfile(provider) {
+  const profile = provider?.reviewRequestProfile;
+  if (!profile || profile.model !== String(provider.model || '').trim()) return provider;
+  const extras = { ...provider.requestBodyExtras };
+  if (profile.maxOutputTokens !== undefined) {
+    delete extras.max_tokens;
+    delete extras.max_output_tokens;
+    extras[provider.apiMode === 'responses' ? 'max_output_tokens' : 'max_tokens'] = profile.maxOutputTokens;
+  }
+  if (provider.apiMode === 'responses') return { ...provider,
+    ...(profile.reasoningEffort ? { reasoningEffort: profile.reasoningEffort } : {}), requestBodyExtras: extras };
+  if (profile.reasoningEffort) extras.reasoning_effort = profile.reasoningEffort;
+  return { ...provider, requestBodyExtras: extras };
+}
+
 // Reviewers reuse the configured provider chain; this module never selects a
 // new model or changes the generator's provider settings.
 export function independentReviewerConfig(generatorModel, aiReply = SERVER_CONFIG.aiReply) {
   const generator = generatorModel || filterIndependentLanguageReviewers(aiReply.replyChain || [])[0]?.model;
-  return filterIndependentLanguageReviewers(aiReply.replyChain || [], generator)[0] || null;
+  return applyReviewRequestProfile(filterIndependentLanguageReviewers(aiReply.replyChain || [], generator)[0] || null);
 }
 
 export function independentJsonProviderChain(aiReply = SERVER_CONFIG.aiReply) {
@@ -24,7 +41,7 @@ export function independentJsonProviderChain(aiReply = SERVER_CONFIG.aiReply) {
 // generated the answer, including every transport fallback.
 export function independentLanguageReviewerChain(generatorModel, aiReply = SERVER_CONFIG.aiReply) {
   const generator = generatorModel || filterIndependentLanguageReviewers(aiReply.replyChain || [])[0]?.model;
-  return filterIndependentLanguageReviewers(independentJsonProviderChain(aiReply) || [], generator);
+  return filterIndependentLanguageReviewers(independentJsonProviderChain(aiReply) || [], generator).map(applyReviewRequestProfile);
 }
 
 export function filterIndependentLanguageReviewers(config, generatorModel) {

@@ -82,7 +82,7 @@ try {
     return { ok: true, json: async () => ({ choices: [{ message: { content: '{"orderLookup":false}' } }] }) };
   };
   assert.equal(await classifyOrderLookup('Can I see the printed number?', { conversationContext: { secret: 'excluded fixture', recentConversation: Array.from({ length: 20 }, () => ({ role: 'user', text: 'x'.repeat(2000), secret: 'excluded fixture' })) },
-    classifyJev: async () => ({ ok: false }) }), false, 'bounded context cannot forward arbitrary caller fields');
+    classifyJev: async () => ({ ok: false, llmFallbackAllowed: true, exhausted: true, attempts: 2 }) }), false, 'bounded context cannot forward arbitrary caller fields');
   let backupCalls = 0;
   globalThis.fetch = async (url, options) => {
     backupCalls++;
@@ -90,13 +90,13 @@ try {
     assert.equal(JSON.parse(options.body).response_format.type, 'json_object');
     return { ok: true, json: async () => ({ choices: [{ message: { content: '```json\n{"orderLookup":true,"referenceKind":"existing_order","requestEvidence":"my order"}\n```' } }] }) };
   };
-  assert.equal(await classifyOrderLookup('Where is my order?', { classifyJev: async () => ({ ok: false, confident: false }) }), true);
+  assert.equal(await classifyOrderLookup('Where is my order?', { classifyJev: async () => ({ ok: false, confident: false, llmFallbackAllowed: true, exhausted: true, attempts: 2 }) }), true);
   assert.equal(backupCalls, 1, 'unavailable Jev reaches the existing bounded semantic backup once');
   globalThis.fetch = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: '{"orderLookup":false}' } }] }) });
   assert.equal(await classifyOrderLookup('maybe shipping?', { classifyJev: async () => ({ ok: true, confident: false, orderIntent: 'lookup' }) }), false,
     'an uncertain Jev lookup is not treated as permission');
   globalThis.fetch = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: '{"orderLookup":"yes"}' } }] }) });
-  assert.equal(await classifyOrderLookup('maybe shipping?', { classifyJev: async () => ({ ok: false }) }), false,
+  assert.equal(await classifyOrderLookup('maybe shipping?', { classifyJev: async () => ({ ok: false, llmFallbackAllowed: true, exhausted: true, attempts: 2 }) }), false,
     'a malformed backup verdict cannot grant an action');
   for (const response of [
     { orderLookup: true, referenceKind: 'existing_order', requestEvidence: 'invented order' },
@@ -104,13 +104,13 @@ try {
     { orderLookup: true, referenceKind: 'existing_order', requestEvidence: '' },
   ]) {
     globalThis.fetch = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(response) } }] }) });
-    assert.equal(await classifyOrderLookup('Where is my order?', { classifyJev: async () => ({ ok: false }) }), false, 'invalid evidence cannot reserve a real action');
+    assert.equal(await classifyOrderLookup('Where is my order?', { classifyJev: async () => ({ ok: false, llmFallbackAllowed: true, exhausted: true, attempts: 2 }) }), false, 'invalid evidence cannot reserve a real action');
   }
   globalThis.fetch = async () => ({ ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify({ orderLookup: true, referenceKind: 'tracking', requestEvidence: 'track my package' }) } }] }) });
-  assert.equal(await classifyOrderLookup('Explain the return policy and track my package', { classifyJev: async () => ({ ok: false }) }), true,
+  assert.equal(await classifyOrderLookup('Explain the return policy and track my package', { classifyJev: async () => ({ ok: false, llmFallbackAllowed: true, exhausted: true, attempts: 2 }) }), true,
     'a separate genuine order lookup survives an independent policy question');
   globalThis.fetch = async () => { throw new Error('Venice unavailable'); };
-  assert.equal(await classifyOrderLookup('Where is my order?', { classifyJev: async () => ({ ok: false }) }), false);
+  assert.equal(await classifyOrderLookup('Where is my order?', { classifyJev: async () => ({ ok: false, llmFallbackAllowed: true, exhausted: true, attempts: 2 }) }), false);
 } finally { globalThis.fetch = original; }
 const { getChatOrderCopy, getChatOrderEntryCopy } = await import('../shared/chat-order-copy.js');
 const { SUPPORTED_CHARACTER_LANGUAGES } = await import('../shared/language-library.js');

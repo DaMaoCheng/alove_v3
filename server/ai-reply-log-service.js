@@ -39,9 +39,18 @@ function formatImageProviderDetails(error) {
 function formatProtocolDetails(error) {
   if (error?.code === "AI_JSON_PARSE_ERROR") return '; phase=output_protocol; protocol=parse';
   if (error?.code === "AI_JSON_INVALID_OUTPUT") return `; phase=output_protocol; protocol=${error.aiJsonProtocolKind === 'evidence' ? 'evidence' : 'shape'}`;
-  return error?.code === "AI_REPLY_PROTOCOL_ERROR"
-    && ["unexpected_stream", "invalid_json", "empty_answer", "invalid_stream", "incomplete_stream", "stream_limit"].includes(error?.protocolKind)
-    ? `; protocol=${error.protocolKind}` : "";
+  if (error?.code !== "AI_REPLY_PROTOCOL_ERROR"
+    || !["unexpected_stream", "invalid_json", "empty_answer", "invalid_stream", "incomplete_stream", "stream_limit", "output_truncated", "incomplete_response"].includes(error?.protocolKind)) return '';
+  let details = `; protocol=${error.protocolKind}`;
+  const diagnostic = error?.providerOutputDiagnostic;
+  if (error.protocolKind !== 'output_truncated' || diagnostic?.finishReason !== 'length') return details;
+  details += '; stop=length';
+  for (const [key, label] of [['promptTokens', 'prompt_tokens'], ['completionTokens', 'completion_tokens'],
+    ['reasoningTokens', 'reasoning_tokens'], ['maxTokens', 'max_tokens'], ['headersMs', 'headers_ms'], ['bodyMs', 'body_ms']]) {
+    const value = diagnostic[key];
+    if (Number.isSafeInteger(value) && value >= 0 && value <= 1e9) details += `; ${label}=${value}`;
+  }
+  return details;
 }
 
 const safeIdentifier = (value) => /^[a-z0-9_:-]{1,80}$/i.test(String(value || "")) ? String(value) : "";

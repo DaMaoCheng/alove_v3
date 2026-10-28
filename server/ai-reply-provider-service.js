@@ -82,6 +82,7 @@ async function requestOpenAiTextRequest(promptContext, {
       body: JSON.stringify(buildOpenAiRequestBody(promptContext, openAiConfig, { appendStructuredOutputContract, jsonOutput })),
       signal: controller.signal,
     });
+    const responseHeadersAt = Date.now();
 
     const isStream = /^text\/event-stream(?:;|$)/i.test(String(response.headers?.get?.("content-type") || "").trim());
     let payload, streamedText;
@@ -118,7 +119,24 @@ async function requestOpenAiTextRequest(promptContext, {
       throw error;
     }
 
-    const text = streamedText ?? extractResponseText(payload);
+    // A syntactically complete-looking fragment is still not a finished reply
+    // when the provider reports its output budget was exhausted. Reasoning-only
+    // output uses that same budget and must never become the formal answer.
+    if (streamedText === undefined && openAiConfig.apiMode === 'chat_completions'
+      && payload?.choices?.[0]?.finish_reason === 'length') {
+      const error = createAiReplyTransportError('AI reply output token budget was exhausted', {
+        code: 'AI_REPLY_PROTOCOL_ERROR', protocolKind: 'output_truncated',
+      });
+      const counters = { promptTokens: payload?.usage?.prompt_tokens,
+        completionTokens: payload?.usage?.completion_tokens,
+        reasoningTokens: payload?.usage?.completion_tokens_details?.reasoning_tokens,
+        maxTokens: openAiConfig.requestBodyExtras?.max_completion_tokens ?? openAiConfig.requestBodyExtras?.max_tokens,
+        headersMs: responseHeadersAt - startedAt, bodyMs: Date.now() - responseHeadersAt };
+      error.providerOutputDiagnostic = { finishReason: 'length', ...Object.fromEntries(Object.entries(counters)
+        .filter(([, value]) => Number.isSafeInteger(value) && value >= 0 && value <= 1e9)) };
+      throw error;
+    }
+    const text = streamedText ?? extractResponseText(payload, { apiMode: openAiConfig.apiMode });
     if (!text.trim()) throw createAiReplyTransportError("AI reply provider returned no response text", {
       code: "AI_REPLY_PROTOCOL_ERROR", protocolKind: "empty_answer",
     });
@@ -273,7 +291,20 @@ function findLastUserMessageIndex(messages) {
   return -1;
 }
 
-function extractResponseText(payload) {
+// Shared with role-title and knowledge consumers, which use their own request
+// paths but must enforce the same formal-output and completion boundary.
+export function extractResponseText(payload, { apiMode } = {}) {
+  if (apiMode === 'responses' || apiMode == null && !Array.isArray(payload?.choices)) {
+    const incompleteMessage = Array.isArray(payload?.output) && payload.output.some(item =>
+      (!item?.type || item.type === 'message') && (!item?.role || item.role === 'assistant')
+      && item?.status != null && item.status !== 'completed');
+    if (payload?.error || payload?.status != null && payload.status !== 'completed' || incompleteMessage) {
+      throw createAiReplyTransportError('AI reply response did not complete successfully', {
+        code: 'AI_REPLY_PROTOCOL_ERROR',
+        protocolKind: payload?.incomplete_details?.reason === 'max_output_tokens' ? 'output_truncated' : 'incomplete_response',
+      });
+    }
+  }
   const chatCompletionText = payload?.choices?.[0]?.message?.content;
   if (typeof chatCompletionText === "string") return chatCompletionText;
 
@@ -281,7 +312,9 @@ function extractResponseText(payload) {
 
   const output = Array.isArray(payload?.output) ? payload.output : [];
   return output
+    .filter(item => (!item?.type || item.type === 'message') && (!item?.role || item.role === 'assistant'))
     .flatMap((item) => Array.isArray(item?.content) ? item.content : [])
+    .filter(content => !content?.type || content.type === 'output_text')
     .map((content) => content?.text || "")
     .filter(Boolean)
     .join("\n")
@@ -322,7 +355,7 @@ function createAiReplyTransportError(message, { statusCode = 0, code = "", retry
   error.statusCode = Number(statusCode || 0) || undefined;
   error.code = code || undefined;
   error.retryable = Boolean(retryable);
-  if (["unexpected_stream", "invalid_json", "empty_answer", "invalid_stream", "incomplete_stream", "stream_limit"].includes(protocolKind)) error.protocolKind = protocolKind;
+  if (["unexpected_stream", "invalid_json", "empty_answer", "invalid_stream", "incomplete_stream", "stream_limit", "output_truncated", "incomplete_response"].includes(protocolKind)) error.protocolKind = protocolKind;
   return error;
 }
 

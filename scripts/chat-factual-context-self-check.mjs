@@ -34,12 +34,12 @@ const beforeControls = calls.length;
 equal((await resolve({ userText: "\u0000\n\t\u007f" })).status, "not_required");
 equal(calls.length, beforeControls);
 equal((await resolve({ userText: "world cup", jevDecision: { ...webDecision, webSearchIntent: false } })).status, "not_required");
-equal((await resolve({ userText: "world cup", jevDecision: { ok: false } })).status, "matched");
-equal((await resolve({ userText: "world cup", jevDecision: { ok: false } })).decisionSource, "lexical_fallback");
+equal((await resolve({ userText: "world cup", jevDecision: { ok: false } })).status, "not_required");
+equal((await resolve({ userText: "world cup", jevDecision: { ok: false } })).decisionSource, "jev_unavailable");
 equal((await resolve({ jevDecision: { ...webDecision, webSearchScore: .93 } })).webSearchScore, .93);
 equal((await resolve({ jevDecision: { ...webDecision, webSearchScore: "private" } })).webSearchScore, null);
 
-equal((await resolve({ userText: "world cup", jevDecision: { ...webDecision, confident: false } })).status, "matched");
+equal((await resolve({ userText: "world cup", jevDecision: { ...webDecision, confident: false } })).status, "not_required");
 equal((await resolve({ userText: "just chatting", jevDecision: { ok: false } })).status, "not_required");
 equal((await resolve({ search: async () => ({ searched: true, items: [] }) })).status, "no_result");
 equal((await resolve({ search: async () => ({ searched: true, items: [], error: "HTTP_429" }) })).status, "error");
@@ -75,13 +75,14 @@ for (const patch of [{ answerRequired: true }, { answerRequired: undefined }, { 
   { productRequestState: { status: 'selected', items: [{}, {}] } }, { checkoutIssue: {} }, { humanHandoff: {} }, { businessInquiry: {} }, { promotionInquiry: {} }, { discountExplanationRequired: true }]) {
   const before = calls.length;
   result = await resolve({ userText: 'Find a World Cup jersey.', jevDecision: weakNoWeb, searchIntent: { ...pureShoppingIntent, ...patch } });
-  equal(result.required, true); equal(result.status, 'blocked'); equal(calls.length, before);
+  equal(result.required, false); equal(result.status, 'not_required'); equal(calls.length, before);
 }
 for (const decision of [{ ...weakNoWeb, webSearchIntent: true }, { ...weakNoWeb, primaryIntent: 'web_search' }, { ...webDecision, primaryIntent: 'product_request' },
   { ...weakNoWeb, imageIntent: 'try_on' }, { ...weakNoWeb, orderIntent: 'lookup' }]) {
   const before = calls.length;
   result = await resolve({ userText: 'Find a World Cup jersey and tell me who won it.', jevDecision: decision, searchIntent: pureShoppingIntent });
-  equal(result.required, true); equal(result.status, 'blocked'); equal(calls.length, before);
+  const reliable = decision.ok === true && decision.confident === true && decision.webSearchIntent === true;
+  equal(result.required, reliable); equal(result.status, reliable ? 'blocked' : 'not_required'); equal(calls.length, before);
 }
 for (const userText of ['Find a jersey and tell me who won the current World Cup.', 'Find a jersey and tell me who won the 1998 World Cup.', 'Find a jersey and tell me who the current national team captain is.']) {
   const before = calls.length;
@@ -156,5 +157,7 @@ const duringWait = providerCalls.length;
 result = await searchBraveLlmContext("expire during wait", { config: { ...config, timeoutMs: 20 }, fetchImpl, recordLog });
 equal(result.error, "TIMEOUT"); equal(result.searched, false);
 await new Promise((resolve) => setTimeout(resolve, 100)); equal(providerCalls.length, duringWait);
+const independentWeb = await resolve({ jevDecision: { ...webDecision, confident: false, webSearchScore: .98 } });
+equal(independentWeb.required, true); equal(independentWeb.decisionSource, 'jev');
 equal(realNetworkAttempts, 0);
 console.log(`chat factual context isolated checks passed (${checks} assertions, no real network/database/provider, queue deadlines included)`);

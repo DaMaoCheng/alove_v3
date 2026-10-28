@@ -13,6 +13,7 @@ const PRIMARY_OPENAI_REPLY_CONFIG = Object.freeze({
   model: process.env.OPENAI_MODEL || "gpt-5.6-luna",
   apiMode: normalizeOpenAiApiMode(process.env.OPENAI_API_MODE),
   reasoningEffort: normalizeOpenAiReasoningEffort(process.env.OPENAI_REASONING_EFFORT),
+  reviewRequestProfile: resolveReviewRequestProfile(process.env.OPENAI_REVIEW_PROFILE),
   timeoutMs: Number(process.env.OPENAI_TIMEOUT_MS || 20000),
 });
 
@@ -20,9 +21,10 @@ const VENICE_REPLY_CONFIG = Object.freeze({
   id: "venice",
   apiKey: process.env.VENICE_API_KEY || "",
   baseUrl: String(process.env.VENICE_BASE_URL || "https://api.venice.ai/api/v1").replace(/\/+$/, ""),
-  model: process.env.VENICE_MODEL || "gemma-4-uncensored",
+  model: process.env.VENICE_MODEL || "deepseek-v4-1-flash-1017-uncensored",
   apiMode: normalizeOpenAiApiMode(process.env.VENICE_API_MODE || "chat_completions"),
   reasoningEffort: "minimal",
+  reviewRequestProfile: resolveReviewRequestProfile(process.env.VENICE_REVIEW_PROFILE),
   timeoutMs: Number(process.env.VENICE_TIMEOUT_MS || 20000),
   requestBodyExtras: Object.freeze({
     venice_parameters: Object.freeze({
@@ -39,6 +41,7 @@ const DEEPSEEK_FALLBACK_REPLY_CONFIG = Object.freeze({
   model: String(process.env.OPENAI_FALLBACK_MODEL || "").trim(),
   apiMode: normalizeOpenAiApiMode(process.env.OPENAI_FALLBACK_API_MODE || PRIMARY_OPENAI_REPLY_CONFIG.apiMode),
   reasoningEffort: PRIMARY_OPENAI_REPLY_CONFIG.reasoningEffort,
+  reviewRequestProfile: resolveReviewRequestProfile(process.env.OPENAI_FALLBACK_REVIEW_PROFILE),
   timeoutMs: normalizeBoundedTimeout(process.env.OPENAI_FALLBACK_TIMEOUT_MS, PRIMARY_OPENAI_REPLY_CONFIG.timeoutMs),
 });
 
@@ -198,6 +201,23 @@ export const SERVER_CONFIG = Object.freeze({
     secretKey: process.env.PRODUCT_API_SECRET_KEY || process.env.APP_SECRET || process.env.DB_PASSWORD || "",
   }),
 });
+
+// Verified model-bound settings for output review/wording repair only. A model
+// change must not silently inherit another model's reasoning capabilities.
+export function resolveReviewRequestProfile(raw) {
+  if (!String(raw ?? '').trim()) return null;
+  let profile;
+  try { profile = JSON.parse(raw); } catch { throw new Error('Invalid review request profile JSON'); }
+  const fields = new Set(['model', 'reasoningEffort', 'maxOutputTokens']);
+  if (!profile || typeof profile !== 'object' || Array.isArray(profile)
+    || Object.keys(profile).some(key => !fields.has(key))
+    || typeof profile.model !== 'string' || !profile.model.trim() || profile.model.length > 160
+    || profile.reasoningEffort === undefined && profile.maxOutputTokens === undefined
+    || profile.reasoningEffort !== undefined && !['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(profile.reasoningEffort)
+    || profile.maxOutputTokens !== undefined && (!Number.isSafeInteger(profile.maxOutputTokens) || profile.maxOutputTokens < 512 || profile.maxOutputTokens > 16000))
+    throw new Error('Invalid review request profile fields');
+  return Object.freeze({ ...profile, model: profile.model.trim() });
+}
 
 export function resolveKnowledgeAiConfig(env = {}, aiReplyConfig = AI_REPLY_CONFIG) {
   const aiReply = aiReplyConfig?.openai || {};
