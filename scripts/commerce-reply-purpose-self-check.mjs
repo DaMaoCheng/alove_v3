@@ -38,17 +38,17 @@ await test('A rejected second candidate cannot leak either proposal or enable ac
  assert.equal(intent.cardAllowed,false);assert.equal(intent.shouldLoadProductContext,false);assert.equal(intent.replyBoundary.contactAllowed,false);
  assert.equal(output.productScopeVerified,false);assert(!output.verifiedDiscountOffers?.length);
 });
-await test('Weak valid price question retains read-only policy purpose, never actions',async()=>{
+await test('Low-score valid price question retains its selected route and no product actions',async()=>{
  const text='Why it says the price is 19 and when you open it is 36?';
  const normalized=normalizeCommerceDecision({route:'store_policy',topic:'price',knowledgeScope:'business',knowledgeQuery:text,answerRequired:true,confidence:.72,
   replyBoundary:{salesAllowed:true,contactAllowed:true}}, {userText:text,requireBoundaryVerdict:true});
- assert.equal(normalized.confident,false);assert.equal(normalized.answerRequired,false);assert.equal(normalized.replyBoundary.salesAllowed,false);
+ assert.equal(normalized.confident,true);assert.equal(normalized.answerRequired,true);assert.equal(normalized.replyBoundary.salesAllowed,true);
  const weak=await resolveCommerceSearchIntent({userText:text,enrichAllTurns:true,classifyCommerce:async()=>normalized});
- assert.equal(weak.commerceRoute,'unclear');assert.equal(weak.knowledgeScope,'business');assert.equal(weak.knowledgeQuery,text);
- assert.equal(weak.replyTopicHint,'commerce_question');assert.equal(weak.cardAllowed,false);assert.equal(weak.shouldLoadProductContext,false);
- assert.equal(weak.replyBoundary.salesAllowed,false);assert.equal(weak.replyBoundary.contactAllowed,false);
+ assert.equal(weak.commerceRoute,'store_policy');assert.equal(weak.knowledgeScope,'business');assert.equal(weak.knowledgeQuery,text);
+ assert.equal(weak.cardAllowed,false);assert.equal(weak.shouldLoadProductContext,false);
+ assert.equal(weak.replyBoundary.salesAllowed,true);assert.equal(weak.replyBoundary.contactAllowed,true);
  assert.equal(needsBusinessFactsReview(weak,{categoryId:'mascot'}),true);
- const event=JSON.parse(buildCommerceDecisionLogEvent({searchIntent:weak}).errorMessage);assert.equal(event.replyTopicHint,'commerce_question');
+ const event=JSON.parse(buildCommerceDecisionLogEvent({searchIntent:weak}).errorMessage);assert.equal(event.route,'store_policy');
 });
 await test('Transport failure preserves an already-known read-only business question without calling it ambiguity',async()=>{
  const original='When will i get delivery for jersey in Fresno, California USA if i order today';
@@ -93,8 +93,9 @@ await test('Grounded correction anchors the actual current user report instead o
 await test('Empty successful business evidence permits one specific clarification with complete second review',async()=>{
  const {isGroundedCommerceRepairEligible,repairGroundedCommerceReply}=await import('../server/chat-grounded-reply-repair-service.js');
  const original='Why it says the price is 19 and when you open it is 36?';
- const weakDecision=normalizeCommerceDecision({route:'store_policy',topic:'price',knowledgeScope:'business',knowledgeQuery:original,answerRequired:true,confidence:.72,
-  replyBoundary:{salesAllowed:true,contactAllowed:true}}, {userText:original,requireBoundaryVerdict:true});
+ // Exercise the injected uncertainty seam independently of any score threshold.
+ const weakDecision={...normalizeCommerceDecision({route:'store_policy',topic:'price',knowledgeScope:'business',knowledgeQuery:original,answerRequired:true,confidence:.72,
+  replyBoundary:{salesAllowed:true,contactAllowed:true}}, {userText:original,requireBoundaryVerdict:true}),confident:false,answerRequired:false,replyBoundary:{salesAllowed:false,contactAllowed:false}};
  const resolved=await resolveCommerceSearchIntent({userText:original,searchIntent:buildProductSearchIntent(original),siteId:'shop',characterId:'mascot_fixture',enrichAllTurns:true,classifyCommerce:async()=>weakDecision});
  const base={character:{id:'mascot_fixture',category_id:'mascot'},userText:original,language:'en',
   replyResult:{sourceType:'ai',sourceRef:'fixture',text:'OLD_UNAPPROVED: the actual cause is customization.',speechText:'OLD_UNAPPROVED: the actual cause is customization.'},
@@ -156,8 +157,8 @@ await test('Empty successful business evidence permits one specific clarificatio
 await test('A weak exact URL sizing continuation retains its purpose through a complete fresh review',async()=>{
  const original='https://www.projerseyshop.es/productdetail/Retro-2002-03-Real-Madrid-Third-Away-Soccer-Jersey/666494';
  const recentMessages=[{senderType:'user',text:'camiseta, no sé que talla elegir'},{senderType:'character',text:'¿Prefieres corte entallado o más holgado?'}];
- const decision=normalizeCommerceDecision({route:'product_question',topic:'sizing',confidence:.6,knowledgeScope:'business',needsLiveProductData:true,
-  searchQuery:'Retro 2002-03 Real Madrid Third Away Soccer Jersey',replyBoundary:{salesAllowed:true,contactAllowed:true}}, {userText:original,requireBoundaryVerdict:true});
+ const decision={...normalizeCommerceDecision({route:'product_question',topic:'sizing',confidence:.6,knowledgeScope:'business',needsLiveProductData:true,
+  searchQuery:'Retro 2002-03 Real Madrid Third Away Soccer Jersey',replyBoundary:{salesAllowed:true,contactAllowed:true}}, {userText:original,requireBoundaryVerdict:true}),confident:false,answerRequired:false,replyBoundary:{salesAllowed:false,contactAllowed:false}};
  const weak=await resolveCommerceSearchIntent({userText:original,searchIntent:buildProductSearchIntent(original),recentMessages,siteId:'shop',characterId:'mascot_fixture',enrichAllTurns:true,classifyCommerce:async()=>decision});
  const {productClarificationContext,buildReplyPurposeRecoveryPrompt}=await import('../server/chat-reply-purpose-service.js');
  const context=productClarificationContext(weak,original);assert(context);assert.equal(weak.replyTopicHint,'sizing');assert.equal(context.currentUserMessage,original);
@@ -189,7 +190,7 @@ await test('Closed clarification can reference an existing USER purpose without 
  assert(prompt.systemPrompt.includes('Prior assistant wording is not evidence'));
  assert(CLOSED_CLARIFICATION_RECOVERY_CONTRACT.includes('do not supply, promise or verify a discount, benefit, account state'));
  const text='ya lo registre',recentMessages=[{senderType:'user',text:'dame algun cupon no?'},{senderType:'character',text:'Register to view available benefits.'}];
- const decision=normalizeCommerceDecision({route:'chat',topic:'other',knowledgeScope:'general',confidence:.5,replyBoundary:{salesAllowed:true,contactAllowed:true}}, {userText:text,requireBoundaryVerdict:true});
+ const decision={...normalizeCommerceDecision({route:'chat',topic:'other',knowledgeScope:'general',confidence:.5,replyBoundary:{salesAllowed:true,contactAllowed:true}}, {userText:text,requireBoundaryVerdict:true}),confident:false,answerRequired:false,replyBoundary:{salesAllowed:false,contactAllowed:false}};
  const weak=await resolveCommerceSearchIntent({userText:text,recentMessages,searchIntent:buildProductSearchIntent(text),enrichAllTurns:true,classifyCommerce:async()=>decision});
  const fresh='Entiendo que dices que ya te registraste. Sobre los cupones que mencionaste, ¿qué necesitas saber?';let reviews=0,generations=0;
  const out=await enforceReplyBoundary({...options,userText:text,recentMessages,searchIntent:weak,
@@ -198,6 +199,21 @@ await test('Closed clarification can reference an existing USER purpose without 
   regenerateReply:async(_old,recovery)=>{generations++;assert.equal(recovery.purpose,'clarification');return{sourceType:'ai',text:fresh,speechText:fresh};}});
  assert.equal(reviews,2);assert.equal(generations,1);assert.equal(out.text,fresh);assert.equal(out.speechText,fresh);
  assert.equal(weak.cardAllowed,false);assert.equal(weak.shouldLoadProductContext,false);assert.equal(weak.replyBoundary.contactAllowed,false);assert(!out.verifiedDiscountOffers?.length);
+});
+await test('Valid low-score sizing URL cannot authorize an unverified product or recommendation',async()=>{
+ const original='https://www.projerseyshop.es/productdetail/Retro-2002-03-Real-Madrid-Third-Away-Soccer-Jersey/666494';
+ const recentMessages=[{senderType:'user',text:'camiseta, no sé que talla elegir'}];
+ const decision=normalizeCommerceDecision({route:'product_question',topic:'sizing',confidence:.6,knowledgeScope:'business',needsLiveProductData:true,
+  searchQuery:'Retro 2002-03 Real Madrid Third Away Soccer Jersey',replyBoundary:{salesAllowed:true,contactAllowed:true}}, {userText:original,requireBoundaryVerdict:true});
+ assert.equal(decision.confident,true,'valid low score remains a selected decision');
+ const resolved=await resolveCommerceSearchIntent({userText:original,searchIntent:buildProductSearchIntent(original),recentMessages,
+  siteId:'shop',characterId:'mascot_fixture',enrichAllTurns:true,classifyCommerce:async()=>decision});
+ assert.equal(resolved.shouldLoadProductContext,false);assert.equal(resolved.cardAllowed,false);
+ assert.equal(resolved.scopeUnverified,true);assert.equal(resolved.productScopePending,true);
+ const out=await enforceReplyBoundary({...options,userText:original,recentMessages,searchIntent:resolved,
+  replyResult:{sourceType:'ai',text:'OLD_UNAPPROVED: order XL, it will fit.',speechText:'OLD_UNAPPROVED: order XL, it will fit.'},
+  assess:async()=>({...passed,allowed:false,productScopeSupported:false})});
+ assert(!out.text.includes('OLD_UNAPPROVED'));assert.equal(out.speechText,out.text);
 });
 const {isClosedProductClarification}=await import('../server/chat-reply-purpose-service.js');
 const {buildProductClarificationFallbackReply}=await import('../server/product-request-scope-copy.js');
@@ -237,7 +253,7 @@ await test('Only current complete JEV and pure new category decisions issue clar
   ...[{ok:false},{ok:1},{confident:undefined},{unsupported:undefined},{unsupported:true},{imageIntent:'generate'},{orderIntent:'lookup'},
    {webSearchIntent:true},{productIntent:undefined},{productAction:undefined},{productAction:NaN},{productAction:1.1}].map(jev=>({jev})),
   ...[{route:'store_policy'},{route:'product_question'},{route:'chat'},{topic:'price'},{topic:'delivery'},{topic:'sizing'},
-   {knowledgeQuery:'How long does delivery take?'},{needsLiveProductData:true},{confidence:.6},
+   {knowledgeQuery:'How long does delivery take?'},{needsLiveProductData:true},
    {replyBoundary:{salesAllowed:false,contactAllowed:true}},{replyBoundary:{salesAllowed:true,contactAllowed:false}},
    {referencedProductId:'existing-product'},
    {productRequest:{relation:'multiple',action:'new',items:[],selectedIndex:null}},
@@ -252,7 +268,8 @@ await test('Only current complete JEV and pure new category decisions issue clar
   {recentMessages:[{senderType:'character',product:{name:'Existing product'}}]},
  ];
  for(const change of changes){const input=await closedFixture(change);assert(!isClosedProductClarification(input),JSON.stringify(change));}
- const authorized=await closedFixture({jev:{productIntent:'search',productAction:.99}});
+ assert(isClosedProductClarification(await closedFixture({decision:{confidence:.6}})), 'low confidence alone must not veto a selected classification');
+ const authorized=await closedFixture({jev:{productIntent:'search',productAction:1}});
  assert.equal(authorized.searchIntent.shouldLoadProductContext,true);assert.equal(authorized.searchIntent.cardAllowed,true);
  assert(!isClosedProductClarification(authorized));
 });

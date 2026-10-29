@@ -13,6 +13,7 @@ function evaluator(choices = {}, flags = {}, confidence = .98, quotes = {}) {
     for (const [key, question] of Object.entries(questions)) {
       if (question.type === 'choice') assert(Object.keys(question.criteria).length >= 2, 'No singleton choice reaches JEV');
       if (question.type === 'noul') answers[key] = { noul: flags[key] ?? (['answer_required', 'contact_allowed'].includes(key) ? .99 : .01) };
+      else if (question.type === 'choice' && Object.keys(question.criteria).join(',') === 'yes,no') answers[key] = { choice: (flags[key] ?? (['answer_required', 'contact_allowed'].includes(key) ? .99 : .01)) >= .5 ? 'yes' : 'no', confidence };
       else {
         const literal = quotes[key];
         const selectedQuote = literal && Object.entries(question.criteria).find(([, value]) => value === JSON.stringify(literal))?.[0];
@@ -26,6 +27,11 @@ function evaluator(choices = {}, flags = {}, confidence = .98, quotes = {}) {
   return { evaluate, batches };
 }
 const original = 'Hello erdeklodom a rendelesem szallitasa utan';
+const lowSelected = evaluator({ route: 'store_policy', topic: 'delivery', knowledge_scope: 'business' }, { answer_required: .99 }, .4);
+const lowSelectedResult = await resolveJevCommerceDecision(original, { evaluate: lowSelected.evaluate });
+assert.equal(lowSelectedResult.value.route, 'store_policy', 'selected semantic intent is retained below former confidence threshold');
+assert.equal(lowSelectedResult.value.topic, 'delivery');
+assert.equal(lowSelectedResult.value.answerRequired, true, 'binary semantic choice is used without a confidence cutoff');
 const f = evaluator();
 const decision = await classifyCommerceIntent(original, { resolveJevCommerce: (text, opts) => resolveJevCommerceDecision(text, { ...opts, evaluate: f.evaluate }),
   fetchImpl: async () => { throw Error('LLM forbidden after a valid JEV response'); }, jevDecision: { ok: true, confident: true, primaryIntent: 'order_lookup', orderIntent: 'lookup' } });
@@ -55,7 +61,7 @@ for (const confident of [true, false]) {
 }
 
 await classifyCommerceIntent('Hello', { config, fetchImpl: async () => { throw Error('Missing configuration is not remote failure'); }, resolveJevCommerce: async () => ({ ok: false, attempts: 0, llmFallbackAllowed: false }) });
-const primaryShopping = { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'search', productAction: .99, orderIntent: 'none', imageIntent: 'none', webSearchIntent: false };
+const primaryShopping = { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'search', productAction: 1, orderIntent: 'none', imageIntent: 'none', webSearchIntent: false };
 const shoppingVote = { route: 'product_search', topic: 'other', confidence: .99, confident: true, boundaryVerified: true,
  replyBoundary: { salesAllowed: true, contactAllowed: true }, knowledgeScope: 'business', answerRequired: false,
  commerceConstraints: { team: { value: 'Real Madrid', role: 'product_target', evidence: 'Real Madrid' }, edition: null },

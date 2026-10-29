@@ -91,3 +91,16 @@ console.log("chat-order-boundary-self-check: PASS");
 const { ORDER_CONTRACT } = await import('../server/chat-reply-review-contracts.js');
 assert.match(ORDER_CONTRACT, /waiting or pending.*not.*(started|underway)/i);
 assert.match(ORDER_CONTRACT, /in progress.*not.*completed/i);
+
+// Mixed policy+order includes every contract, but sends the shared general
+// explanation once instead of spending reviewer input budget twice.
+{
+  const { buildReplyReviewMessages, ORDER_CONTRACT } = await import('../server/chat-reply-review-contracts.js');
+  const { GENERAL_COMMERCE_EXPLANATION_CONTRACT: general } = await import('../server/business-claim-audit-service.js');
+  for (const [options, expectOrder] of [[{ businessFactsRequired: true }, false], [{ orderActionState: 'login_required' }, true], [{ businessFactsRequired: true, orderActionState: 'login_required' }, true]]) {
+    const text = buildReplyReviewMessages({ ...options, text: 'test', speechText: 'test', userText: 'test' }).filter(row => row.role === 'system').map(row => row.content).join('\n');
+    assert.equal(text.split(general).length - 1, 1, 'general contract occurs exactly once');
+    assert.equal(text.includes(ORDER_CONTRACT.slice(general.length + 1)), expectOrder, 'order constraints retained exactly when active');
+  }
+  console.log('mixed order+business review contract de-duplication preserves all active clauses');
+}

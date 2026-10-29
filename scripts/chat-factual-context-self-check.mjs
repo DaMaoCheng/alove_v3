@@ -39,7 +39,7 @@ equal((await resolve({ userText: "world cup", jevDecision: { ok: false } })).dec
 equal((await resolve({ jevDecision: { ...webDecision, webSearchScore: .93 } })).webSearchScore, .93);
 equal((await resolve({ jevDecision: { ...webDecision, webSearchScore: "private" } })).webSearchScore, null);
 
-equal((await resolve({ userText: "world cup", jevDecision: { ...webDecision, confident: false } })).status, "not_required");
+equal((await resolve({ userText: "world cup", jevDecision: { ...webDecision, confident: false, webSearchScore: .01 } })).status, "matched");
 equal((await resolve({ userText: "just chatting", jevDecision: { ok: false } })).status, "not_required");
 equal((await resolve({ search: async () => ({ searched: true, items: [] }) })).status, "no_result");
 equal((await resolve({ search: async () => ({ searched: true, items: [], error: "HTTP_429" }) })).status, "error");
@@ -62,12 +62,14 @@ for (const searchIntent of [
 equal((await resolve({ jevDecision: { ...webDecision, orderIntent: "lookup" } })).status, "blocked");
 equal((await resolve({ jevDecision: { ...webDecision, primaryIntent: "order_lookup" } })).status, "blocked");
 const pureShoppingIntent = { commerceRoute: 'product_search', knowledgeScope: 'business', commerceConfidence: .9, answerRequired: false };
+result = await resolve({ userText: 'Find a World Cup jersey.', jevDecision: null, searchIntent: { ...pureShoppingIntent, commerceConfidence: .01 } });
+equal(result.required, false); equal(result.decisionSource, 'catalogue_scope');
 const weakNoWeb = { ok: true, confident: false, primaryIntent: 'product_request', webSearchIntent: false, imageIntent: 'none', orderIntent: 'none' };
 for (const userText of ['Find the Soccer Fun Jersey.', 'Find the World Cup fan shirt.', 'Find the Player edition jersey.', 'Find the History collection shirt.']) {
   const before = calls.length;
   result = await resolve({ userText, jevDecision: weakNoWeb, searchIntent: pureShoppingIntent });
   equal(result.required, false); equal(result.status, 'not_required'); equal(result.asOfUtc, now.toISOString()); equal(calls.length, before);
-  equal(result.decisionSource, 'catalogue_scope');
+  equal(result.decisionSource, 'jev');
   equal(factualReviewRequired(result), true); equal(toFactualReviewContext(result).required, false);
 }
 for (const patch of [{ answerRequired: true }, { answerRequired: undefined }, { commerceConfidence: .74 }, { commerceConfidence: 1.01 }, { commerceConfidence: '0.99' },
@@ -81,7 +83,7 @@ for (const decision of [{ ...weakNoWeb, webSearchIntent: true }, { ...weakNoWeb,
   { ...weakNoWeb, imageIntent: 'try_on' }, { ...weakNoWeb, orderIntent: 'lookup' }]) {
   const before = calls.length;
   result = await resolve({ userText: 'Find a World Cup jersey and tell me who won it.', jevDecision: decision, searchIntent: pureShoppingIntent });
-  const reliable = decision.ok === true && decision.confident === true && decision.webSearchIntent === true;
+  const reliable = decision.ok === true && decision.webSearchIntent === true;
   equal(result.required, reliable); equal(result.status, reliable ? 'blocked' : 'not_required'); equal(calls.length, before);
 }
 for (const userText of ['Find a jersey and tell me who won the current World Cup.', 'Find a jersey and tell me who won the 1998 World Cup.', 'Find a jersey and tell me who the current national team captain is.']) {

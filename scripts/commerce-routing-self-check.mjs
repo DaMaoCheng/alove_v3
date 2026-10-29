@@ -11,9 +11,10 @@ const { selectProductsForMessage } = await import('../server/chat-product-reply-
 const config = { apiKey: 'isolated-test-key', baseUrl: 'https://classifier.invalid', model: 'test' };
 const singleProductRequest = { relation: 'single', action: 'new', items: [], selectedIndex: null, selectionEvidence: '' };
 let checks = 0;
-for (const value of [null, [], 'bad', { route: 'injected', confidence: 1 }, { route: 'chat', confidence: .2 }]) {
+for (const value of [null, [], 'bad', { route: 'injected', confidence: 1 }, { route: 'unclear', confidence: .2 }]) {
   assert.equal(normalizeCommerceDecision(value).confident, false); checks++;
 }
+assert.equal(normalizeCommerceDecision({ route: 'chat', confidence: .2 }).confident, true, 'selected route is not rejected solely for low confidence');
 assert.equal(normalizeCommerceDecision({ searchQuery: { secret: true } }).searchQuery, '');
 for (const [text, route, knowledgeScope, primaryIntent] of [
   ['What does in transit mean in general? I am not asking you to check an order.', 'chat', 'general', 'daily_chat'],
@@ -79,8 +80,7 @@ for (const classifyCommerce of [async () => { throw new Error('timeout'); }, asy
 }
 const priceUncertain = await resolveCommerceSearchIntent({ userText: 'Why do these items have different prices?', searchIntent: {},
   classifyCommerce: async () => normalizeCommerceDecision({ route: 'product_question', confidence: .7 }) });
-assert.equal(priceUncertain.replyBoundaryReason, 'classification_uncertain');
-assert.deepEqual(priceUncertain.replyBoundary, { salesAllowed: false, contactAllowed: false });
+assert.equal(priceUncertain.commerceRoute, 'product_question', 'selected price-question route is not discarded on low confidence');
 assert.equal(priceUncertain.shouldLoadProductContext, false); assert.equal(priceUncertain.cardAllowed, false); checks++;
 for (const searchIntent of [{ nonShoppingReason: 'sales_refusal' }, { replyBoundary: { salesAllowed: false } }, { replyBoundary: { contactAllowed: false } }]) {
   const refusal = await resolveCommerceSearchIntent({ searchIntent, enrichAllTurns: true,
@@ -152,7 +152,7 @@ assert.equal(JSON.parse(buildCommerceDecisionLogEvent({knowledgeContext:{selecti
 // secondary decision; it never grants a tool, sale, policy or contact action.
 const pureConversationMarker = { version: 1, kind: 'conversation', source: 'jev_daily_chat' };
 const purposeJev = { ok:true, source:'jev', confident:true, primaryIntent:'daily_chat', confidence:.72,
-  productIntent:'none', productAction:.07, imageIntent:'none', orderIntent:'none', webSearchIntent:false, unsupported:false };
+  productIntent:'none', productAction:0, imageIntent:'none', orderIntent:'none', webSearchIntent:false, unsupported:false };
 const purposeDecision = { confident:false, confidence:.7, route:'unclear', topic:'other', knowledgeScope:'general',
   needsLiveProductData:false, searchQuery:'', referencedProductId:'', knowledgeQuery:'' };
 const purposeSite = 'purpose-site', purposeCharacter = 'purpose-character';
@@ -280,3 +280,77 @@ const { buildCommerceConversationContext } = await import('../server/product-int
 assert(!Object.hasOwn(buildCommerceConversationContext([{ ...alternativeHistory[0], product: { ...alternativeHistory[0].product,
  alternative: { ...safeAlternative, requestedSeason: 'invented' } } }])[0].productCard, 'alternative'));
 console.log('sanitized season-alternative history retained without authorizing original-target match');
+
+// A JEV-selected pure definition is independent from a specific item or mixed policy.
+{
+  const { normalizeCommerceDecision } = await import('../server/product-intent-classifier-service.js');
+  const { isGeneralCommerceExplanation } = await import('../server/business-claim-audit-service.js');
+  const text = 'What does set mean?';
+  const make = (kind, extra = {}) => normalizeCommerceDecision({ route: 'product_question', topic: 'other', confidence: .2,
+    answerRequired: true, needsLiveProductData: false, knowledgeScope: 'business', knowledgeQuery: text,
+    knowledgeRequest: { kind, evidence: text }, replyBoundary: { salesAllowed: false, contactAllowed: false }, ...extra }, { userText: text });
+  const run = decision => resolveCommerceSearchIntent({ userText: text, classifyCommerce: async () => decision,
+    jevDecision: { ok: true, confident: true, primaryIntent: 'daily_chat', productIntent: 'none', productAction: 0 } });
+  const general = await run(make('general_explanation'));
+  assert.equal(general.generalTermExplanation, true); assert.equal(isGeneralCommerceExplanation(general), true);
+  assert.equal((await run(make('business_question'))).generalTermExplanation, false);
+  assert.equal((await run(make('general_explanation', { needsLiveProductData: true }))).generalTermExplanation, false);
+  const forged = make('general_explanation', { knowledgeRequest: { kind: 'general_explanation', evidence: 'set' } });
+  assert.equal((await run(forged)).generalTermExplanation, false, 'whole user message evidence required');
+  console.log('pure general term routing preserves exact current user evidence and specific-item boundary');
+}
+
+{
+  const { normalizeCommerceDecision } = await import('../server/product-intent-classifier-service.js');
+  const text = 'How long is shipping and where is my order?';
+  const make = (kind, evidence = text, extra = {}) => normalizeCommerceDecision({ route: 'store_policy', topic: 'delivery', confidence: .2,
+    answerRequired: true, needsLiveProductData: false, knowledgeScope: 'business', knowledgeQuery: text,
+    knowledgeRequest: { kind, evidence }, replyBoundary: { salesAllowed: false, contactAllowed: true }, ...extra }, { userText: text });
+  const run = (decision, jev = { ok: true, confident: true, primaryIntent: 'order_lookup', orderIntent: 'lookup' }) => resolveCommerceSearchIntent({
+    userText: text, classifyCommerce: async () => decision, jevDecision: jev });
+  assert.equal((await run(make('order_and_policy'))).orderAndPolicy, true);
+  assert.equal((await run(make('business_question'))).orderAndPolicy, false);
+  assert.equal((await run(make('order_and_policy', 'shipping'))).orderAndPolicy, false, 'requires entire current user message');
+  assert.equal((await run(make('order_and_policy'), { ok: true, confident: true, primaryIntent: 'daily_chat', orderIntent: 'none' })).orderAndPolicy, false);
+  assert.equal((await run(make('order_and_policy', text, { needsLiveProductData: true }))).orderAndPolicy, false);
+  console.log('independent policy and order: current complete evidence, active order and product boundary passed');
+}
+
+{
+  const { normalizeCommerceDecision } = await import('../server/product-intent-classifier-service.js');
+  const text = 'How long is standard shipping?';
+  const make = (kind, evidence = text) => normalizeCommerceDecision({ route: 'store_policy', topic: 'delivery', confidence: .2,
+    answerRequired: true, needsLiveProductData: false, knowledgeScope: 'business', knowledgeQuery: text,
+    knowledgeRequest: { kind, evidence }, replyBoundary: { salesAllowed: false, contactAllowed: true } }, { userText: text });
+  const run = (decision, jev = { ok: true, confident: true, primaryIntent: 'daily_chat', orderIntent: 'none' }) => resolveCommerceSearchIntent({
+    userText: text, classifyCommerce: async () => decision, jevDecision: jev });
+  assert.equal((await run(make('store_policy_only'))).pureStorePolicy, true);
+  assert.equal((await run(make('store_policy_only', 'shipping'))).pureStorePolicy, false, 'entire current USER text is required');
+  assert.equal((await run(make('store_policy_only'), { ok: true, confident: true, primaryIntent: 'order_lookup', orderIntent: 'lookup' })).pureStorePolicy, false, 'order is never a pure policy');
+  assert.equal((await run(make('business_question'))).pureStorePolicy, false, 'no implied semantic classification');
+  console.log('pure policy: complete USER evidence and non-order routing passed');
+}
+
+{
+  const { normalizeCommerceDecision } = await import('../server/product-intent-classifier-service.js');
+  const text = 'What does set mean and how long is shipping?';
+  const make = (extra = {}) => normalizeCommerceDecision({ route: 'chat', topic: 'delivery', confidence: .4,
+    answerRequired: true, needsLiveProductData: false, knowledgeScope: 'general', knowledgeQuery: text,
+    knowledgeRequest: { kind: 'concept_and_policy', evidence: text }, replyBoundary: { salesAllowed: false, contactAllowed: true }, ...extra }, { userText: text });
+  const primary = { ok: true, confident: true, primaryIntent: 'daily_chat', orderIntent: 'none', productIntent: 'none' };
+  const run = (decision, jev = primary) => resolveCommerceSearchIntent({ userText: text, classifyCommerce: async () => decision, jevDecision: jev });
+  const result = await run(make());
+  assert.equal(result.conceptAndPolicy, true); assert.equal(result.knowledgeScope, 'business');
+  assert.equal(result.customerServiceKnowledgeRequest, true); assert.equal(result.cardAllowed, false); assert.equal(result.generalTermExplanation, false);
+  assert.equal((await run(make({ route: 'store_policy' }))).conceptAndPolicy, true);
+  for (const bad of [
+    make({ knowledgeRequest: { kind: 'concept_and_policy', evidence: 'shipping' } }),
+    make({ knowledgeRequest: { kind: 'general_explanation', evidence: text } }),
+    make({ route: 'product_search' }), make({ route: 'product_question' }), make({ needsLiveProductData: true }),
+    make({ referencedProductId: 'product-a' }), make({ answerRequired: false }),
+  ]) assert.equal((await run(bad)).conceptAndPolicy, false);
+  for (const jev of [{ ...primary, orderIntent: 'lookup' }, { ...primary, primaryIntent: 'product_request' },
+    { ...primary, primaryIntent: 'try_on' }, { ...primary, primaryIntent: 'new_image' }, { ...primary, ok: false }])
+    assert.equal((await run(make(), jev)).conceptAndPolicy, false);
+  console.log('mixed concept and policy: business retrieval and exact evidence, product/order/image isolation passed');
+}

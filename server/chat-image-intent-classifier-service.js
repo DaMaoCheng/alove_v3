@@ -1,11 +1,10 @@
 import { isAiJsonProviderConfigured, requestAiJsonWithProviderFallback } from "./ai-json-provider-service.js";
 import { classifyJevIntent, mapJevImageIntent } from "./jev-intent-service.js";
-import { classifyJevImageDetails } from "./jev-image-decision-service.js";
+import { classifyJevImageDetails } from './jev-image-decision-service.js';
 import { resolveCharacterImageFollowupContext } from "./chat-image-conversation-context-service.js";
 import { pendingAppearanceUserContext, resolveImageAppearance } from './chat-image-appearance-context-service.js';
 
 const CLASSIFIER_TIMEOUT_MS = 30000;
-const MIN_CONFIDENCE = 0.7;
 
 export async function classifyChatImageIntent(userText = "", { character = null, jevDecision = null, conversationContext = null, cacheKey = "", forceTargetVerification = false, classifyImageJev = classifyJevImageDetails, logContext = {} } = {}) {
   const text = normalizeText(userText);
@@ -31,22 +30,29 @@ export async function classifyChatImageIntent(userText = "", { character = null,
   });
   const verifyCharacterTarget = isProductCapableCharacter(character);
   const followupContext = text.length <= 80 ? resolveCharacterImageFollowupContext(conversationContext) : null;
-  const sharedFallback = jev.routingSource === "llm_fallback" && jev.jevFailure?.attempts === 2
-    && jev.llmFallbackAllowed === true;
   let fallbackAllowed = jev.llmFallbackAllowed === true;
-  if (jev.ok && !sharedFallback) {
-    const mapped = normalizeJevImageResult(mapJevImageIntent(jev));
-    if (!jev.confident && !followupContext && !forceTargetVerification) return {
-      ...mapped, classificationOutcome: jev.confident ? "model_no_intent" : "low_confidence",
-      requestScope: "unknown",
-    };
-    if ((!verifyCharacterTarget && (mapped.hasIntent || !followupContext))
-      || (!mapped.hasIntent && !forceTargetVerification && !followupContext)) return mapped;
-    const detailed = await classifyImageJev(text, { character, conversationContext, followupContext, logContext,
-      pendingAppearance: verifyCharacterTarget && !followupContext ? pendingAppearanceUserContext(conversationContext) : null });
-    if (detailed.ok) return { ...normalizeClassifierResult(detailed.parsed, { text, verifyCharacterTarget, followupContext,
-      pendingAppearance: verifyCharacterTarget && !followupContext ? pendingAppearanceUserContext(conversationContext) : null }), detectionSource: "jev" };
-    fallbackAllowed = detailed.llmFallbackAllowed === true;
+  if (jev.ok && jev.routingSource === 'llm_fallback' && jev.jevFailure?.attempts === 2) {
+    const fallbackIntent = normalizeJevImageResult(mapJevImageIntent({ ...jev, confident: true }));
+    if (!fallbackIntent.hasIntent || jev.primaryIntent === 'unclear') return fallbackIntent;
+    fallbackAllowed = true;
+  } else if (jev.ok) {
+    if (jev.primaryIntent === 'unclear') return { hasIntent: false, allowed: false, confidence: jev.confidence,
+      intentType: '', detectionSource: 'jev', classificationOutcome: 'model_no_intent' };
+    const mapped = normalizeJevImageResult(mapJevImageIntent({ ...jev, confident: true }));
+    // A successful primary decision is authoritative: no type call for a non-image turn.
+    if (!mapped.hasIntent) return mapped;
+    const detailed = await classifyImageJev(text, { character, conversationContext, primaryDecision: jev, logContext });
+    if (detailed.ok) {
+      const details = detailed.parsed;
+      if (details.intentType === 'unclear') return { ...mapped, allowed: false, explicitGeneration: false,
+        appearanceClarificationRequired: true, reason: 'appearance_uncertain', detectionSource: 'jev' };
+      const normalized = normalizeClassifierResult(details, { text, verifyCharacterTarget, followupContext,
+        pendingAppearance: verifyCharacterTarget && !followupContext ? pendingAppearanceUserContext(conversationContext) : null });
+      if (normalized.hasIntent && details.clothingTargetUncertain) return { ...normalized,
+        allowed: false, explicitGeneration: false, appearanceClarificationRequired: true, reason: 'appearance_uncertain', detectionSource: 'jev' };
+      return { ...normalized, detectionSource: 'jev' };
+    }
+    fallbackAllowed = detailed.llmFallbackAllowed === true && detailed.exhausted === true && detailed.attempts === 2;
   }
   if (!fallbackAllowed) return { hasIntent: false, allowed: false, confidence: 0, intentType: "",
     detectionSource: "jev", classificationFailure: jev.fallbackReason || "unavailable" };
@@ -170,6 +176,8 @@ async function requestClassifier(userText, { conversationContext = null, verifyC
 
 function normalizeClassifierResult(parsed = {}, { text = "", verifyCharacterTarget = false, followupContext = null, pendingAppearance = null } = {}) {
   const rawConfidence = Number(parsed.confidence);
+  const validConfidence = typeof parsed.confidence === 'number' && Number.isFinite(rawConfidence)
+    && rawConfidence >= 0 && rawConfidence <= 1;
   const confidence = Number.isFinite(rawConfidence) ? Math.max(0, Math.min(1, rawConfidence)) : 0;
   const intentType = normalizeIntentType(parsed.intentType);
   const conditions = normalizeChatImageConditions(parsed);
@@ -189,11 +197,11 @@ function normalizeClassifierResult(parsed = {}, { text = "", verifyCharacterTarg
       .some(request => normalizeText(request).toLowerCase().includes(actorEvidence.toLowerCase())));
   const groundedTarget = (groundedActor || groundedFollowupActor) && groundedAction && visualAction && parsed.requestKind === "character_image" && parsed.imageSubject === "character" && groundedEvidence;
   const unsupported = intentType === "disallowed" && (!verifyCharacterTarget || (visualAction && parsed.requestKind === "unsupported_image" && groundedEvidence));
-  const hasIntent = parsed.hasIntent === true && confidence >= MIN_CONFIDENCE
+  const hasIntent = validConfidence && parsed.hasIntent === true
     && (unsupported || (roleIntent && ((!verifyCharacterTarget && !followupContext) || groundedTarget)));
   const result = {
     hasIntent,
-    classificationOutcome: hasIntent ? "accepted" : parsed.hasIntent !== true ? "model_no_intent" : confidence < MIN_CONFIDENCE ? "low_confidence" : "grounding_rejected",
+    classificationOutcome: hasIntent ? "accepted" : parsed.hasIntent !== true ? "model_no_intent" : "grounding_rejected",
     classificationIntent: intentType,
     requestScope: hasIntent && parsed.allowed === true && parsed.requestScope === "image_only" && evidence === normalizeText(text).toLowerCase()
       ? "image_only" : parsed.requestScope === "mixed" ? "mixed" : "unknown",

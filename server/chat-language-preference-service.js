@@ -16,7 +16,7 @@ export async function applySessionLanguagePreference(db, { character, session, u
   const candidate = jevDecision?.ok === true ? jevDecision.languageDecision : null;
   const semantic = candidate && ['turn', 'session', 'persistent'].includes(candidate.scope)
     && typeof candidate.confidence === 'number' && Number.isFinite(candidate.confidence)
-    && candidate.confidence >= .8 && candidate.confidence <= 1
+    && candidate.confidence >= 0 && candidate.confidence <= 1
     && SUPPORTED_CHARACTER_LANGUAGES.some(language => language.code === candidate.targetCode)
     ? { ...normalizeCharacterLanguage(candidate.targetCode), scope: candidate.scope } : null;
   // Active turns carry the shared decision, including valid uncertainty. A

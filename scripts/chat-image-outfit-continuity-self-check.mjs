@@ -1,4 +1,3 @@
-import { jevImageAnswerFixture } from './fixtures/jev-image-answer-fixture.mjs';
 import assert from 'node:assert/strict';
 process.env.AIOVE_PROVIDER_LOG_WRITE_ENABLED = 'false';
 process.env.VENICE_API_KEY = 'isolated-outfit-continuity';
@@ -8,10 +7,19 @@ const { resolveCommerceSearchIntent } = await import('../server/commerce-routing
 const { buildProductSearchIntent } = await import('../server/product-intent-service.js');
 const { classifyChatImageIntent: actualClassifyImage } = await import('../server/chat-image-intent-classifier-service.js');
 const { classifyJevImageDetails } = await import('../server/jev-image-decision-service.js');
-const { evaluateJevQuestions } = await import('../server/jev-intent-service.js');
-const classifyChatImageIntent = (text, options) => actualClassifyImage(text, { ...options,
- classifyImageJev: (message, context) => classifyJevImageDetails(message, { ...context,
-  evaluate: request => evaluateJevQuestions({ ...request, forceRefresh: true }) }) });
+const classifyChatImageIntent = (text, options) => {
+ const decision = { ...options.jevDecision, imageIntent: response?.hasIntent === false ? 'none' : options.jevDecision.imageIntent,
+  confidence: response?.confidence ?? options.jevDecision.confidence, imageConditions: { wants_clothing: response?.wants_clothing === true, wants_no_clothing: response?.wants_no_clothing === true } };
+ return actualClassifyImage(text, { ...options, jevDecision: decision,
+  classifyImageJev: (message, context) => classifyJevImageDetails(message, { ...context, evaluate: async ({ state, questions }) => {
+   lastPrompt = Object.values(questions).map(q => q.instructions).join('\n'); lastPayload = state;
+   const values = { image_type: response.intentType, image_scope: response.requestScope || 'unknown', clothing_target: response.clothingTarget,
+    previous_outfit: response.appearanceContext?.previousOutfit || 'uncertain', appearance_relation: response.appearanceContext?.relation || 'uncertain' };
+   const findSpan = (question, span) => Object.keys(question.criteria).find(key => key !== 'none' && question.criteria[key] === span) || 'none';
+   return { ok: true, answers: Object.fromEntries(Object.entries(questions).map(([key, question]) => [key, { choice:
+    key === 'actor_evidence' ? findSpan(question, response.actorEvidence) : key === 'action_evidence' ? findSpan(question, response.requestEvidence || response.actionEvidence) : values[key], confidence: response.confidence }])) };
+  } }) });
+};
 const { maybeCreateGuestChatImagePlaceholder, maybeCreateChatImagePlaceholder, resolveChatImageReplyDirective } = await import('../server/chat-image-generation-service.js');
 const { applyChatImageCommercePolicy } = await import('../server/chat-image-commerce-policy-service.js');
 const text = 'A ver pasame tu imagen';
@@ -47,12 +55,7 @@ assert.equal(applyChatImageCommercePolicy({ ...selfie, actionEvidence: 'send you
  { commerceIntent: mixed, userText: productText }).allowed, true);
 let response, libraryReads = 0, entitlementReads = 0, lastPrompt, lastPayload;
 const originalFetch = globalThis.fetch;
-globalThis.fetch = async (_url, options) => {
- const body = JSON.parse(options.body);
- if (body.questions?.actor_is_character) return { ok: true, json: async () => jevImageAnswerFixture(body, response) }; lastPrompt = body.questions ? Object.values(body.questions).map(q => q.instructions).join('\n') : body.messages[0].content; lastPayload = body.state || JSON.parse(body.messages[1].content);
- if (body.questions) return { ok: true, json: async () => jevImageAnswerFixture(body, response) };
- return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(response) } }] }) };
-};
+globalThis.fetch = async () => { throw Error('Unexpected network call in isolated continuity check'); };
 const baseResponse = { communicativeAction: 'request_visual_output', requestKind: 'character_image', hasIntent: true, allowed: true,
  confidence: .99, intentType: 'library_photo', imageSubject: 'character', requestScope: 'image_only', requestEvidence: text,
  actorEvidence: 'tu', actionEvidence: 'pasame tu imagen', clothingTarget: 'generic', explicitGeneration: false,
@@ -77,8 +80,8 @@ try {
  const outfit = await classifyChatImageIntent(text, options);
  assert.equal(outfit.hasIntent, true);
  assert.deepEqual(lastPayload.recentConversation, recentConversation, 'a pending USER outfit survives an assistant response without a picture');
- assert.match(lastPrompt, /still-pending clothed USER depiction/);
- assert.match(lastPrompt, /generic an imagined/);
+ assert.match(lastPrompt, /still-pending clothed appearance/);
+ assert.match(lastPrompt, /generic means a described or imagined outfit/);
  assert.doesNotMatch(lastPrompt, /wants_clothing is true only when the user explicitly asks the character to wear/);
  assert.equal(outfit.explicitGeneration, true, 'a verified outfit request cannot silently take the ordinary library path');
  await maybeCreateGuestChatImagePlaceholder(db, { ...options, imageDecision: outfit });

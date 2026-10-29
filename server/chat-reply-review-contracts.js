@@ -116,7 +116,8 @@ export function buildReplyReviewMessages(options = {}) {
   if (factualRequired) system(FACTUAL_REVIEW_CONTRACT_BASE);
   if (factualLimitationReviewRequired) system(FACTUAL_LIMITATION_CONTRACT);
   if (guidanceRequired) system(GUIDANCE_CONTRACT);
-  if (["login_required", "binding_required"].includes(orderActionState)) system(ORDER_CONTRACT);
+  if (["login_required", "binding_required"].includes(orderActionState))
+    system(businessFactsRequired ? ORDER_CONTRACT.slice(GENERAL_COMMERCE_EXPLANATION_CONTRACT.length + 1) : ORDER_CONTRACT);
   if (imageStatusContext) system([IMAGE_CONTRACT, buildImageRepresentationContract(imageStatusContext), buildCurrentImageDeliveryContract(imageStatusContext)].filter(Boolean).join("\n"));
   if (identityContext) system(IDENTITY_CONTRACT);
   if (clarificationRequired) system(CLOSED_CLARIFICATION_RECOVERY_CONTRACT + " Evaluate both complete outputs. Set boundarySupported=false and allowed=false unless they fulfill this clarification-only purpose; all original factual, language and permission contracts remain active.");

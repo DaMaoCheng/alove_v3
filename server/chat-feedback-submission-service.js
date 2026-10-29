@@ -12,9 +12,9 @@ export function feedbackProtocolContext(rows = []) {
   return entryOffered || saved ? { entryOffered, savedSubmission: saved?.feedbackSubmission || null } : null;
 }
 
-export function normalizeSupportFollowup(value, { userText = '', recentMessages = [], confidence = 0 } = {}) {
+export function normalizeSupportFollowup(value, { userText = '', recentMessages = [], confidence } = {}) {
   if (!value || !['submitted_followup', 'new_issue'].includes(value.relation)
-    || !Number.isFinite(confidence) || confidence < .75 || confidence > 1
+    || !Number.isFinite(confidence) || confidence < 0 || confidence > 1
     || typeof value.evidence !== 'string' || !value.evidence.trim() || value.evidence.length > 240
     || !userText.includes(value.evidence.trim()) || !feedbackProtocolContext(recentMessages)) return null;
   if (value.relation === 'submitted_followup' && value.evidence.trim() !== userText.trim()) return null;

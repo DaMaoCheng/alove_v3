@@ -57,9 +57,10 @@ const again = applyProductRequestScope({}, decision({ relation: 'multiple', acti
 check(again.searchState === 'needs_clarification' && again.productRequestState.clarificationCount === 2, 'second unresolved question is allowed');
 const exhausted = applyProductRequestScope({}, decision(), { ...scope, recentMessages: [{ ...history[0], productRequestState: again.productRequestState }] });
 check(exhausted.searchState === 'clarification_exhausted' && exhausted.productRequestState.clarificationCount === 2, 'question cap cannot overflow');
-for (const confidence of [0, .74, Infinity, NaN, '0.9', 1.01, -.1]) check(!normalizeProductRequest(request, { userText: text, confidence }).valid, 'confidence strict and bounded');
+for (const confidence of [Infinity, NaN, '0.9', 1.01, -.1]) check(!normalizeProductRequest(request, { userText: text, confidence }).valid, 'confidence strict and bounded');
 check(normalizeProductRequest(request, { userText: text, confidence: .75 }).valid, 'existing threshold preserved');
 for (const invalid of [null, {}, { ...request, items: [request.items[0]] }, { ...request, items: [request.items[0], request.items[0]] }, { ...request, items: [request.items[0], { evidence: 'not user text', sharedEvidence: '' }] }, { ...request, items: [request.items[0], { ...request.items[1], sharedEvidence: 'invented shared size' }] }]) check(!normalizeProductRequest(invalid, { userText: text, confidence: .9 }).valid, 'invalid request evidence rejected');
+for (const confidence of [0, .74]) check(normalizeProductRequest(request, { userText: text, confidence }).valid, 'valid scores do not impose an intent threshold');
 const fiveText = 'one two three four five';
 check(!normalizeProductRequest({ ...request, items: fiveText.split(' ').map(evidence => ({ evidence })) }, { userText: fiveText, confidence: .9 }).valid, 'too many items rejected without truncation');
 const long = 'a'.repeat(241);

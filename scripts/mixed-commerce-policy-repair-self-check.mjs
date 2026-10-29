@@ -84,3 +84,11 @@ const rejected = await enforceReplyBoundary({ ...base, languageQualityRequired: 
   repairGroundedReply: async value => { repairs++; return { ...value.replyResult, text: corrected, speechText: corrected }; }, recordReview: async () => {} });
 assert.equal(repairs, 1); assert.equal(reviews, 2); assert(rejected.degraded);
 console.log('Mixed policy: source/owner/quote boundaries, matched and empty evidence, one fresh candidate/full review and finite failure passed');
+{
+  const uncertain = structuredClone(base); uncertain.productContext.searchIntent = uncertain.searchIntent;
+  uncertain.reviewResult = { ...verdict, confidence: .5 }; uncertain.failedContracts = ['business_facts', 'evidence', 'confidence'];
+  assert(isGroundedCommerceRepairEligible(uncertain), 'owned matched mixed policy with uncertain review may regenerate once, not approve');
+  uncertain.reviewResult.evidenceSupported = undefined;
+  assert(!isGroundedCommerceRepairEligible(uncertain), 'missing original evidence verdict cannot enter mixed recovery');
+}
+console.log('mixed policy low confidence: owned result may regenerate once, incomplete protocol remains closed');

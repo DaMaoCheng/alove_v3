@@ -381,3 +381,61 @@ await repairGroundedCommerceReply({ ...transportCandidate, config: { ...config, 
  requestText: async (_prompt, request) => { scopedCandidateTimeout = request.timeoutMs; return JSON.stringify(freshCandidate); } });
 assert.equal(scopedCandidateTimeout, 30000, 'direct eligible candidate correction defaults to product budget');
 console.log('Direct policy corrections retain 15s and eligible candidate corrections use 30s without global expansion');
+
+const termOnly = { ...base, userText: 'What does set mean?', knowledgeContext: { items: [] },
+  reviewResult: { allowed: true, confidence: .6, boundarySupported: true, businessFactsSupported: true }, failedContracts: ['confidence'],
+  searchIntent: { commerceRoute: 'product_question', commerceTopic: 'other', generalTermExplanation: true,
+    answerRequired: true, needsLiveProductData: false, cardAllowed: false, shouldLoadProductContext: false } };
+assert.equal(isGroundedCommerceRepairEligible(termOnly), true, 'pure term explanation receives one correction for score-only uncertainty');
+assert.equal(isGroundedCommerceRepairEligible({ ...termOnly, failedContracts: ['language', 'confidence'] }), true, 'independent language failure and uncertain primary review allow one fresh candidate');
+for (const change of [{ needsLiveProductData: true }, { cardAllowed: true }, { commerceRoute: 'store_policy' }, { businessInquiry: { kind: 'quotation' } }, { generalTermExplanation: false }])
+  assert.equal(isGroundedCommerceRepairEligible({ ...termOnly, searchIntent: { ...termOnly.searchIntent, ...change } }), false, 'specific/mixed requests keep existing protections');
+assert.equal(isGroundedCommerceRepairEligible({ ...termOnly, failedContracts: ['confidence', 'business_facts'], reviewResult: { ...termOnly.reviewResult, businessFactsSupported: false } }), false, 'score-only exception cannot approve unsupported facts');
+assert.equal(isGroundedCommerceRepairEligible({ ...termOnly, groundedRepairAttempted: true }), false, 'repair is limited to one attempt');
+console.log('general merchandise terminology: score-only repair, mixed and factual boundaries passed');
+
+const orderPolicy = { ...base, userText: 'How long is shipping and where is my order?', trustedSite: { id: 'shop' },
+  character: { id: 'fixture', category_id: 'mascot' }, orderActionCandidate: { kind: 'ttmall_order_lookup', status: 'login_required', siteSlug: 'fixture' },
+  reviewResult: { allowed: false, confidence: .6, boundarySupported: true, businessFactsSupported: false }, failedContracts: ['business_facts', 'confidence'],
+  knowledgeContext: { ok: true, strategy: 'business_verified_reference', businessOwner: { siteId: 'shop', characterId: 'fixture' },
+    items: [{ id: 'verified', category: 'customer_service', scope: 'site', siteId: 'shop', content: 'Shipping usually takes 15–30 days.', evidenceQuote: 'Shipping usually takes 15–30 days.' }] },
+  searchIntent: { commerceRoute: 'store_policy', knowledgeScope: 'business', orderAndPolicy: true, answerRequired: true, cardAllowed: false, shouldLoadProductContext: false, needsLiveProductData: false } };
+assert.equal(isGroundedCommerceRepairEligible(orderPolicy), true, 'verified same-site policy and real order permit one corrected candidate');
+for (const changed of [
+  { trustedSite: { id: 'other' } }, { orderActionCandidate: null }, { groundedRepairAttempted: true },
+  { knowledgeContext: { ...orderPolicy.knowledgeContext, businessOwner: { siteId: 'other', characterId: 'fixture' } } },
+  { knowledgeContext: { ...orderPolicy.knowledgeContext, items: [{ ...orderPolicy.knowledgeContext.items[0], evidenceQuote: 'invented' }] } },
+  { reviewResult: { ...orderPolicy.reviewResult, protocolFailures: ['shape'] } },
+]) assert.equal(isGroundedCommerceRepairEligible({ ...orderPolicy, ...changed }), false, 'unowned, unverified or repeated correction is denied');
+console.log('verified mixed order policy: bounded correction and provenance guard passed');
+
+const chatPolicy = { ...orderPolicy, orderActionCandidate: null, userText: 'What is a set, and what is the shipping policy?',
+  searchIntent: { ...orderPolicy.searchIntent, commerceRoute: 'chat', customerServiceKnowledgeRequest: true } };
+assert.equal(isGroundedCommerceRepairEligible(chatPolicy), true, 'owned verified policy in mixed chat may receive one repair');
+for (const changed of [
+ { trustedSite: { id: 'other' } }, { groundedRepairAttempted: true }, { knowledgeContext: { ...chatPolicy.knowledgeContext, ok: false } },
+ { knowledgeContext: { ...chatPolicy.knowledgeContext, items: [{ ...chatPolicy.knowledgeContext.items[0], evidenceQuote: 'invented' }] } },
+ { searchIntent: { ...chatPolicy.searchIntent, customerServiceKnowledgeRequest: false } },
+ { searchIntent: { ...chatPolicy.searchIntent, shouldLoadProductContext: true } },
+]) assert.equal(isGroundedCommerceRepairEligible({ ...chatPolicy, ...changed }), false, 'mixed chat does not bypass business authority or live product boundaries');
+console.log('verified business mixed chat: one correction, site provenance and unrelated routing guard passed');
+
+const purePolicy = { ...orderPolicy, orderActionCandidate: null, userText: 'How long is standard delivery?',
+  searchIntent: { ...orderPolicy.searchIntent, orderAndPolicy: false, pureStorePolicy: true, customerServiceKnowledgeRequest: true } };
+assert.equal(isGroundedCommerceRepairEligible(purePolicy), true, 'owned verified pure policy permits one correction after low confidence');
+for (const changed of [
+  { searchIntent: { ...purePolicy.searchIntent, pureStorePolicy: false } },
+  { trustedSite: { id: 'foreign' } }, { groundedRepairAttempted: true },
+  { orderActionCandidate: orderPolicy.orderActionCandidate },
+  { knowledgeContext: { ...purePolicy.knowledgeContext, items: [{ ...purePolicy.knowledgeContext.items[0], evidenceQuote: 'invented' }] } },
+]) assert.equal(isGroundedCommerceRepairEligible({ ...purePolicy, ...changed }), false, 'pure-order, foreign, forged or repeated correction remains closed');
+console.log('verified pure policy: low confidence correction, pure-order and evidence isolation passed');
+
+const mixedConceptPolicy = { ...purePolicy, searchIntent: { ...purePolicy.searchIntent, pureStorePolicy: false, conceptAndPolicy: true } };
+assert.equal(isGroundedCommerceRepairEligible(mixedConceptPolicy), true, 'mixed concept and verified policy permits one fully reviewed correction');
+for (const changed of [
+ { trustedSite: { id: 'foreign' } }, { groundedRepairAttempted: true }, { orderActionCandidate: orderPolicy.orderActionCandidate },
+ { knowledgeContext: { ...mixedConceptPolicy.knowledgeContext, items: [{ ...mixedConceptPolicy.knowledgeContext.items[0], evidenceQuote: 'invented' }] } },
+ { searchIntent: { ...mixedConceptPolicy.searchIntent, needsLiveProductData: true } },
+]) assert.equal(isGroundedCommerceRepairEligible({ ...mixedConceptPolicy, ...changed }), false);
+console.log('mixed concept and policy correction: ownership, independent action and factual boundaries passed');

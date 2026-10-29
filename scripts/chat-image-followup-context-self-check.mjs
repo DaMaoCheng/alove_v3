@@ -9,6 +9,7 @@ const { classifyChatImageIntent: actualClassifyImage } = await import("../server
 const { classifyJevImageDetails } = await import('../server/jev-image-decision-service.js');
 const { evaluateJevQuestions } = await import('../server/jev-intent-service.js');
 const classifyChatImageIntent = (text, options) => actualClassifyImage(text, { ...options,
+ jevDecision: { ...options.jevDecision, imageConditions: { wants_clothing: response?.wants_clothing === true, wants_no_clothing: response?.wants_no_clothing === true } },
  classifyImageJev: (message, context) => classifyJevImageDetails(message, { ...context,
   evaluate: request => evaluateJevQuestions({ ...request, forceRefresh: true }) }) });
 const { evaluateChatImageRequest } = await import("../server/chat-image-generation-service.js");
@@ -19,7 +20,7 @@ const context = { latestImageKind: "character", recentConversation: [
   { role: "assistant", kind: "mascot_library_image", text: "" },
   { role: "assistant", kind: "text", text: "Foto lista." },
 ] };
-const noImage = { ok: true, confident: true, confidence: .98, imageIntent: "none" };
+const noImage = { ok: true, confident: true, confidence: .98, imageIntent: "library_photo", primaryIntent: "character_photo" };
 const positive = (text) => ({ communicativeAction: "request_visual_output", requestKind: "character_image", hasIntent: true,
   allowed: true, confidence: .98, intentType: "library_photo", imageSubject: "character", requestEvidence: text,
   actorEvidence: "ti", actionEvidence: text, requestScope: "image_only", clothingTarget: "none", explicitGeneration: false,
@@ -29,10 +30,10 @@ let response, calls = 0, lastPayload, lastPrompt;
 globalThis.fetch = async (_url, options) => {
   calls += 1;
   const body = JSON.parse(options.body);
- if (body.questions?.actor_is_character) return { ok: true, json: async () => jevImageAnswerFixture(body, response) };
+
   lastPrompt = body.questions ? Object.values(body.questions).map(q => q.instructions).join('\n') : body.messages[0].content;
   lastPayload = body.state || JSON.parse(body.messages[1].content);
-  if (body.questions) return { ok: true, json: async () => jevImageAnswerFixture(body, response) };
+  if (body.questions) { const adapted = jevImageAnswerFixture(body, response); adapted.answers.image_type = { choice: response.intentType || 'unclear', confidence: .01 }; return { ok: true, json: async () => adapted }; }
   return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(response) } }] }) };
 };
 let checks = 0;
@@ -57,7 +58,7 @@ try {
     assert.equal(result.allowed, true, text);
     assert.equal(result.explicitGeneration, false, "elliptical requests keep gallery-first behavior");
     assert.equal(result.requestScope, "image_only");
-    assert.equal(calls, before + 2, "one JEV facet selection plus one focused grounding verification, no LLM classification");
+    assert.equal(calls, before + 1, "one image-type selection, no second intent or grounding vote");
     assert.deepEqual(lastPayload.characterImageFollowup, { imageKind: "mascot_library_image", requestText: prior }); checks++;
   }
   assert.equal(lastPayload.latestImageKind, "character", "a real library image must not be confused with an unsupported welcome-only context"); checks++;
@@ -88,7 +89,7 @@ try {
   assert.doesNotMatch(lastPrompt, /Only current user language that addresses the character/,
     "current-only subject wording must not contradict bounded elliptical requests");
   assert.match(lastPrompt, /additional.photo/);
-  assert.match(lastPrompt, /additional photo never inherits old clothing/); checks++;
+  assert.match(lastPrompt, /Do not reclassify whether the user requested a picture/i); checks++;
   response = positive("otra");
   const afterLocation = { ...context, recentConversation: [...context.recentConversation,
     { role: "user", kind: "text", text: "¿Dónde está la foto anterior?" },
@@ -101,16 +102,22 @@ try {
   assert.equal(lastPayload.latestImageKind, "character"); checks++;
   for (const text of ["Where is the photo?", "Nice!", "Show the candidate shirt", "How much is another shirt?"]) {
     response = { ...positive(text), communicativeAction: "other", requestKind: "non_image", hasIntent: false, allowed: false, intentType: "none" };
-    assert.equal((await classifyChatImageIntent(text, { character, jevDecision: noImage, conversationContext: context })).hasIntent, false, text); checks++;
+    assert.equal((await classifyChatImageIntent(text, { character, jevDecision: { ...noImage, primaryIntent: 'daily_chat', imageIntent: 'none' }, conversationContext: context })).hasIntent, false, text); checks++;
   }
   for (const bad of [
     { actorEvidence: "made up actor" }, { actionEvidence: "not in latest text" }, { requestEvidence: "not in latest text" },
-    { imageSubject: "product" }, { requestKind: "non_image" }, { communicativeAction: "merchandise_question" },
-    { confidence: .69 }, { wants_no_clothing: true }, { wants_clothing: true },
+    { wants_no_clothing: true }, { wants_clothing: true },
     { intentType: "try_on" },
   ]) {
     response = { ...positive("otra"), ...bad };
     assert.equal((await classifyChatImageIntent("otra", { character, jevDecision: noImage, conversationContext: context })).hasIntent, false, JSON.stringify(bad)); checks++;
+  }
+  // Subject/action negatives belong to the primary route, not a second vote.
+  for (const text of ['Show the product photo', 'Is the photo ready?', 'Show Messi wearing it']) {
+    const noPicture = { ...noImage, primaryIntent: 'daily_chat', imageIntent: 'none' };
+    const before = calls;
+    assert.equal((await classifyChatImageIntent(text, { character, jevDecision: noPicture, conversationContext: {} })).hasIntent, false);
+    assert.equal(calls, before, 'non-picture primary decision must not trigger image detail'); checks++;
   }
   response = { ...positive("otra"), explicitGeneration: true };
   const contradictoryLegacyFlag = await classifyChatImageIntent("otra", { character, jevDecision: noImage, conversationContext: context });
@@ -118,12 +125,12 @@ try {
   const before = calls;
   response = positive("otra");
   for (const empty of [null, {}, { recentConversation: [{ role: "assistant", kind: "mascot_greeting_image", text: "Welcome" }] }]) {
-    assert.equal((await classifyChatImageIntent("otra", { character, jevDecision: noImage, conversationContext: empty })).hasIntent, false); checks++;
+    assert.equal((await classifyChatImageIntent("otra", { character, jevDecision: { ...noImage, primaryIntent: "unclear", imageIntent: "none" }, conversationContext: empty })).hasIntent, false); checks++;
   }
   assert.equal(calls, before, "no added verifier without bounded user-requested character-image context"); checks++;
   const beforeLong = calls;
   assert.equal((await classifyChatImageIntent("This is a normal long conversation message about my day. ".repeat(3), {
-    character, jevDecision: noImage, conversationContext: context,
+    character, jevDecision: { ...noImage, primaryIntent: "daily_chat", imageIntent: "none" }, conversationContext: context,
   })).hasIntent, false);
   assert.equal(calls, beforeLong, "long no-image turns keep the original JEV decision without supplemental classification"); checks++;
   response = positive("otra");
@@ -149,8 +156,9 @@ try {
   response = { ...positive("otra"), requestScope: "image_only" };
   assert.equal((await classifyChatImageIntent("otra y cuándo llega", { character, jevDecision: noImage, conversationContext: context })).requestScope, "unknown", "partial evidence cannot mark the full turn image-only"); checks++;
   const beforeDirect = calls;
+  response = { ...positive('send your photo'), actorEvidence: 'your' };
   const direct = await classifyChatImageIntent("send your photo", { character: { id: "companion" }, jevDecision: { ...noImage, imageIntent: "library_photo" }, conversationContext: context });
-  assert.equal(direct.allowed, true); assert.equal(calls, beforeDirect, "existing non-commerce JEV positive needs no extra verifier"); checks++;
+  assert.equal(direct.allowed, true); assert.equal(calls, beforeDirect + 1, "image type is selected without an additional intent vote"); checks++;
   console.log(`image followup context self-check passed: ${checks} cases; isolated provider, no image jobs or quota writes`);
 } finally {
   globalThis.fetch = originalFetch;

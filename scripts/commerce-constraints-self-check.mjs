@@ -18,10 +18,11 @@ globalThis.fetch = async () => { throw new Error("Unexpected external request");
 const singleProductRequest = { relation: "single", action: "new", items: [], selectedIndex: null, selectionEvidence: "" };
 const shopping = (extra = {}) => ({ route: "product_search", confident: true, confidence: .99, searchQuery: "Brazil shirt", productRequest: singleProductRequest, ...extra });
 try {
-  for (const confidence of [Infinity, "Infinity", NaN, .4]) {
+  for (const confidence of [Infinity, "Infinity", NaN, null, false]) {
     const value = normalizeCommerceDecision({ route: "product_search", confidence });
     check(!value.confident && !value.replyBoundary.salesAllowed && !value.replyBoundary.contactAllowed, "uncertain metadata cannot grant invitations");
   }
+  check(normalizeCommerceDecision({ route: "product_search", confidence: .01 }).confident, "selected commerce route is not blocked by a score threshold");
   check(normalizeCommerceDecision({ route: "product_search", confidence: .99, commerceConstraints: { edition: { value: "player", evidence: "invented" } } }, { userText: "Version jugador" }).commerceConstraints.edition === null, "invented user edition evidence is rejected");
   check(normalizeCommerceDecision({ route: "product_search", confidence: .99, commerceConstraints: { edition: { value: "player", evidence: "player version" } } }, { recentMessages: [{ senderType: "character", text: "player version" }] }).commerceConstraints.edition === null, "assistant cannot establish a user constraint");
   const mixedText = "Quiero la version jugador; puedo pagar en efectivo?";
@@ -59,7 +60,7 @@ try {
     const result = await resolveCommerceSearchIntent({ userText: "shirt", classifyCommerce: async () => shopping(), jevDecision: { ok: true, confident: true, primaryIntent: "product_request", ...productDecision } });
     check(!result.shouldLoadProductContext && !result.cardAllowed, "commercial enrichment cannot override JEV product action threshold or unsupported product capability");
   }
-  for (const productDecision of [{ productIntent: "search" }, { productIntent: "search", productAction: .72 }, { productIntent: "search", productAction: .9, unsupported: true, unsupportedIntent: "order_lookup" }]) {
+  for (const productDecision of [{ productIntent: "search" }, { productIntent: "search", productAction: 1 }, { productIntent: "search", productAction: 1, unsupported: true, unsupportedIntent: "order_lookup" }]) {
     const result = await resolveCommerceSearchIntent({ userText: "shirt", classifyCommerce: async () => shopping(), jevDecision: { ok: true, confident: true, primaryIntent: "product_request", ...productDecision } });
     check(result.shouldLoadProductContext && result.cardAllowed, "verified JEV product search and legacy explicit search retain permission; unrelated unsupported action does not veto it");
   }
@@ -84,6 +85,12 @@ try {
   for (const name of ["Brasil Versión Jugador", "ブラジル 選手版", "Brazil játékos változat", "البرازيل نسخة اللاعبين"]) {
     const [product] = await edition.resolveProductEditions([{ name }], { searchIntent: { requestedFeatures: ["authentic"] }, classifyEditions: async () => [{ index: 0, edition: "player", evidenceField: "name", evidence: name, confidence: .95 }] });
     check(product.canonicalEdition === "player" && filterProductsByIntent([product], { requestedFeatures: ["authentic"] }).length === 1, "semantic evidence works without language alias tables");
+  }
+  for (const [confidence, expected] of [[0.01, 'player'], [null, 'unknown'], [false, 'unknown'], [1.1, 'unknown']]) {
+    const [product] = await edition.resolveProductEditions([{ name: 'Versión Jugador' }], {
+      searchIntent: { requestedEdition: 'player' }, classifyEditions: async () => [{ index: 0, edition: 'player', evidenceField: 'name', evidence: 'Versión Jugador', confidence }],
+    });
+    check(product.canonicalEdition === expected, 'edition choice uses exact evidence without a score threshold and rejects malformed confidence');
   }
   for (const classifyEditions of [async () => { throw new Error("timeout"); }, async () => [{ index: 0, edition: "player", evidenceField: "name", evidence: "fabricated", confidence: .99 }], async () => [{ index: 0, edition: "player", evidenceField: "name", evidence: "Versión", confidence: Infinity }]]) {
     const products = await edition.resolveProductEditions([{ name: "Versión Jugador" }], { searchIntent: { requestedEdition: "player" }, classifyEditions });
@@ -148,7 +155,7 @@ try {
     replyBoundary: { salesAllowed: true, contactAllowed: true }, searchQuery: "Real Madrid shirt",
     productRequest: singleProductRequest, productRequirement: unifiedRequirement(text),
     commerceConstraints: { team: null, edition: null }, ...extra });
-  const unifiedJev = { ok: true, confident: true, primaryIntent: "product_request", productIntent: "search", productAction: .95 };
+  const unifiedJev = { ok: true, confident: true, primaryIntent: "product_request", productIntent: "search", productAction: 1 };
   const unifiedErrors = [];
   const unifiedCases = [
     { name: "typed target supplies missing duplicate team", extra: {}, expectedTeam: "Real Madrid", search: true },
@@ -166,7 +173,7 @@ try {
     { name: "typed none grants no target", extra: { productRequirement: { ...unifiedRequirement(), action: "none" } }, search: false },
     { name: "typed cancel grants no target", extra: { productRequirement: { ...unifiedRequirement(), action: "cancel" } }, search: false },
     { name: "empty typed clear is not a target", extra: { productRequirement: { ...unifiedRequirement(), updates: [{ field: "requestedTeam", value: "", evidence: "Real Madrid" }] } }, search: false },
-    { name: "low confidence grants no target", extra: { confidence: .5 }, search: false },
+    { name: "low confidence retains selected target with verified evidence", extra: { confidence: .5 }, expectedTeam: "Real Madrid", search: true },
     { name: "lexical detection alone is not target role evidence", extra: { productRequirement: null }, search: false },
     { name: "invalid independent scope remains blocked", extra: { productRequest: { ...singleProductRequest, items: [{ evidence: "Real Madrid" }] } }, search: false },
     { name: "multiple unselected scope remains blocked", text: "Find a Real Madrid shirt and a Barcelona shirt.", extra: { productRequest: { relation: "multiple", action: "new", items: [{ evidence: "Real Madrid shirt", sharedEvidence: "" }, { evidence: "Barcelona shirt", sharedEvidence: "" }], selectedIndex: null, selectionEvidence: "" } }, search: false },

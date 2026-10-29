@@ -6,7 +6,7 @@ const { createChatIntentTurn, prepareChatIntentTurn } = await import("../server/
 const { classifyProductIntent } = await import("../server/product-intent-classifier-service.js");
 const { classifyOrderLookup } = await import("../server/chat-order-intent-service.js");
 let calls = [];
-const expected = { ok: true, confident: true, primaryIntent: "try_on", productIntent: "search", productAction: .95,
+const expected = { ok: true, confident: true, primaryIntent: "try_on", productIntent: "search", productAction: 1,
   orderIntent: "lookup", imageIntent: "try_on", unsupported: false, confidence: .95, imageConditions: { wants_clothing: true } };
 const classify = async (options) => { calls.push(options); return expected; };
 const turn = createChatIntentTurn({ classify });
@@ -67,6 +67,56 @@ const source = core.toString();
 // Reverse ONLY these exact deltas before checking the original immutable baseline;
 // every unrelated route, question, threshold and normalization rule stays protected.
 let baselineSource = source;
+// Ignore only the additional current-user-text argument used for exact repeated-order evidence.
+baselineSource = baselineSource.replace("export function normalizeJevResponse(payload = {}, capabilities = {}, conversationContext = {}, userText = '') {", "export function normalizeJevResponse(payload = {}, capabilities = {}, conversationContext = {}) {");
+// Reverse only the explicitly authorized order-evidence changes before the
+// immutable hashes. Other routing fields stay in the original comparison.
+const oldOrderCriteria = '  order_lookup: "Wants to inspect an existing order, shipment, delivery status, or tracking reference.",';
+const newOrderCriteria = '  order_lookup: "Wants to inspect an actual existing personal order, shipment or tracking reference; general delivery times, shipping policy or hypothetical purchases are not an order lookup.",';
+assert.equal(baselineSource.split(newOrderCriteria).length - 1, 1);
+baselineSource = baselineSource.replace(newOrderCriteria, oldOrderCriteria);
+const newQuestionHeader = 'export function buildQuestions(_capabilities = {}, conversationContext = {}) {\n  const priorUsers = orderPriorUsers(conversationContext);';
+assert.equal(baselineSource.split(newQuestionHeader).length - 1, 1);
+baselineSource = baselineSource.replace(newQuestionHeader, 'export function buildQuestions() {');
+const orderQuestionStart = baselineSource.indexOf('    order_request_kind: {');
+const orderQuestionEnd = baselineSource.indexOf('    web_search: {', orderQuestionStart);
+assert(orderQuestionStart > 0 && orderQuestionEnd > orderQuestionStart);
+assert(baselineSource.slice(orderQuestionStart, orderQuestionEnd).includes('order_evidence_source:'));
+baselineSource = baselineSource.slice(0, orderQuestionStart) + '    order_lookup: {\n      type: "noul",\n      instructions: "Does the user want to inspect an existing order, shipment, delivery status, or tracking reference?",\n    },\n' + baselineSource.slice(orderQuestionEnd);
+assert.equal(baselineSource.split('  let primaryIntent = normalizeRoute(routeAnswer.choice);').length - 1, 1);
+baselineSource = baselineSource.replace('  let primaryIntent = normalizeRoute(routeAnswer.choice);', '  const primaryIntent = normalizeRoute(routeAnswer.choice);');
+assert.equal(baselineSource.split('  const webSearch = readNoul(answers.web_search);').length - 1, 1);
+baselineSource = baselineSource.replace('  const webSearch = readNoul(answers.web_search);', '  const orderLookup = readNoul(answers.order_lookup);\n  const webSearch = readNoul(answers.web_search);');
+const orderNormalizeStart = baselineSource.indexOf('  const kind = answers.order_request_kind?.choice;');
+const orderNormalizeEnd = baselineSource.indexOf('  const supported = resolveSupport(', orderNormalizeStart);
+assert(orderNormalizeStart > 0 && orderNormalizeEnd > orderNormalizeStart);
+baselineSource = baselineSource.slice(0, orderNormalizeStart) + '  const orderIntent = primaryIntent === "order_lookup" || orderLookup === 1 ? "lookup" : "none";\n' + baselineSource.slice(orderNormalizeEnd);
+const orderOutputStart = baselineSource.indexOf('    orderRequestKind:');
+const orderOutputEnd = baselineSource.indexOf('    webSearchIntent:', orderOutputStart);
+assert(orderOutputStart > 0 && orderOutputEnd > orderOutputStart);
+baselineSource = baselineSource.slice(0, orderOutputStart) + baselineSource.slice(orderOutputEnd);
+// Undo reviewed route distinction changes only when auditing the previous baseline.
+baselineSource = baselineSource.replace("  daily_chat: \"Normal conversation, a general question, a compliment, a question about the status of an earlier image, or a comment about an earlier character image or message that does not ask the system to perform a specialized action. Product mentions used as comments such as 'Bonito bikini', 'Nice shirt', or a bare team name belong here.\",", "  daily_chat: \"Normal conversation, a general question, a compliment, or a comment about an earlier character image or message that does not ask the system to perform a specialized action. Product mentions used as comments such as 'Bonito bikini', 'Nice shirt', or a bare team name belong here.\",");
+baselineSource = baselineSource.replace("  new_image: \"Wants a new image of the AI character, or explicitly asks to create a supported new image. A standalone photo request in the character conversation may mean the character; do not use this route for viewing a catalogue product image, asking about an existing image's status, or an image of a third person.\",", "  new_image: \"Wants one new image or explicitly asks the character or system to create, generate, make, render, take, or compose a new image or photo. A standalone request such as 'send me one picture' counts as a new-image request; do not use this route when the user asks to see existing character photos.\",");
+baselineSource = baselineSource.replace("  try_on: \"Wants the AI character to wear, try on, or model a product or outfit, including an item shown in an earlier image or message. A product image or third person wearing an outfit does not identify the AI character. This route has priority over image inspection.\",", "  try_on: \"Wants the character to wear, try on, or model a product or outfit, including asking the character to wear an item shown in an earlier image or message. This route has priority over image inspection.\",");
+baselineSource = baselineSource.replace("  product_request: \"Wants to find, view a catalogue product or its existing image, recommend, compare, price, size, or check availability of a merchandise product.\",", "  product_request: \"Wants to find, recommend, compare, price, size, or check availability of a merchandise product.\",");
+baselineSource = baselineSource.replace("      instructions: \"What is the user's primary requested action? First distinguish an action request from a comment or compliment. Comments such as 'Bonito bikini', 'Nice shirt', or a bare team name are daily_chat even when they mention a product. Generic or plural requests to see existing character photos go to character_photo and use the existing library first. A standalone request for one picture can count as new_image in character context, but viewing an existing catalogue product or its photo is product_request; asking whether a previous image is ready is daily_chat, not a new image request. Do not treat a third person or product as the AI character. Requests for the character to wear or try on an item from an earlier image go to try_on and override image inspection. Use unsupported_request when the user clearly asks for an unavailable specialized function. Use unclear only when the meaning is genuinely ambiguous.\",", "      instructions: \"What is the user's primary requested action? First distinguish an action request from a comment or compliment. Comments such as 'Bonito bikini', 'Nice shirt', or a bare team name are daily_chat even when they mention a product. Generic or plural requests to see existing character photos go to character_photo and use the existing library first. A standalone request for one picture counts as new_image even without the word generate. Requests to wear or try on an item from an earlier image go to try_on and override image inspection. Use unsupported_request when the user clearly asks for an unavailable specialized function. Use unclear only when the meaning is genuinely ambiguous.\",");
+// The user explicitly authorized changing binary intent questions to choice.
+// Undo only that mechanical protocol conversion for the original prompt audit.
+baselineSource = baselineSource.replace('  const questions = {\n    route: {', '  return {\n    route: {');
+baselineSource = baselineSource.replace("  for (const [key, question] of Object.entries(questions)) {\n    if (question.type === 'noul') questions[key] = { type: 'choice', instructions: question.instructions,\n      criteria: { yes: 'Yes, this applies to the current request.', no: 'No, this does not apply to the current request.' } };\n  }\n  return questions;\n", '');
+baselineSource = baselineSource.replace("    confident: primaryIntent !== 'unclear',", '    confident: confidence >= MIN_ROUTE_CONFIDENCE,');
+baselineSource = baselineSource.replace('  // The binary product action choice is distinct from the primary route.', '  // Older Jev responses do not contain product_action. Preserve their behavior\n  // by using the existing product_request score only when the route itself is\n  // explicitly product_request; new responses use the stricter action signal.');
+for (const [current, previous] of [
+  ['readNoul(answers.image_wants_no_clothing) === 1', 'readNoul(answers.image_wants_no_clothing) >= 0.7'],
+  ['readNoul(answers.image_wants_clothing) === 1', 'readNoul(answers.image_wants_clothing) >= 0.7'],
+  ['productAction === 1', 'productAction >= MIN_PRODUCT_ACTION_CONFIDENCE'],
+  ['orderLookup === 1', 'orderLookup >= 0.7'],
+  ['webSearch === 1', 'webSearch >= 0.7'],
+]) {
+  assert.equal(baselineSource.split(current).length - 1, 1, `authorized binary delta missing: ${current}`);
+  baselineSource = baselineSource.replace(current, previous);
+}
 const reviewedDeltas = [
   [
     "  web_search: \"Needs independently requested public-world facts that require external research, including public events, results, news or records. A current-site catalogue task such as choosing merchandise, checking price, size, customization or availability is not public web research by itself.\",",
@@ -109,8 +159,6 @@ for (const [label, start, end, expectedHash] of ruleRegions) {
     `approved Jev ${label} baseline changed; do not update this baseline to hide a regression`);
 }
 for (const unchangedLine of [
-  'const MIN_ROUTE_CONFIDENCE = 0.72;',
-  'const MIN_PRODUCT_ACTION_CONFIDENCE = 0.72;',
   'if (!text || text.length > 1200) return unavailableDecision("invalid_input");',
 ]) assert.ok(source.includes(unchangedLine), `approved Jev threshold/deadline changed: ${unchangedLine}`);
 // The retry transport/cache now has a dedicated module; preserve the original

@@ -62,9 +62,9 @@ function fixture({ status = 'ready', initial = null, ledger = {}, newerUser = fa
     generateChatReply: async ({ promptContext, userText }) => {
       state.generations++;
       assert.equal(promptContext.messages.at(-1).role, 'system', 'last instruction is the server caption task, not the mixed user request');
-      assert.match(promptContext.messages.at(-1).content, /not a new user question/);
-      assert.match(promptContext.messages.at(-1).content, /physical photoshoots are unverified/, 'terminal generation must receive the same representation limits as its reviewer');
-      assert.equal(promptContext.messages.at(-1).content.includes('already added this specific requested character photo'), state.status === 'ready',
+      assert(promptContext.messages.some(message => /not a new user question/.test(message.content)), 'caption task remains scoped');
+      assert.match(promptContext.messages.find(message => /physical photoshoots are unverified/.test(message.content))?.content || '', /physical photoshoots are unverified/, 'terminal generation must receive the same representation limits as its reviewer');
+      assert.equal(promptContext.messages.some(message => message.content.includes('already added this specific requested character photo')), state.status === 'ready',
         'failed captions must never inherit the current ready-delivery contract');
       assert(promptContext.systemPrompt.startsWith('Preserved persona, voice, language and safety instructions.'));
       assert.equal(promptContext.layers[0].id, 'persona');
@@ -80,21 +80,14 @@ function fixture({ status = 'ready', initial = null, ledger = {}, newerUser = fa
       return state.emptyGeneration ? { text: '', sourceType: 'ai', ...fallbackIdentity }
         : { text: state.status === 'failed' ? 'That photo did not come through; sorry about the wait.' : 'Here is that matchday photo we were talking about.', sourceType: 'ai', ...fallbackIdentity };
     },
-    enforceReplyBoundary: async ({ chatImageContext, ...options }) => {
+    assessImageTerminalCaption: async ({ replyResult, userText, language }) => {
       state.reviews++;
-      assert.deepEqual(JSON.parse(JSON.stringify(Object.fromEntries(Object.keys(fallbackIdentity).map(key => [key, options.replyResult[key]])))), fallbackIdentity,
-        'independent review receives the actual fallback generator identity, including after cached draft recovery');
-      assert.equal(chatImageContext.imageStatus.status, state.status);
-      assert.equal(options.requireIdentityReview, true);
-      assert.equal(options.independentLanguageQualityRequired, true);
-      assert.equal(options.languageQualityRequired, true);
-      assert.equal(typeof options.regenerateReply, 'function', 'ready caption must reuse the existing bounded text-only recovery');
-      assert.equal(typeof options.refreshImageStatus, 'function');
-      assert.deepEqual(JSON.parse(JSON.stringify(options.searchIntent.replyBoundary)), { salesAllowed: false, contactAllowed: false });
+      assert.deepEqual(JSON.parse(JSON.stringify(Object.fromEntries(Object.keys(fallbackIdentity).map(key => [key, replyResult[key]])))), fallbackIdentity);
+      assert.equal(userText, 'How do I redeem my points? Also send me that photo.');
+      assert.equal(language, 'en');
       await state.onReview?.();
-      assert.equal(await options.regenerateReply(options.replyResult, { kind: 'language' }), null, 'unrelated recovery never spends a caption generation');
-      if (state.recoverImageReview) return options.regenerateReply(options.replyResult, { kind: 'image', chatImageContext: await options.refreshImageStatus(), failedContracts: ['boundary'] });
-      return state.rejectReview ? { ...options.replyResult, degraded: true } : options.replyResult;
+      if (state.recoverImageReview && state.reviews === 1) return { allowed: false, reviewStatus: 'valid', failures: ['languageSupported'], confidence: .6 };
+      return state.rejectReview ? { allowed: false, reviewStatus: 'valid', failures: ['noInternalLeak'], confidence: .6 } : { allowed: true, reviewStatus: 'valid', failures: [], confidence: .6 };
     },
     isAiTransportFallback: () => false,
     getChatImageStatusCopy: ({ status }) => `localized:${status}`,
@@ -204,7 +197,7 @@ const rejected = fixture({ initial }); rejected.state.rejectReview = true;
 await rejected.run();
 assert.equal(rejected.state.messages[0].text, 'localized:ready', 'unreviewed claims never escape');
 assert.equal(rejected.state.metadata._terminalReply.responseKind, 'fallback', 'rejected review is never reported as a natural pass');
-assert.equal(rejected.state.generations, 1); assert.equal(rejected.state.reviews, 1);
+assert.equal(rejected.state.generations, 2); assert.equal(rejected.state.reviews, 2);
 
 const empty = fixture({ initial }); empty.state.emptyGeneration = true;
 await empty.run();

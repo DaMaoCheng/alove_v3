@@ -13,7 +13,7 @@ const target = { version: 1, status: 'active', ...location, owner: 'single',
   requirements: { requestedTeam: 'Real Madrid', requestedProductType: 'shirt', requestedVariants: ['away'],
     requestedSeason: '2026/27', requestedPrinting: 'none', requestedEdition: 'player', requestedFeatures: ['authentic'] },
   proposal: { status: 'displayed', candidateId: 'displayed-shirt', name: 'Real Madrid away shirt 2026/27', reply: 'Is this the shirt?' }, suspectedTerm: null };
-const jevDecision = { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'search', productAction: .99 };
+const jevDecision = { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'search', productAction: 1 };
 let checks = 0;
 const failures = [];
 async function check(name, run) {

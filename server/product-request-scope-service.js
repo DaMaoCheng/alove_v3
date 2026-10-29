@@ -10,7 +10,7 @@ const MAX_QUESTIONS = 2;
 const OWN = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 const object = (value) => value && typeof value === 'object' && !Array.isArray(value);
 const text = (value, max = MAX_TEXT) => typeof value === 'string' && value.trim() && value.trim().length <= max ? value.trim() : '';
-const confident = (value) => typeof value === 'number' && Number.isFinite(value) && value >= .75 && value <= 1;
+const confident = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
 const indexValid = (value, items) => Number.isInteger(value) && value >= 0 && value < items.length;
 const invalid = (reason) => ({ valid: false, reason, relation: 'unclear', action: 'suspend', items: [], selectedIndex: null, selectionEvidence: '' });
 
@@ -123,7 +123,7 @@ const FOLLOWUP_ARRAYS = ['requestedVariants', 'requestedSizes', 'requestedFeatur
 export function applyProductRequestScope(searchIntent = {}, decision = {}, { userText = '', recentMessages = [], siteId = '', characterId = '', buildIntent, getClearedFields = () => [] } = {}) {
   const previous = readProductRequestState(recentMessages, { siteId, characterId });
   const active = previous && previous.status !== 'cleared' ? previous : null;
-  const request = normalizeProductRequest(decision.productRequest, { userText, confidence: decision.confident === false ? 0 : decision.confidence, previousState: active });
+  const request = normalizeProductRequest(decision.productRequest, { userText, confidence: decision.confident === false ? NaN : decision.confidence, previousState: active });
   if (!request.valid) {
     if (!active && !['product_search', 'product_question'].includes(decision.route)) return searchIntent;
     const state = active ? { ...active, status: 'pending', selectedIndex: null, clarificationCount: active.clarificationCount } : null;

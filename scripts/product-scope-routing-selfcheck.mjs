@@ -7,7 +7,7 @@ const {filterProductsBySearchCriteria}=await import('../server/product-search-ma
 const {closeDbPool}=await import('../server/db.js');
 const userText='Find red Madrid shirt and blue Barcelona shirt, both size M';
 const decision={route:'product_search',confident:true,confidence:.99,searchQuery:userText,replyBoundary:{salesAllowed:true,contactAllowed:true},productRequest:{relation:'multiple',action:'new',items:[{evidence:'red Madrid shirt',sharedEvidence:'both size M'},{evidence:'blue Barcelona shirt',sharedEvidence:'both size M'}],selectedIndex:null,selectionEvidence:''}};
-const jev={ok:true,confident:true,primaryIntent:'product_request',productIntent:'search',productAction:.99};
+const jev={ok:true,confident:true,primaryIntent:'product_request',productIntent:'search',productAction:1};
 const base={userText,searchIntent:buildProductSearchIntent(userText),siteId:'site',characterId:'character',jevDecision:jev,enrichAllTurns:true};
 let checks=0;const check=(x,m)=>{assert.ok(x,m);checks++};
 try{

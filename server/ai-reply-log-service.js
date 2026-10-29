@@ -109,6 +109,7 @@ export function buildCommerceDecisionLogEvent({ searchIntent = {}, knowledgeCont
       .filter(item => ['venice', 'openai', 'deepseek', 'other'].includes(item?.provider)
         && ['protocol_shape', 'protocol_evidence', 'parse', 'timeout', 'provider', 'http_429'].includes(item?.kind))
       .map(({ provider, kind }) => ({ provider, kind })),
+    generalTermExplanation: searchIntent.generalTermExplanation === true,
     blockedBy: searchIntent.commerceClassificationUnavailable === true ? "classification"
       : searchIntent.primarySearchBlocked === true ? "primary_action"
       : searchIntent.teamConstraintUnverified === true ? "team_evidence"

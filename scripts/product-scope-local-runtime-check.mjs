@@ -15,7 +15,7 @@ try{
 for(const [expected,userText] of cases){
 const recentMessages=previous ? [{senderType:'character',productRequestState:previous,text:'Which item first?'}] : [];
 const started=Date.now();const decision=await classifyCommerceIntent(userText,{siteId,characterId,recentMessages});
-const intent=await resolveCommerceSearchIntent({userText,siteId,characterId,recentMessages,searchIntent:buildProductSearchIntent(userText),enrichAllTurns:true,jevDecision:{ok:true,confident:true,primaryIntent:'product_request',productIntent:'search',productAction:.99},classifyCommerce:async()=>decision});
+const intent=await resolveCommerceSearchIntent({userText,siteId,characterId,recentMessages,searchIntent:buildProductSearchIntent(userText),enrichAllTurns:true,jevDecision:{ok:true,confident:true,primaryIntent:'product_request',productIntent:'search',productAction:1},classifyCommerce:async()=>decision});
 results.push({expected,elapsedMs:Date.now()-started,route:decision.route,confidence:decision.confidence,productRequest:decision.productRequest,searchQuery:decision.searchQuery,query:intent.query,team:intent.requestedTeam,color:intent.requestedColor,sizes:intent.requestedSizes,pending:intent.productScopePending===true,canQuery:intent.shouldLoadProductContext===true,state:intent.productRequestState});
 assert.equal(decision.productRequest?.relation,expected==='selection'?'multiple':expected,'actual semantic classifier must distinguish independent targets from alternatives');
 if(expected==='multiple'){assert.equal(intent.productRequestState?.items.length,2);assert.equal(intent.shouldLoadProductContext,false)}

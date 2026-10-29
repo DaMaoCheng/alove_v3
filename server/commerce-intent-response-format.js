@@ -41,7 +41,7 @@ export const COMMERCE_INTENT_RESPONSE_FORMAT = {
     topic: values(['authenticity', 'delivery', 'returns', 'support', 'material', 'sizing', 'price', 'stock', 'other']),
     needsLiveProductData: bool, searchQuery: text(160), referencedProductId: text(160), referencedProductIds: list(text(160), 0, 2),
     knowledgeScope: values(['business', 'general']), knowledgeQuery: text(), answerRequired: bool,
-    knowledgeRequest: nullable(object({ kind: values(['catalogue_only', 'business_question', 'sizing_update', 'unclear']), evidence: text() })),
+    knowledgeRequest: nullable(object({ kind: values(['catalogue_only', 'business_question', 'sizing_update', 'general_explanation', 'store_policy_only', 'order_and_policy', 'concept_and_policy', 'unclear']), evidence: text() })),
     businessInquiry: nullable(object({ kind: values(['quotation', 'wholesale', 'dropshipping', 'distribution', 'sponsorship', 'partnership', 'business_other']), evidence: text(500) })),
     humanHandoff: nullable(object({ explicitRequest: bool, businessReviewRequired: bool, reviewReason: values(['quotation', 'negotiation', 'contract', 'commercial_terms', 'none']), evidence: text(500) })),
     promotionInquiry: nullable(object({ kind: values(['policy', 'benefit_request']), evidence: text(500) })),

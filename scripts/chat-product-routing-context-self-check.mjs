@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 process.env.AIOVE_PROVIDER_LOG_WRITE_ENABLED = 'false';
-const { classifyJevIntent } = await import('../server/jev-intent-service.js');
+const { classifyJevIntent, buildQuestions } = await import('../server/jev-intent-service.js');
 const configOverride = { enabled: true, apiKey: 'isolated-check', baseUrl: 'https://jev.invalid', model: 'isolated', timeoutMs: 1000 };
 let bodies = [];
 const fetchImpl = async (_url, request) => {
   bodies.push(JSON.parse(request.body));
-  return new Response(JSON.stringify({ answers: { route: { choice: 'product_request', confidence: .95 }, product_action: { noul: .95 } } }));
+  const answers = Object.fromEntries(Object.entries(buildQuestions()).map(([key, q]) => [key, { choice: Object.hasOwn(q.criteria, 'no') ? 'no' : Object.keys(q.criteria)[0], confidence: .3 }]));
+  answers.route = { choice: 'product_request', confidence: .95 }; answers.product_action = { choice: 'yes', confidence: .3 };
+  return new Response(JSON.stringify({ answers }));
 };
 const productContext = { targetEvidence: 'Busco una camiseta del Real Madrid sin número',
   requirements: { requestedTeam: 'Real Madrid', requestedProductType: 'shirt', requestedPrinting: 'none' },
@@ -69,7 +71,7 @@ let commerceCalls = 0, forwarded = null;
 const db = { execute: async () => [[]] };
 const prepared = await prepareChatIntentTurn(db, { ...location, recentMessages: rows, session: { id: 'session-one' },
   character: { id: location.characterId, category_id: 'mascot' }, userText: 'Sí, esa', userDisplayOrder: 100,
-  commerceForImageOnly: true, classify: async options => { forwarded = options; return { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'search', productAction: .95 }; },
+  commerceForImageOnly: true, classify: async options => { forwarded = options; return { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'search', productAction: 1 }; },
   classifyImage: async () => ({ hasIntent: false, allowed: false }), classifyCommerce: async () => { commerceCalls++; } });
 assert.deepEqual(forwarded.conversationContext.productContext, productContext);
 assert.equal(forwarded.conversationContext.hasRecentProductContext, true);

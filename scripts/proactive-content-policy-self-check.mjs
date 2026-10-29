@@ -45,7 +45,7 @@ for (const [latestText, expectedState] of [["Now help me choose a new Arsenal sh
   const candidate = policy.resolveProactiveCandidate({ text: "Would you like to browse our new shirts?", decision });
   check(decision.state === expectedState && candidate.replaced === (expectedState !== "shopping"), "new explicit shopping permits sales while ordinary acknowledgment retains after-sales protection");
 }
-for (const classify of [async () => { throw new Error("timeout"); }, async () => ({ state: "neutral", confidence: .3 })]) {
+for (const classify of [async () => { throw new Error("timeout"); }, async () => ({ state: "unknown", confidence: .3 })]) {
   const result = await policy.assessProactiveContent(classify, { recentMessages: userMessages });
   check(result.state === "unknown", "semantic failure uses unknown state");
   const fallback = policy.resolveProactiveCandidate({ text: "buy now", decision: result, language: "es" });

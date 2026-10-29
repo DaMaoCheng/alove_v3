@@ -5,7 +5,7 @@ const { classifyCommerceIntentFallback: classifyCommerceIntent, commerceClassifi
 const state = { version: 1, status: 'active', owner: 'single', siteId: 's', characterId: 'c',
   targetEvidence: 'Real Madrid shirt', requirements: { requestedTeam: 'Real Madrid', requestedProductType: 'shirt' }, proposal: null };
 const continuation = { siteId: 's', characterId: 'c', recentMessages: [{ senderType: 'character', productCandidateState: state }],
-  jevDecision: { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'search', productAction: .9 } };
+  jevDecision: { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'search', productAction: 1 } };
 assert.equal(commerceClassificationTimeout('Camiseta de niña retro Cristiano Ronaldo'), 40000, 'The same full merchandise protocol needs its bounded task budget even without a team');
 assert.equal(commerceClassificationTimeout('manga corta', continuation), 40000, 'A validated contextual product continuation uses the same bounded merchandise task budget');
 for (const options of [{ ...continuation, siteId: 'other' }, { ...continuation, jevDecision: { ...continuation.jevDecision, productAction: .5 } },
@@ -36,8 +36,8 @@ const result = await classifyCommerceIntent('Find Real Madrid jersey', { config,
   return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ route: 'chat', confidence: .4,
     replyBoundary: { salesAllowed: true, contactAllowed: true } }) } }] }));
 } });
-assert.equal(result.confident, false);
-assert.equal(result.commerceClassificationFailure, undefined, 'A valid low-confidence interpretation is distinct from transport failure');
+assert.equal(result.confident, true);
+assert.equal(result.commerceClassificationFailure, undefined, 'A valid selection is usable independent of confidence and distinct from transport failure');
 assert.match(body.messages[0].content, /compact JSON without indentation/);
 assert.match(body.messages[0].content, /business inquiries and human-assistance requests semantically across all languages/);
 assert.match(body.messages[0].content, /No field authorizes a search or proves availability/);

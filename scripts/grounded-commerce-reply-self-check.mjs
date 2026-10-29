@@ -401,3 +401,39 @@ const diagnosticRejected = await enforceReplyBoundary({ ...diagnosticOptions,
 check(terminalCorrections === 1 && terminalReviews === 2 && diagnosticRejected.text !== diagnosticCorrected,
  'a rejected diagnostic correction terminates without another candidate or bypassing either review');
 console.log('order diagnostic simultaneous-rejection one-correction/full-review and terminal-rejection checks passed');
+
+const mixedChatPolicy = { ...policy, trustedSite: { id: 'shop' }, userText: '¿Qué significa conjunto y cuánto tarda el envío?',
+  searchIntent: { ...policy.searchIntent, commerceRoute: 'chat', customerServiceKnowledgeRequest: true, commerceTopic: 'delivery' },
+  knowledgeContext: { ...policy.knowledgeContext, ok: true, businessOwner: { siteId: 'shop', characterId: character.id },
+    items: policy.knowledgeContext.items.map(item => ({ ...item, category: 'customer_service' })) } };
+const mixedPolicyRecovered = await run(mixedChatPolicy, { firstVerdict: { ...yes, allowed: false, confidence: .5, businessFactsSupported: false } });
+check(mixedPolicyRecovered.repairs.length === 1 && mixedPolicyRecovered.reviews.length === 2, 'verified chat policy receives exactly one correction and complete re-review');
+check(mixedPolicyRecovered.output.text === mixedPolicyRecovered.replacement && !mixedPolicyRecovered.output.degraded, 'only the reapproved mixed policy response is released');
+const mixedPolicyRejected = await run(mixedChatPolicy, { firstVerdict: { ...yes, allowed: false, confidence: .5, businessFactsSupported: false }, secondVerdict: { ...yes, allowed: false, businessFactsSupported: false } });
+check(mixedPolicyRejected.repairs.length === 1 && mixedPolicyRejected.reviews.length === 2 && mixedPolicyRejected.output.text !== mixedPolicyRejected.replacement,
+ 'rejected mixed correction cannot release unreviewed policy or cause another attempt');
+console.log('verified mixed chat policy: one candidate, complete re-review, terminal rejection passed');
+
+// A failed mixed policy/order answer cannot silently drop the separate policy.
+// The existing localized capability-limit copy contains no unreviewed facts.
+const mixedOrderInput = { ...policy, userText: '¿Cuánto tarda el envío y dónde está mi pedido?',
+  searchIntent: { ...policy.searchIntent, orderAndPolicy: true },
+  orderActionCandidate: { kind: 'ttmall_order_lookup', status: 'login_required', siteSlug: 'shop' } };
+const mixedOrderFailure = await run(mixedOrderInput, { repairResult: 'null' });
+check(mixedOrderFailure.output.degraded && mixedOrderFailure.output.text.includes(buildSupportGuidanceUnavailableCopy('es')),
+ 'failed mixed policy and order preserves a localized uncertainty without releasing unreviewed facts');
+const onlyOrderFailure = await run({ ...mixedOrderInput, searchIntent: { ...mixedOrderInput.searchIntent, orderAndPolicy: false } }, { repairResult: 'null' });
+check(!onlyOrderFailure.output.text.includes(buildSupportGuidanceUnavailableCopy('es')), 'ordinary order fallback has no extra policy notice');
+console.log('mixed order final fallback: localized policy uncertainty, pure-order isolation passed');
+const { SUPPORTED_CHARACTER_LANGUAGES } = await import('../shared/language-library.js');
+for (const { code } of SUPPORTED_CHARACTER_LANGUAGES) check(Boolean(buildSupportGuidanceUnavailableCopy(code)), `mixed policy uncertainty is localized for ${code}`);
+console.log('mixed policy uncertainty copy available for all supported languages');
+const verifiedPurePolicy = { ...mixedChatPolicy, userText: '¿Cuánto tarda el envío normalmente?',
+  searchIntent: { ...mixedChatPolicy.searchIntent, commerceRoute: 'store_policy', pureStorePolicy: true, orderAndPolicy: false } };
+const purePolicyRecovered = await run(verifiedPurePolicy, { firstVerdict: { ...yes, allowed: false, confidence: .5, businessFactsSupported: false } });
+check(purePolicyRecovered.repairs.length === 1 && purePolicyRecovered.reviews.length === 2 && !purePolicyRecovered.output.degraded,
+ 'verified pure policy gets exactly one fresh candidate with complete re-review');
+const purePolicyRejected = await run(verifiedPurePolicy, { firstVerdict: { ...yes, allowed: false, confidence: .5, businessFactsSupported: false }, secondVerdict: { ...yes, allowed: false, businessFactsSupported: false } });
+check(purePolicyRejected.repairs.length === 1 && purePolicyRejected.reviews.length === 2 && purePolicyRejected.output.degraded,
+ 'twice rejected pure policy never bypasses original factual review');
+console.log('verified pure policy complete review, single correction and failure closure passed');

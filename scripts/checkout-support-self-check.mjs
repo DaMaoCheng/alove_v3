@@ -17,7 +17,7 @@ const issue = normalize();
 assert.equal(issue.stage, "address");
 assert.equal(issue.orderPlaced, false);
 assert.equal(shouldSkipOrderLookupForCheckout({ checkoutIssue: issue }), true);
-assert.equal(normalize(raw, { confidence: .4 }), null);
+assert.equal(normalize(raw, { confidence: .4 }).stage, 'address', 'selected checkout intent does not depend on the confidence score');
 assert.equal(normalize({ ...raw, evidence: "invented" }), null);
 assert.equal(normalize({ ...raw, active: false }), null);
 assert.equal(normalize(raw, { userText: "Thanks, how was the match?" }), null);
@@ -33,6 +33,10 @@ assert.equal(normalize(JSON.parse(JSON.stringify(issue))), null, "Serialized mod
 assert.equal(hasCheckoutIssue({ checkoutIssue: { ...issue } }), false, "Copied/forged state cannot authorize skipping lookup");
 assert.equal(normalize(issue, { userText: "Different checkout question" }), null, "Evidence cannot leak into another turn");
 assert.equal(normalize({ ...raw, evidence: "x".repeat(161) }), null);
+assert.equal(normalize(raw, { confidence: 0 }).stage, "address");
+for (const confidence of [null, "", "0.2", false, undefined, NaN, Infinity, -1, 2]) {
+  assert.equal(normalize(raw, { confidence }), null, `invalid confidence ${String(confidence)} must not authorize checkout routing`);
+}
 assert.equal(normalize(raw, { confidence: Infinity }), null);
 assert.equal(normalize(raw, { confidence: 2 }), null);
 assert.equal(normalize(raw, { recentMessages: [null] }).stage, "address");

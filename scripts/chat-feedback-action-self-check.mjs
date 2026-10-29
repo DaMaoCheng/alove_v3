@@ -49,12 +49,23 @@ for (const sourceRef of ["site-product-no-match", "guest-site-product-no-match"]
   const userText = "Find that shirt and connect me with support.";
   const humanIntent = { commerceRoute: "product_search", commerceConfidence: .99,
     replyBoundary: { contactAllowed: true }, humanHandoff: { explicitRequest: true, evidence: "connect me with support" } };
+  assert.equal(resolveChatFeedbackActionCandidate({ ...base, userText, searchIntent: { ...humanIntent, commerceConfidence: .2 } })?.reason, 'human_request', 'explicit human request with current evidence is not gated by score');
+  assert.equal(resolveChatFeedbackActionCandidate({ ...base, userText, searchIntent: { ...humanIntent, commerceConfidence: 0 } })?.reason, "human_request");
+  for (const confidence of [null, "", "0.2", false, undefined, NaN, Infinity, -1, 2]) {
+    assert.equal(resolveChatFeedbackActionCandidate({ ...base, userText, searchIntent: { ...humanIntent, commerceConfidence: confidence } }), null, `invalid handoff confidence ${String(confidence)}`);
+  }
   assert.equal(resolveChatFeedbackActionCandidate({ ...base, userText, searchIntent: humanIntent })?.reason,
     "human_request", `${sourceRef}: explicit mixed human help survives a catalogue miss`);
   const businessText = "Find that shirt and negotiate a wholesale quotation.";
   const businessIntent = { commerceRoute: "product_search", commerceConfidence: .99,
     replyBoundary: { contactAllowed: true }, businessInquiry: { kind: "wholesale", evidence: "negotiate a wholesale quotation" },
     humanHandoff: { explicitRequest: false, businessReviewRequired: true, reviewReason: "quotation", evidence: "negotiate a wholesale quotation" } };
+  const businessNoHandoff = { ...businessIntent, commerceRoute: "chat", humanHandoff: null };
+  const businessFallback = { character: mascot, userText: businessText, knowledgeContext: { customerServiceIntent: true, items: [] } };
+  assert.ok(resolveChatFeedbackActionCandidate({ ...businessFallback, searchIntent: { ...businessNoHandoff, commerceConfidence: 0 } }));
+  for (const confidence of [null, "", "0.2", false, undefined, NaN, Infinity, -1, 2]) {
+    assert.equal(resolveChatFeedbackActionCandidate({ ...businessFallback, searchIntent: { ...businessNoHandoff, commerceConfidence: confidence } }), null, `invalid business confidence ${String(confidence)}`);
+  }
   assert.equal(resolveChatFeedbackActionCandidate({ ...base, userText: businessText, searchIntent: businessIntent })?.reason,
     "business_review", `${sourceRef}: genuine mixed business negotiation keeps its form`);
   assert.equal(resolveChatFeedbackActionCandidate({ ...base, userText: "Find the shirt and help me exchange my previous order.",

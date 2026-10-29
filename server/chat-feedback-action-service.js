@@ -27,7 +27,7 @@ export function resolveChatFeedbackActionCandidate({ character = {}, productCont
   const businessReview = handoff?.businessReviewRequired === true && ["quotation", "negotiation", "contract", "commercial_terms"].includes(handoff?.reviewReason)
     && ["quotation", "wholesale", "dropshipping", "distribution", "sponsorship", "partnership", "business_other"].includes(searchIntent?.businessInquiry?.kind)
     && businessEvidence && String(userText || "").includes(businessEvidence);
-  if (searchIntent?.replyBoundary?.contactAllowed === true && Number.isFinite(Number(searchIntent?.commerceConfidence)) && Number(searchIntent.commerceConfidence) >= .75
+  if (searchIntent?.replyBoundary?.contactAllowed === true && Number.isFinite(searchIntent?.commerceConfidence) && searchIntent.commerceConfidence >= 0 && searchIntent.commerceConfidence <= 1
     && handoffEvidence && String(userText || "").includes(handoffEvidence)
     && (handoff.explicitRequest === true || businessReview)) {
     const label = HUMAN_HANDOFF_LABELS[resolveCharacterLanguage(character)];
@@ -51,9 +51,9 @@ export function resolveChatFeedbackActionCandidate({ character = {}, productCont
   if (Array.isArray(productContext?.products) && productContext.products.length && !jerseyCustomizationInquiry && !unavailableTracking && !returnsInquiry) return null;
 
   const orderDeliveryHandoff = orderActionAvailable && (knowledgeContext?.customerServiceTopic === "delivery" || searchIntent?.commerceTopic === "delivery");
-  const businessConfidence = Number(searchIntent?.commerceConfidence);
+  const businessConfidence = searchIntent?.commerceConfidence;
   const verifiedBusinessInquiry = ["quotation", "wholesale", "dropshipping", "distribution", "sponsorship", "partnership", "business_other"].includes(searchIntent?.businessInquiry?.kind)
-    && Number.isFinite(businessConfidence) && businessConfidence >= .75 && businessConfidence <= 1
+    && Number.isFinite(businessConfidence) && businessConfidence >= 0 && businessConfidence <= 1
     && Boolean(businessEvidence) && String(userText || "").includes(businessEvidence);
   // Business retrieval includes store identity and other ordinary chat. Empty
   // knowledge alone cannot turn those introductions into a contact request.

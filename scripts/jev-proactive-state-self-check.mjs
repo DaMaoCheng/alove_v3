@@ -1,14 +1,22 @@
 import assert from 'node:assert/strict';
 process.env.AIOVE_PROVIDER_LOG_WRITE_ENABLED='false';
 const {assessJevProactiveState}=await import('../server/jev-proactive-state-service.js');
-const {classifyProactiveContent}=await import('../server/proactive-content-policy-service.js');
+const {classifyProactiveContent,assessProactiveContent,normalizeProactiveContentDecision}=await import('../server/proactive-content-policy-service.js');
 const recentMessages=[{id:'fixture-user',senderType:'user',text:'My parcel is still missing.'}];
 let calls=0;
 for(const [choice,confidence] of [['unresolved_after_sales',.99],['neutral',.99],['unknown',.99],['shopping',.5]]){
  const result=await classifyProactiveContent({recentMessages,config:[],classifyJevState:async()=>{calls++;return {ok:true,decision:{state:choice,confidence,candidateKind:'care'}};},fetchImpl:async()=>{throw Error('No LLM on a valid JEV decision');}});
- assert.equal(result.state,confidence<.8?'unknown':choice);
+ assert.equal(result.state,choice);
 }
 assert.equal(calls,4);
+for (const confidence of [.79,.01]) {
+ const state=await assessProactiveContent(async()=>({state:'shopping',confidence}),{recentMessages});
+ assert.equal(state.state,'shopping','state choice survives both normalizations without a confidence threshold');
+ const review=normalizeProactiveContentDecision({state:'shopping',candidateKind:'shopping',confidence,quality:{natural:true,grounded:true,novel:true}});
+ assert.equal(review.candidateKind,'unknown');assert.equal(review.quality.grounded,false,'candidate review retains 0.8');
+}
+for (const confidence of [undefined,NaN,1.1,-.1,'0.99']) assert.equal(normalizeProactiveContentDecision({state:'shopping',confidence},{stage:'state_classification'}).state,'unknown');
+assert.equal((await assessProactiveContent(async()=>({state:'neutral',confidence:.01}),{recentMessages,contextTruncated:true})).state,'unknown','truncated context never grants neutral sales permission');
 let llmCalls=0;
 const config={id:'fixture',baseUrl:'https://fixture.invalid/v1',apiMode:'chat_completions',apiKey:'fixture-placeholder',model:'fixture-model',timeoutMs:100};
 const fetchImpl=async()=>{llmCalls++;return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({state:'unresolved_after_sales',candidateKind:'care',confidence:.99,quality:{natural:false,grounded:false,novel:false}})}}]}),{status:200,headers:{'content-type':'application/json'}});};

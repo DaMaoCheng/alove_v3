@@ -4,7 +4,7 @@ globalThis.fetch = async () => { throw Error('External calls forbidden'); };
 const routing = await import('../server/commerce-routing-service.js');
 const { normalizeCommerceDecision } = await import('../server/product-intent-classifier-service.js');
 const resolveScope = routing.resolveCommerceKnowledgeScope || (intent => intent.commerceRoute === 'product_search' && !intent.answerRequired ? 'none' : intent.knowledgeScope);
-const primary = { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'search', productAction: .99 };
+const primary = { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'search', productAction: 1 };
 const text = 'Camiseta de niña retro Cristiano Ronaldo';
 const value = { route: 'product_search', confidence: .99, topic: 'other', needsLiveProductData: true,
   searchQuery: 'Cristiano Ronaldo retro kids shirt', knowledgeScope: 'business', knowledgeQuery: text, answerRequired: true,
@@ -18,13 +18,14 @@ const pure = await route();
 assert.equal(resolveScope(pure), 'none', 'A verified whole-turn catalogue request must not load business knowledge just because it requires an answer');
 assert.equal(pure.answerRequired, true, 'Normal response requirement is retained');
 assert.equal(pure.cardAllowed, true, 'Existing primary router keeps card permission');
-for (const override of [ { knowledgeRequest: null }, { knowledgeRequest: undefined }, { confidence: .4 },
+for (const override of [ { knowledgeRequest: null }, { knowledgeRequest: undefined },
   { knowledgeRequest: { kind: 'unclear', evidence: '' } }, { knowledgeRequest: { kind: 'catalogue_only', evidence: 'Cristiano Ronaldo' } },
   { topic: 'delivery' }, { route: 'product_question' }, { route: 'store_policy' },
   { humanHandoff: { explicitRequest: true, businessReviewRequired: false, reviewReason: 'none', evidence: text } } ]) {
   const input = { ...value, ...override };
-  assert.notEqual(resolveScope(await route(input)), 'none', 'Unknown, partial quote, policy, service and low-confidence classifications keep retrieval');
+  assert.notEqual(resolveScope(await route(input)), 'none', 'Unknown, partial quote, policy and service classifications keep retrieval');
 }
+assert.equal(resolveScope(await route({ ...value, confidence: .4 })), 'none', 'Valid catalogue selection has no confidence threshold');
 for (const current of ['Find a retro shirt and tell me the shipping cost.', 'Busca una camiseta: ¿puedo devolverla?', 'Keress mezt, és mennyi a szállítás?', '找球衣，也问一下清关和积分兑换。']) {
   const mixed = await route({ ...value, knowledgeRequest: { kind: 'business_question', evidence: current } }, current);
   assert.equal(resolveScope(mixed), 'business');

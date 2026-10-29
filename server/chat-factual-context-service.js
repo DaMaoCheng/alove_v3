@@ -10,18 +10,16 @@ export async function resolveChatFactualContext({ userText = "", jevDecision = n
   const date = new Date(now);
   const context = { required: false, status: "not_required", reason: "not_requested", asOfUtc: Number.isFinite(date.getTime()) ? date.toISOString() : new Date().toISOString(), timeZone: "UTC", items: [], searched: false, decisionSource: "none", webSearchScore: null };
   if (!query) return { ...context, reason: "empty_input" };
-  const reliableDecision = jevDecision?.ok === true && typeof jevDecision.webSearchIntent === "boolean"
-    && (jevDecision.confident === true || Number.isFinite(jevDecision.webSearchScore)
-      && jevDecision.webSearchScore >= .7 && jevDecision.webSearchScore <= 1);
+  const reliableDecision = jevDecision?.ok === true && typeof jevDecision.webSearchIntent === "boolean";
   // Diagnostic metadata does not grant factual evidence; the independent JEV
-  // signal above uses the same existing action threshold.
+  // signal above comes from the selected JEV choice.
   context.webSearchScore = jevDecision?.ok === true && Number.isFinite(jevDecision.webSearchScore)
     && jevDecision.webSearchScore >= 0 && jevDecision.webSearchScore <= 1 ? jevDecision.webSearchScore : null;
   context.decisionSource = reliableDecision ? (jevDecision.routingSource || "jev") : jevDecision != null ? "jev_unavailable" : "lexical_fallback";
   // A validated pure merchandise request owns its catalogue words. A weak
   // keyword fallback cannot turn those words into a separate public-fact task.
   const pureShopping = searchIntent.commerceRoute === 'product_search' && searchIntent.knowledgeScope === 'business'
-    && Number.isFinite(searchIntent.commerceConfidence) && searchIntent.commerceConfidence >= .75 && searchIntent.commerceConfidence <= 1 && searchIntent.answerRequired === false
+    && Number.isFinite(searchIntent.commerceConfidence) && searchIntent.commerceConfidence >= 0 && searchIntent.commerceConfidence <= 1 && searchIntent.answerRequired === false
     && !searchIntent.commerceClassificationUnavailable && !searchIntent.commerceClassificationFailure && !searchIntent.productScopePending && !searchIntent.scopeUnverified
     && !['pending', 'selected'].includes(searchIntent.productRequestState?.status) && !(searchIntent.productRequestState?.items?.length > 1)
     && !(searchIntent.checkoutIssue || searchIntent.humanHandoff || searchIntent.businessInquiry || searchIntent.promotionInquiry || searchIntent.discountExplanationRequired || searchIntent.nonShoppingReason)

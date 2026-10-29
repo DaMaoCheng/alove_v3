@@ -12,8 +12,8 @@ function userEvidenceWindow(userText, recentMessages) {
   { messageIndex: -1, text: String(userText || "").trim().slice(0, 4000) }];
 }
 
-export function normalizeCheckoutIssue(value, { userText = "", recentMessages = [], confidence = 0 } = {}) {
-  if (!value || typeof value !== "object" || Array.isArray(value) || !Number.isFinite(Number(confidence)) || Number(confidence) < .75 || Number(confidence) > 1) return null;
+export function normalizeCheckoutIssue(value, { userText = "", recentMessages = [], confidence } = {}) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || !Number.isFinite(confidence) || confidence < 0 || confidence > 1) return null;
   const window = userEvidenceWindow(userText, recentMessages);
   const fingerprint = createHash("sha256").update(JSON.stringify(window)).digest("hex");
   // Only an immutable object produced here can be reused by routing. Serialized

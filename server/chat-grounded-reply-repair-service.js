@@ -138,6 +138,21 @@ function hasVerifiedBusinessReferences(knowledgeContext) {
       && typeof item.evidenceQuote === 'string' && item.evidenceQuote.length >= 8 && item.content.includes(item.evidenceQuote));
 }
 
+// Policy or chat routes can contain a policy question. Only the current
+// request's authenticated site/character evidence permits correction.
+function hasOwnedBusinessPolicy({ searchIntent = {}, productContext = null, knowledgeContext = null, character = {}, trustedSite = null } = {}) {
+  const siteId = trustedSite?.id;
+  return (searchIntent.commerceRoute === 'chat' || searchIntent.commerceRoute === 'store_policy' && (searchIntent.pureStorePolicy === true || searchIntent.conceptAndPolicy === true))
+    && searchIntent.knowledgeScope === 'business'
+    && searchIntent.customerServiceKnowledgeRequest === true && searchIntent.answerRequired === true
+    && Boolean(siteId && character.id) && knowledgeContext?.ok === true && !knowledgeContext.selectionFailure
+    && knowledgeContext.businessOwner?.siteId === siteId && knowledgeContext.businessOwner?.characterId === character.id
+    && hasVerifiedBusinessReferences(knowledgeContext) && knowledgeContext.items.every(item => item.category === 'customer_service'
+      && (item.scope !== 'site' || !item.siteId || item.siteId === siteId))
+    && !productContext?.candidateContext && !productContext?.products?.length && productContext?.cardAllowed !== true
+    && searchIntent.cardAllowed !== true && searchIntent.shouldLoadProductContext !== true && searchIntent.needsLiveProductData !== true;
+}
+
 // Policy recovery may read the already executed catalogue result; this never
 // turns the mixed answer into a pure caption or authorizes a new tool/card.
 function mixedPolicyCatalogueContext(options) {
@@ -157,7 +172,7 @@ function mixedPolicyCatalogueContext(options) {
 
 function isVerifiedPolicyCorrection(options) {
   const { searchIntent = {}, productContext = null, knowledgeContext = null } = options;
-  return Boolean(mixedPolicyCatalogueContext(options)) || (
+  return Boolean(mixedPolicyCatalogueContext(options)) || hasOwnedBusinessPolicy(options) || (
     (searchIntent.commerceRoute === 'store_policy' || searchIntent.commerceRoute === 'unclear' && searchIntent.replyTopicHint === 'commerce_question')
     && searchIntent.knowledgeScope === 'business' && !productContext?.candidateContext
     && !productContext?.products?.length && productContext?.cardAllowed !== true
@@ -218,15 +233,32 @@ export function isGroundedCommerceRepairEligible({ replyResult = {}, reviewResul
   // Low confidence may replace wording for an owned candidate or an exact
   // match or successful owned empty search, never approve evidence. Fresh text
   // still needs the caller's complete original review and acceptance threshold.
-  const ownedUncertainReview = (selected || matched || noMatch) && Array.isArray(failedContracts) && failedContracts.includes('confidence')
+  const generalExplanation = isGeneralCommerceExplanation(searchIntent) && !productContext?.candidateContext
+    && !productContext?.products?.length && !productContext?.sizingProduct && productContext?.cardAllowed !== true
+    && searchIntent.shouldLoadProductContext !== true && searchIntent.needsLiveProductData !== true && searchIntent.cardAllowed !== true
+    && !searchIntent.businessInquiry && !searchIntent.humanHandoff;
+  const generalConfidenceOnly = generalExplanation && Array.isArray(failedContracts) && failedContracts.includes('confidence')
+    && failedContracts.every(name => ['confidence', 'language'].includes(name));
+  const verifiedOwnedPolicy = !orderActionCandidate && hasOwnedBusinessPolicy({ searchIntent, productContext, knowledgeContext, character, trustedSite });
+  const orderWithVerifiedPolicy = Boolean(resolveOrderActionPromptState(orderActionCandidate)
+    && searchIntent.orderAndPolicy === true && searchIntent.commerceRoute === 'store_policy' && searchIntent.knowledgeScope === 'business' && searchIntent.answerRequired === true
+    && trustedSite?.id && character.id && knowledgeContext?.ok === true && !knowledgeContext.selectionFailure
+    && knowledgeContext.businessOwner?.siteId === trustedSite.id && knowledgeContext.businessOwner?.characterId === character.id
+    && hasVerifiedBusinessReferences(knowledgeContext) && knowledgeContext.items.every(item => item.category === 'customer_service'
+      && (item.scope !== 'site' || !item.siteId || item.siteId === trustedSite.id))
+    && !productContext?.products?.length && !productContext?.candidateContext && !productContext?.cardAllowed
+    && !searchIntent.cardAllowed && !searchIntent.shouldLoadProductContext && !feedbackActionCandidate && !chatImageContext && !guestBenefitContext);
+  const ownedUncertainReview = (selected || matched || noMatch || mixedPolicy || generalConfidenceOnly || orderWithVerifiedPolicy || verifiedOwnedPolicy) && Array.isArray(failedContracts) && failedContracts.includes('confidence')
     && typeof reviewResult.allowed === 'boolean'
-    && failedContracts.every(name => name === 'confidence' || typeof reviewResult[name === 'boundary' ? 'boundarySupported' : REVIEW_CONTRACTS[name]?.field] === 'boolean');
+    && !reviewResult.missingFields?.length && !reviewResult.protocolFailures?.length
+    && failedContracts.every(name => name === 'confidence' || (generalConfidenceOnly || orderWithVerifiedPolicy || verifiedOwnedPolicy || mixedPolicy) && name === 'language'
+      || typeof reviewResult[name === 'boundary' ? 'boundarySupported' : REVIEW_CONTRACTS[name]?.field] === 'boolean');
   const confirmation = trustedConfirmationRepair({ productContext, searchIntent, character, userText }, candidate);
   const orderPolicyCorrection = Boolean(resolveOrderActionPromptState(orderActionCandidate)
-    && searchIntent.answerRequired === true && (diagnosticQuestion || isVerifiedPolicyCorrection({ searchIntent, productContext, knowledgeContext })));
+    && searchIntent.answerRequired === true && (diagnosticQuestion || isVerifiedPolicyCorrection({ searchIntent, productContext, knowledgeContext, character, trustedSite })));
   if (!isStorefrontGuidanceCharacter(character) || reviewStatus !== 'valid' || !Number.isFinite(reviewResult.confidence)
     || reviewResult.confidence < 0 || reviewResult.confidence > 1 || reviewResult.confidence < .8 && !ownedUncertainReview || typeof reviewResult.boundarySupported !== 'boolean'
-    || !Array.isArray(failedContracts) || !failedContracts.length || failedContracts.some(failure => !REPAIRABLE_FAILURES.has(failure) && !(failure === 'product_scope' && selected || failure === 'confidence' && (selected || matched || noMatch) || failure === 'factual' && (matchedClockOnly || childSizingCorrection) || diagnosticQuestion && ['factual', 'product_scope'].includes(failure)))
+    || !Array.isArray(failedContracts) || !failedContracts.length || failedContracts.some(failure => !REPAIRABLE_FAILURES.has(failure) && !(failure === 'product_scope' && selected || failure === 'confidence' && (selected || matched || noMatch || mixedPolicy || generalConfidenceOnly || orderWithVerifiedPolicy || verifiedOwnedPolicy) || failure === 'factual' && (matchedClockOnly || childSizingCorrection) || diagnosticQuestion && ['factual', 'product_scope'].includes(failure)))
     || groundedRepairAttempted || languageRepairAttempted || retained || replyResult.partialAnswerRetained || replyResult.replyRecoveryState
     || isAiTransportFallback(replyResult) || replyResult.sourceRef === 'quality-guard' || replyResult.sourceRef === 'commerce-classification-unavailable'
     || searchIntent.commerceClassificationFailure || searchIntent.commerceClassificationUnavailable || searchIntent.productCandidateInterpretationUnverified
@@ -236,10 +268,6 @@ export function isGroundedCommerceRepairEligible({ replyResult = {}, reviewResul
     || searchIntent.productRequestState?.status === 'pending' || searchIntent.productRequestState?.status === 'selected' && !selected || productContext?.sizingProduct && !childSizingCorrection
     || ['current-product-sizing-context', 'guest-current-product-sizing-context'].includes(productContext?.sourceRef) && !childSizingCorrection) return false;
   if (matched || diagnosticQuestion || noMatch || mixedPolicy || childSizingCorrection) return true;
-  const generalExplanation = isGeneralCommerceExplanation(searchIntent) && !productContext?.candidateContext
-    && !productContext?.products?.length && !productContext?.sizingProduct && productContext?.cardAllowed !== true
-    && searchIntent.shouldLoadProductContext !== true && searchIntent.needsLiveProductData !== true && searchIntent.cardAllowed !== true
-    && !searchIntent.businessInquiry && !searchIntent.humanHandoff;
   if (generalExplanation) return true;
   // User-reported measurements and checkout symptoms can support a useful
   // clarification without proving any product measurement or store diagnosis.
@@ -249,7 +277,7 @@ export function isGroundedCommerceRepairEligible({ replyResult = {}, reviewResul
     && !searchIntent.businessInquiry && !searchIntent.humanHandoff;
   if (diagnosticOnly && ((searchIntent.commerceTopic === 'sizing' && searchIntent.answerRequired === true || searchIntent.replyTopicHint === 'sizing')
     || hasCheckoutIssue(searchIntent) && searchIntent.checkoutIssue.requestScope === 'checkout_only')) return true;
-  if (isVerifiedPolicyCorrection({ searchIntent, productContext, knowledgeContext })) return true;
+  if (isVerifiedPolicyCorrection({ searchIntent, productContext, knowledgeContext, character, trustedSite })) return true;
   if (confirmation) return !searchIntent.nonShoppingReason && !searchIntent.teamConstraintUnverified
     && searchIntent.replyBoundary?.salesAllowed !== false && searchIntent.commerceRoute === 'product_question';
   return Boolean(candidate?.requiresConfirmation === true && candidate.entityConfirmed !== true && candidate.products.length

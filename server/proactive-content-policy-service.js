@@ -57,12 +57,16 @@ export function buildProactiveCareFallback(language = "en") {
   return CARE_COPY[code] || CARE_COPY.en;
 }
 
-export function normalizeProactiveContentDecision(value = {}) {
+export function normalizeProactiveContentDecision(value = {}, { stage = 'candidate_review' } = {}) {
   const rawConfidence = Number(value?.confidence);
   const confidence = Number.isFinite(rawConfidence) ? Math.max(0, Math.min(1, rawConfidence)) : 0;
   const confident = confidence >= .8;
+  // State is a bounded choice, not a review of candidate quality. A malformed
+  // score still invalidates the result; uncertainty remains the explicit choice.
+  const validStateChoice = stage === 'state_classification' && typeof value?.confidence === 'number'
+    && Number.isFinite(rawConfidence) && rawConfidence >= 0 && rawConfidence <= 1;
   return {
-    state: confident && STATES.has(value?.state) ? value.state : "unknown",
+    state: (stage === 'state_classification' ? validStateChoice : confident) && STATES.has(value?.state) ? value.state : "unknown",
     candidateKind: confident && KINDS.has(value?.candidateKind) ? value.candidateKind : "unknown",
     confidence,
     groundingFailure: GROUNDING_FAILURES.has(value?.groundingFailure) ? value.groundingFailure : "",
@@ -81,7 +85,8 @@ export function allowsProactiveShopping(decision = {}) {
 export async function assessProactiveContent(classifyContent = classifyProactiveContent, options = {}) {
   if (!(options.recentMessages || []).some((message) => (message.senderType || message.sender_type) === "user")) return normalizeProactiveContentDecision();
   try {
-    const decision = normalizeProactiveContentDecision(await classifyContent(options));
+    const stage = String(options.candidateText || '').trim() ? 'candidate_review' : 'state_classification';
+    const decision = normalizeProactiveContentDecision(await classifyContent(options), { stage });
     // An omitted earlier concern must not become an automatic sales permission.
     // Explicit current shopping/resolution can restore permission; neutral cannot.
     const incomplete = options.contextTruncated || (options.recentMessages || []).some((message) => String(message.text || message.text_content || "").length > 600);
@@ -115,7 +120,7 @@ export async function classifyProactiveContent({ recentMessages = [], candidateT
   if (!context.some((message) => message.role === "user")) return normalizeProactiveContentDecision();
   if (!String(candidateText || '').trim()) {
     const jev = await classifyJevState({ context, contextTruncated, logContext, fetchImpl });
-    if (jev.ok) return normalizeProactiveContentDecision(jev.decision);
+    if (jev.ok) return normalizeProactiveContentDecision(jev.decision, { stage: 'state_classification' });
     if (jev.llmFallbackAllowed !== true) return normalizeProactiveContentDecision();
   }
   if (!isAiJsonProviderConfigured(reviewConfig)) return normalizeProactiveContentDecision();
@@ -136,7 +141,7 @@ export async function classifyProactiveContent({ recentMessages = [], candidateT
     });
     const groundingFailure = String(candidateText || "").trim()
       ? inspectProactiveGroundingEvidence(result, String(candidateText), context) : "";
-    const decision = normalizeProactiveContentDecision({ ...result, ...(reviewStage === "candidate_review" ? { state: trustedState?.state || "unknown" } : {}), groundingFailure });
+    const decision = normalizeProactiveContentDecision({ ...result, ...(reviewStage === "candidate_review" ? { state: trustedState?.state || "unknown" } : {}), groundingFailure }, { stage: reviewStage });
     if (String(candidateText || "").trim() && scope.sessionId
         && Object.values(decision.quality).some((allowed) => !allowed)) {
       // Finite reasons and identifiers only; never candidate/source text or raw JSON.

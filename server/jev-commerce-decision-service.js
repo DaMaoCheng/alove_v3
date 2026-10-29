@@ -7,9 +7,12 @@ import { findRecentDisplayedProductGroup } from './product-displayed-reference-s
 import { PRODUCT_REQUIREMENT_SCALAR_VALUES, PRODUCT_REQUIREMENT_ARRAY_VALUES } from './product-requirement-fields.js';
 
 const choice = (instructions, values) => ({ type: 'choice', instructions, criteria: Object.fromEntries(values.map(value => [value, value])) });
-const flag = instructions => ({ type: 'noul', instructions });
-const pick = (answers, key) => Number(answers[key]?.confidence) >= .75 ? answers[key]?.choice : undefined;
-const yes = (answers, key) => Number(answers[key]?.noul) >= .75;
+const flag = instructions => choice(instructions, ['yes', 'no']);
+// Semantic categories use JEV's selected option. Evidence spans, card/source
+// references and item indices retain their separate provenance safeguards.
+const semanticChoices = new Set(['route','topic','knowledge_scope','knowledge_kind','query_source','business_kind','review_reason','promotion_kind','checkout_scope','checkout_stage','checkout_lookup','checkout_order','candidate_action','requirement_action','request_relation','request_action','support_followup','team_role','identity_type','size_kind','item_count','season', ...Object.keys(PRODUCT_REQUIREMENT_SCALAR_VALUES)]);
+const pick = (answers, key) => semanticChoices.has(key) || Number(answers[key]?.confidence) >= .75 ? answers[key]?.choice : undefined;
+const yes = (answers, key) => answers[key]?.choice === 'yes';
 const quote = (pool, selected) => {
   if (typeof selected !== 'string' || !/^e\d+$/.test(selected)) return '';
   const index = Number(selected.slice(1));
@@ -56,10 +59,10 @@ export function buildCommerceJevPacket(userText, { recentMessages = [], siteId =
     topic: choice('Select the subject of the current business question.', ['authenticity', 'delivery', 'returns', 'support', 'material', 'sizing', 'price', 'stock', 'other']),
     knowledge_scope: choice('business means actual current-store policy or customer service; general means ordinary conversation or a general definition, even of a commercial term.', ['business', 'general']),
     answer_required: flag('Does a CURRENT question/concern need an answer, including an independent question mixed with a product request?'),
-    live_required: flag('Does the question require current specific-item stock, price, selectable options or catalogue facts? General policy and definition do not.'),
+    live_required: flag('Does the question require current specific-item stock, price, selectable options or catalogue facts? General policy and definition, including a turn that combines them, do not. A shipping timeframe policy is not live-specific-item data.'),
     sales_allowed: flag('May the reply include shopping help? False for current shopping refusal or an unresolved after-sales concern without a fresh explicit shopping request.'),
     contact_allowed: flag('May the reply invite contact? False for current withdrawal/refusal; shopping is not renewed contact consent.'),
-    knowledge_kind: choice('Classify the whole current knowledge need: catalogue_only only for a pure merchandise lookup; sizing_update only supplies requested user measurements/size; business_question includes a current policy/support question; unclear otherwise.', ['catalogue_only', 'business_question', 'sizing_update', 'unclear']),
+    knowledge_kind: choice('Classify the WHOLE current user turn: store_policy_only only when solely asking a general current-store policy such as standard delivery timing, returns or payment conditions; existing personal order, tracking, shipment progress, item details, product search, images and all mixed other requests are NOT store_policy_only. concept_and_policy only when the CURRENT user explicitly asks BOTH the general meaning of a word, phrase or concept AND an independent general current-store policy question, with no specific product, existing order, image, purchase action, feedback or other request. Choose business knowledge_scope for this mixed type even when route is chat. order_and_policy only when the current user explicitly asks BOTH to look up an existing personal order or tracking AND an independent general store policy question, without another distinct merchandise, image, feedback or other request. An order status/arrival question alone, a hypothetical purchase, or a policy question alone is NOT order_and_policy. general_explanation only when exclusively asking the usual meaning of a term, phrase or process, not actual properties of a specific item, policy, order, live information, or a mixed request; catalogue_only only for a pure merchandise lookup; sizing_update only supplies requested user measurements/size; business_question includes any current item-specific, policy or support question; unclear otherwise.', ['catalogue_only', 'business_question', 'sizing_update', 'general_explanation', 'store_policy_only', 'order_and_policy', 'concept_and_policy', 'unclear']),
     query_source: choice('Choose the CURRENT question source. A prior source may only be selected for an explicit contextual continuation of that USER question, never an assistant suggestion.', ['current', ...priorQuestions.map((_, i) => `prior${i}`)]),
     business_kind: choice('Identify an actual quotation/supply/commercial collaboration inquiry. Ordinary shopping and store policy alone are none.', ['none', 'quotation', 'wholesale', 'dropshipping', 'distribution', 'sponsorship', 'partnership', 'business_other']),
     business_evidence: evidenceQuestion('Quote the actual commercial inquiry, not a casual team/product mention.', evidence),
@@ -153,7 +156,7 @@ export async function resolveJevCommerceDecision(userText, options = {}) {
     candidateResponse: { action: candidateAction, evidence: candidateAction === 'none' ? '' : e('candidate_evidence'), candidateId: candidateAction === 'none' ? '' : packet.pending.state.proposal.candidateId },
     ...(p('support_followup') && p('support_followup') !== 'none' && whole ? { supportFollowup: { relation: p('support_followup'), evidence: whole } } : {}),
   };
-  if (route === 'unclear' || confidence < .75) return { ...result, value: raw };
+  if (route === 'unclear') return { ...result, value: raw };
   if (raw.checkoutIssue) {
     const details = await evaluateBatches(packet, options, packet.checkoutQuestions);
     if (!details.ok) return details;

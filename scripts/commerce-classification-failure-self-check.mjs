@@ -11,7 +11,7 @@ const text='Busco la camiseta del Real Madrid away 2026/27';
 for (const failure of ['timeout','provider','parse','missing_fields']) {
   const intent=await resolveCommerceSearchIntent({userText:text,searchIntent:buildProductSearchIntent(text),enrichAllTurns:true,
     classifyCommerce:async()=>({confident:false,confidence:0,commerceClassificationFailure:failure}),
-    jevDecision:{ok:true,confident:true,primaryIntent:'product_request',productIntent:'search',productAction:.95}});
+    jevDecision:{ok:true,confident:true,primaryIntent:'product_request',productIntent:'search',productAction:1}});
   assert.equal(intent.commerceClassificationUnavailable,true);
   assert.equal(intent.shouldLoadProductContext,false); assert.equal(intent.cardAllowed,false);
   assert.equal(intent.scopeUnverified,false); assert.equal(intent.productScopePending,false);
@@ -85,7 +85,7 @@ console.log('commerce classification failure self-check passed (isolated: distin
 const attempts=[{provider:'venice',kind:'protocol_evidence',privateBody:'secret'},{provider:'other',kind:'timeout'}, {provider:'other',kind:'timeout'}];
 const loggedIntent=await resolveCommerceSearchIntent({userText:text,searchIntent:buildProductSearchIntent(text),enrichAllTurns:true,
  classifyCommerce:async()=>({confidence:0,commerceClassificationFailure:'timeout',commerceClassificationFailures:attempts}),
- jevDecision:{ok:true,confident:true,primaryIntent:'product_request',productIntent:'search',productAction:.95}});
+ jevDecision:{ok:true,confident:true,primaryIntent:'product_request',productIntent:'search',productAction:1}});
 const diagnostics=buildCommerceDecisionLogEvent({searchIntent:loggedIntent});
 assert.deepEqual(JSON.parse(diagnostics.errorMessage).classificationFailures,attempts.map(({provider,kind})=>({provider,kind})));
 assert(!diagnostics.errorMessage.includes('secret'));
@@ -110,7 +110,7 @@ assert.match(buildGuestProductReplyCopy('unavailable', { languageCode: 'en' }), 
 // A validated FAQ never turns its named reward item into a catalogue action.
 // Keep a separately classified mixed catalogue request under original permissions.
 for (const [route, productIntent, action, expectedSearch] of [
- ['store_policy', 'none', 0, false], ['product_search', 'search', .95, true],
+ ['store_policy', 'none', 0, false], ['product_search', 'search', 1, true],
 ]) {
  const faq = await resolveCommerceSearchIntent({ userText: expectedSearch ? 'How does redemption work? Find a Real Madrid shirt.' : 'How does redemption work?', enrichAllTurns: true,
   classifyCommerce: async () => ({ confident: true, confidence: .96, route, topic: 'support', knowledgeScope: 'business',

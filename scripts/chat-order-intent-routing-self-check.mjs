@@ -131,3 +131,41 @@ assert.equal(getChatOrderEntryCopy('xx-unknown', 'binding_required'), memberEngl
 assert.deepEqual(getChatOrderCopy('English', false), { text: 'Link your store account to view your orders.', label: 'View my orders' }, 'existing legacy consumer keeps its prior behavior');
 assert.deepEqual(getChatOrderCopy('Spanish', true), { text: 'Inicia sesión y vincula tu cuenta de la tienda para consultar tus pedidos.', label: 'Ver mis pedidos' });
 console.log(`chat order intent routing self-check: PASS (semantic routing and ${SUPPORTED_CHARACTER_LANGUAGES.length}-language entry copy)`);
+
+// Same JEV call yields a semantic type and user-owned evidence source, never a score gate.
+const { normalizeJevResponse } = await import('../server/jev-intent-service.js');
+const decision = (route, kind, source, history = [], current = '') => normalizeJevResponse({ answers: {
+  route: { choice: route, confidence: .01 }, order_request_kind: { choice: kind, confidence: .01 },
+  order_evidence_source: { choice: source, confidence: .01 },
+} }, { canLookupOrder: true }, { recentConversation: history }, current);
+assert.equal(decision('order_lookup', 'none', 'none').orderIntent, 'none');
+assert.equal(decision('order_lookup', 'none', 'none').primaryIntent, 'daily_chat');
+assert.equal(decision('daily_chat', 'existing', 'current').orderIntent, 'lookup');
+assert.equal(decision('daily_chat', 'continuation', 'prior0', [{ role: 'user', text: 'My order was dispatched' }]).orderIntent, 'lookup');
+assert.equal(decision('daily_chat', 'continuation', 'prior0', [{ role: 'assistant', text: 'I can check your order' }]).orderIntent, 'none');
+assert.equal(decision('daily_chat', 'continuation', 'prior4', [{ role: 'user', text: 'My order was dispatched' }]).orderIntent, 'none');
+assert.equal(decision('order_lookup', 'unclear', 'current').orderIntent, 'none');
+const repeated = '¿Cuánto tarda el envío y dónde está mi pedido?';
+assert.equal(decision('order_lookup', 'existing', 'prior0', [{ role: 'user', text: repeated }], repeated).orderIntent, 'lookup', 'identical prior user text can prove the same current request');
+assert.equal(decision('order_lookup', 'existing', 'prior0', [{ role: 'user', text: '¿Dónde está mi pedido?' }], repeated).orderIntent, 'none', 'different historical request cannot establish current evidence');
+assert.equal(decision('order_lookup', 'existing', 'prior0', [{ role: 'assistant', text: repeated }], repeated).orderIntent, 'none', 'assistant text cannot establish user evidence');
+assert.equal(decision('order_lookup', 'existing', 'prior0', [{ role: 'user', text: repeated }], '').orderIntent, 'none', 'missing current text cannot establish equality');
+console.log('order JEV type, same-user historical anchor and low-score selection passed');
+
+// Same-call JEV contract keeps repeated explicit current requests distinct from
+// elliptical follow-ups without using model confidence as a gate.
+{
+  const { buildQuestions } = await import('../server/jev-intent-service.js');
+  const q = buildQuestions({}, { recentConversation: [
+    { role: 'assistant', text: 'I can check your order.' },
+    { role: 'user', text: 'Where is my order?' },
+  ] });
+  assert.match(q.order_request_kind.instructions, /explicit personal order lookup in the current message is existing, not continuation/i);
+  assert.match(q.order_request_kind.instructions, /independently of capability/i);
+  assert.match(q.order_evidence_source.instructions, /same question was asked earlier/i);
+  assert.match(q.order_evidence_source.instructions, /another policy question is included/i);
+  assert.match(q.order_evidence_source.instructions, /prior USER message only when it actually refers to that same order/i);
+  assert.equal(Object.keys(q.order_evidence_source.criteria).filter(x => x.startsWith('prior')).length, 1);
+  assert.equal(q.order_evidence_source.criteria.prior0, JSON.stringify('Where is my order?'));
+}
+console.log('order current/prior evidence contract and assistant exclusion passed');

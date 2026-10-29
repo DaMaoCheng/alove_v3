@@ -29,7 +29,7 @@ check(!intent.cardAllowed&&!intent.shouldLoadProductContext&&!intent.candidateSe
 check(intent.productCandidateState.proposal.status==='confirmed'&&intent.requestedPrinting==='none','only tentative identity changes, user requirements remain intact');
 check(intent.replyBoundary.contactAllowed===false&&intent.primarySearchVerified===false,'metadata confirmation retains contact restrictions and does not claim search approval');
 check(commerceClassificationTimeout(userText,{...loc,recentMessages:history,jevDecision:jev})===40000,'trusted displayed confirmation uses the bounded candidate interpretation budget');
-const authorizedSearch=await route({primary:{...jev,productIntent:'search',productAction:.9}});
+const authorizedSearch=await route({primary:{...jev,productIntent:'search',productAction:1}});
 check(!authorizedSearch.candidateConfirmationOnly&&authorizedSearch.cardAllowed===true&&authorizedSearch.primarySearchVerified===true,'already authorized search retains its original card path rather than being suppressed by metadata confirmation');
 check((await route({primary:{...jev,productAction:.55}})).candidateConfirmationOnly===true,'metadata identity assent does not lower or reuse the new-search score threshold');
 const scopedItems=[{evidence:'Real Madrid away shirt without printing',sharedEvidence:'',text:'Real Madrid away shirt without printing'},

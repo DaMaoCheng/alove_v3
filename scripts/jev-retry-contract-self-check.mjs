@@ -24,7 +24,7 @@ await run('valid low-confidence none is neither retry nor fallback',async()=>{
  assert.equal(calls,1);assert.equal(r.ok,true);assert.equal(r.answers.action.choice,'none');assert.equal(r.llmFallbackAllowed,false);
 });
 await run('primary unclear and low confidence remain valid JEV results',async()=>{
- let calls=0;const r=await classifyJevIntent({userText:'uncertain',configOverride:config,forceRefresh:true,fetchImpl:async()=>{calls++;return response({answers:{route:{choice:'unclear',confidence:.1}}});}});
+ let calls=0;const r=await classifyJevIntent({userText:'uncertain',configOverride:config,forceRefresh:true,fetchImpl:async(_url,{body})=>{calls++;const req=JSON.parse(body);const answers={};for(const [key,q] of Object.entries(req.questions)){if(q.type==='choice')answers[key]={choice:key==='route'?'unclear':Object.keys(q.criteria)[0],confidence:.1};else if(q.type==='noul')answers[key]={noul:0};}return response({answers});}});
  assert.equal(calls,1);assert.equal(r.ok,true);assert.equal(r.confident,false);assert.equal(r.primaryIntent,'unclear');assert.equal(r.llmFallbackAllowed,false);
 });
 await run('primary missing or invalid confidence is a retried protocol failure',async()=>{

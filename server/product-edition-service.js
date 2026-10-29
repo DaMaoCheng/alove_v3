@@ -91,10 +91,11 @@ export async function resolveProductEditions(products = [], { searchIntent = {},
     for (const decision of Array.isArray(decisions) ? decisions : []) {
       const index = decision?.index;
       if (!Number.isInteger(index) || !pending[index]) continue;
-      const confidence = Number(decision.confidence);
+      const confidence = decision.confidence;
       const fields = catalogueFields(pending[index].product);
       const evidence = safeText(decision.evidence);
-      const valid = Number.isFinite(confidence) && confidence >= .8 && evidence && fields[decision.evidenceField]?.includes(evidence);
+      const valid = typeof confidence === 'number' && Number.isFinite(confidence) && confidence >= 0 && confidence <= 1
+        && evidence && fields[decision.evidenceField]?.includes(evidence);
       const edition = valid ? normalizeProductEdition(decision.edition) : "unknown";
       byIndex.set(index, byIndex.has(index) ? "conflict" : edition);
     }

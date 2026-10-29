@@ -188,7 +188,7 @@ const semantic = normalizeCommerceDecision({ route: 'product_search', confidence
   productRequirement: { action: 'new', evidence: text, updates: [{ field: 'requestedPrinting', value: 'none', evidence: 'sin nombre ni número' }], suspectedTerm: null },
   commerceConstraints: { team: { value: 'Real Madrid', role: 'product_target', evidence: 'Real Madrid' } },
 }, { userText: text, detectedTeam: 'Real Madrid', requireBoundaryVerdict: true });
-const jev = { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'search', productAction: .99 };
+const jev = { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'search', productAction: 1 };
 const routed = await resolveCommerceSearchIntent({ ...location, userText: text, searchIntent: buildProductSearchIntent(text),
   classifyCommerce: async () => semantic, jevDecision: jev });
 assert.equal(routed.candidateSearchAllowed, true);
@@ -228,7 +228,7 @@ const conflictedCatalogue = normalizeCommerceDecision({ route: 'store_policy', t
 assert.deepEqual(conflictedCatalogue.productRequirement.updates, [], 'A catalogue candidate mention cannot create a requested fan edition');
 const resolvedCatalogue = await resolveCommerceSearchIntent({ ...location, userText: catalogueFollowupText, recentMessages: catalogueHistory,
   searchIntent: buildProductSearchIntent(catalogueFollowupText), classifyCommerce: async () => conflictedCatalogue,
-  jevDecision: { ...jev, primaryIntent: 'try_on', confident: false, productAction: .91 } });
+  jevDecision: { ...jev, primaryIntent: 'product_request', confident: true, productAction: 1 } });
 assert.equal(resolvedCatalogue.commerceRoute, 'product_search');
 assert.equal(resolvedCatalogue.shouldLoadProductContext, true);
 assert.equal(resolvedCatalogue.cardAllowed, true);
@@ -236,7 +236,7 @@ assert.deepEqual(resolvedCatalogue.requestedFeatures, ['short_sleeve']);
 assert.equal(resolvedCatalogue.requestedEdition, '');
 const questionRefinement = await resolveCommerceSearchIntent({ ...location, userText: catalogueFollowupText, recentMessages: catalogueHistory,
   searchIntent: buildProductSearchIntent(catalogueFollowupText), classifyCommerce: async () => ({ ...conflictedCatalogue, route: 'product_question', needsLiveProductData: true }),
-  jevDecision: { ...jev, primaryIntent: 'try_on', confident: false, productAction: .91 } });
+  jevDecision: { ...jev, primaryIntent: 'product_request', confident: true, productAction: 1 } });
 assert.equal(questionRefinement.commerceRoute, 'product_search', 'An explicit revision of a displayed catalogue candidate continues search even when classified as a question');
 assert.equal(questionRefinement.cardAllowed, true);
 const malformedContinuation = normalizeProductRequirementDecision({ action: 'continue', evidence: 'La quiero en manga corta!',

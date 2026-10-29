@@ -13,7 +13,7 @@ const valid = { route: 'product_search', topic: 'other', needsLiveProductData: t
   productRequest: { relation: 'single', action: 'new', items: [], selectedIndex: null, selectionEvidence: '' },
   productRequirement: { action: 'new', evidence: text, priorTargetEvidence: '', updates: [{ field: 'requestedTeam', value: 'Real Madrid', evidence: 'Real Madrid' }], suspectedTerm: null },
   candidateResponse: { action: 'none', evidence: '', candidateId: '' }, confidence: .99 };
-const jevDecision = { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'search', productAction: .99 };
+const jevDecision = { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'search', productAction: 1 };
 let checks = 0;
 const check = (condition, label) => { assert(condition, label); checks++; };
 function fixture(sequence) {
@@ -91,9 +91,11 @@ const repairedRoute = await resolveCommerceSearchIntent({ userText: text, search
   classifyCommerce: (input, options) => classifyCommerceIntent(input, { ...options, fetchImpl: routeRecovery.fetchImpl }) });
 check(routeRecovery.models.length === 2 && repairedRoute.cardAllowed && repairedRoute.shouldLoadProductContext
   && repairedRoute.requestedTeam === 'Real Madrid', 'actual routing receives the verified recovered role without inheriting history or bypassing its guards');
+const lowConfidenceMissingRole = fixture([{ ...missingCurrentRole, confidence: .4 }, valid]);
+await classifyCommerceIntent(text, { jevDecision, fetchImpl: lowConfidenceMissingRole.fetchImpl });
+check(lowConfidenceMissingRole.models.length === 2, 'a valid low-confidence selection still requires current team evidence and protocol recovery');
 for (const accepted of [
   { ...valid, commerceConstraints: { edition: null, team: null } },
-  { ...missingCurrentRole, confidence: .4 },
   { ...missingCurrentRole, route: 'chat' },
   { ...missingCurrentRole, replyBoundary: { salesAllowed: false, contactAllowed: true } },
   { ...missingCurrentRole, commerceConstraints: { edition: null, team: { value: 'Real Madrid', role: 'location', evidence: 'Real Madrid' } } },
@@ -209,8 +211,8 @@ check(defaultBoundaryRecovery.models.length === 2 && defaultRecovered.boundaryVe
  'default non-candidate strict task rejects missing boundary before selecting a provider');
 const defaultLowConfidence = fixture([{ ...valid, confidence: .4 }, valid]);
 const lowConfidenceDecision = await classifyCommerceIntent(text, { fetchImpl: defaultLowConfidence.fetchImpl });
-check(defaultLowConfidence.models.length === 1 && lowConfidenceDecision.boundaryVerified && !lowConfidenceDecision.confident
- && !lowConfidenceDecision.commerceClassificationFailure, 'default valid low confidence is uncertainty rather than missing fields');
+check(defaultLowConfidence.models.length === 1 && lowConfidenceDecision.boundaryVerified && lowConfidenceDecision.confident
+ && !lowConfidenceDecision.commerceClassificationFailure, 'valid selection remains usable regardless of confidence threshold');
 const historicalText = 'Real Madrid jersey 2022';
 const historical = { ...valid, productRequirement: { action: 'new', evidence: historicalText, priorTargetEvidence: '',
  updates: [{ field: 'requestedSeason', value: '2022', evidence: '2022' }], suspectedTerm: null } };

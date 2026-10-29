@@ -3,29 +3,28 @@ import assert from "node:assert/strict";
 process.env.TYPESAFE_API_KEY = "self-check-typesafe-key";
 process.env.TYPESAFE_BASE_URL = "https://typesafe.self-check.invalid/v1";
 
+const { buildQuestions } = await import("../server/jev-intent-service.js");
 const { classifyProductIntent } = await import("../server/product-intent-classifier-service.js");
 const { buildProductSearchIntent } = await import("../server/product-intent-service.js");
 const { normalizeGuestReplyText } = await import("../server/guest-chat-output-policy.js");
 
 function jevResponse({ route, routeConfidence = 0.93, productRequest, productAction }) {
-  return new Response(JSON.stringify({
-    model: "jev-self-check",
-    answers: {
-      route: { choice: route, confidence: routeConfidence },
-      product_request: { noul: productRequest },
-      product_action: { noul: productAction },
-    },
-  }), { status: 200, headers: { "Content-Type": "application/json" } });
+  const answers = Object.fromEntries(Object.entries(buildQuestions()).map(([key, q]) => [key,
+    { choice: Object.hasOwn(q.criteria, 'no') ? 'no' : Object.keys(q.criteria)[0], confidence: .3 }]));
+  answers.route = { choice: route, confidence: routeConfidence };
+  answers.product_request = { choice: productRequest ? 'yes' : 'no', confidence: .3 };
+  answers.product_action = { choice: productAction ? 'yes' : 'no', confidence: .3 };
+  return new Response(JSON.stringify({ model: 'jev-self-check', answers }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 }
 
 const comment = await classifyProductIntent("Bonito bikini", {
-  fetchImpl: async () => jevResponse({ route: "daily_chat", productRequest: 0.19, productAction: 0.08 }),
+  fetchImpl: async () => jevResponse({ route: "daily_chat", productRequest: false, productAction: false }),
 });
 assert.equal(comment.isProductRequest, false, "a product mention used as a comment must stay ordinary chat");
-assert.equal(comment.productAction, 0.08);
+assert.equal(comment.productAction, 0);
 
 const spanishRequest = await classifyProductIntent("¿Tienen bikinis?", {
-  fetchImpl: async () => jevResponse({ route: "product_request", productRequest: 0.95, productAction: 0.91 }),
+  fetchImpl: async () => jevResponse({ route: "product_request", productRequest: true, productAction: true }),
 });
 assert.equal(spanishRequest.isProductRequest, true, "an explicit Spanish product request must search");
 

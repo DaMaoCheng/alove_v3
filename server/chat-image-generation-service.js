@@ -390,7 +390,7 @@ function buildGuestImageResult({ taskCreated = false, reason = "", trigger = nul
     : reason === CHAT_IMAGE_REPLY_REASONS.CLASSIFICATION_UNAVAILABLE
       ? CLASSIFICATION_UNAVAILABLE_INSTRUCTION
     : reason === 'appearance_uncertain'
-      ? ["The current photo request is valid, but it is uncertain whether to depict the user's earlier outfit or a different/plain look.",
+      ? ["The current photo request is valid, but the intended appearance or the source of the garment is uncertain.",
           "No image was created or sent. Ask one brief natural clarification of the desired appearance in the active language; do not refuse character photos or claim a quota problem. Preserve independent answers in a mixed request."]
     : reason === CHAT_IMAGE_BLOCK_REASONS.ACTIVE_GENERATION
       ? [
@@ -465,7 +465,7 @@ function buildChatImageReplyDirective(decision) {
   const instructions = {
     [CHAT_IMAGE_REPLY_REASONS.CLASSIFICATION_UNAVAILABLE]: CLASSIFICATION_UNAVAILABLE_INSTRUCTION,
     appearance_uncertain: [
-      "The current character-photo request needs clarification of whether to continue the earlier USER outfit or use a different/plain appearance.",
+      "The current character-photo request needs clarification of the intended appearance or garment source.",
       "Ask one brief natural appearance clarification, without creating or promising an image, claiming a quota block or refusing all character photos. Preserve independent mixed-question answers.",
     ],
     [CHAT_IMAGE_BLOCK_REASONS.ACTIVE_GENERATION]: [

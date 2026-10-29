@@ -24,11 +24,12 @@ check(appendGuestBenefitGuide("Unreviewed promise", context) === buildGuestBenef
 check(!getGuestBenefitReviewContext({ ...context }) && !isGuestBenefitReplyReviewed({ ...context }, body), "serialized or forged context is not review proof");
 check(!isGuestBenefitReplyReviewed(context, `${body} You get a benefit.`), "a later appended claim invalidates exact-text approval");
 for (const options of [
-  { isGuest: false }, { isGuest: "true" }, { searchIntent: { ...searchIntent, commerceConfidence: Infinity } },
-  { searchIntent: { ...searchIntent, commerceConfidence: .7 } }, { searchIntent: { ...searchIntent, commerceConfidence: 1.1 } },
+  { isGuest: false }, { isGuest: "true" }, { searchIntent: { ...searchIntent, commerceConfidence: Infinity } }, { searchIntent: { ...searchIntent, commerceConfidence: null } },
+  { searchIntent: { ...searchIntent, commerceConfidence: -0.1 } }, { searchIntent: { ...searchIntent, commerceConfidence: 1.1 } },
   { searchIntent: { ...searchIntent, promotionInquiry: { kind: "policy", evidence: "want a coupon" } } },
   { searchIntent: { ...searchIntent, promotionInquiry: { kind: "benefit_request", evidence: "earlier unrelated request" } } },
 ]) check(buildGuestBenefitContext({ searchIntent, userText, isGuest: true, ...options }) === null, "invalid evidence/confidence or authenticated status cannot open the guest explanation path");
+check(Boolean(buildGuestBenefitContext({ searchIntent: { ...searchIntent, commerceConfidence: .01 }, userText, isGuest: true })), 'a valid low-confidence selected benefit intent retains its evidence requirement');
 for (const verdict of [
   { allowed: false }, { confidence: Infinity }, { guidanceSupported: false }, { evidenceRequired: true, evidenceSupported: false },
   { imageStatusRequired: true, imageStatusSupported: false }, { transportFallback: true },

@@ -18,15 +18,18 @@ const mockPayload = {
   model: "jev-1.13.0",
   answers: {
     route: { type: "choice", choice: "try_on", confidence: 0.94, probabilities: { try_on: 0.94, daily_chat: 0.06 } },
-    wants_character_image: { type: "noul", noul: 0.99 },
-    explicit_generation: { type: "noul", noul: 0.96 },
-    image_inspection: { type: "noul", noul: 0.01 },
-    product_request: { type: "noul", noul: 0.91 },
-    product_action: { type: "noul", noul: 0.91 },
-    order_lookup: { type: "noul", noul: 0.01 },
-    web_search: { type: "noul", noul: 0.01 },
+    wants_character_image: { choice: "yes", confidence: .3 },
+    explicit_generation: { choice: "yes", confidence: .3 },
+    image_inspection: { choice: "no", confidence: .3 },
+    product_request: { choice: "yes", confidence: .3 },
+    product_action: { choice: "yes", confidence: .3 },
+    order_lookup: { choice: "no", confidence: .3 },
+    web_search: { choice: "no", confidence: .3 },
   },
 };
+for (const [key, q] of Object.entries(buildQuestions())) {
+  if (!mockPayload.answers[key]) mockPayload.answers[key] = { choice: Object.hasOwn(q.criteria, 'no') ? 'no' : Object.keys(q.criteria)[0], confidence: .3 };
+}
 
 const mockFetch = async () => new Response(JSON.stringify(mockPayload), {
   status: 200,
@@ -48,37 +51,43 @@ assert.equal(mapJevImageIntent(mocked).explicitGeneration, true);
 const productComment = normalizeJevResponse({
   answers: {
     route: { choice: "daily_chat", confidence: 0.93, probabilities: { daily_chat: 0.93, product_request: 0.07 } },
-    product_request: { noul: 0.18 },
-    product_action: { noul: 0.08 },
+    product_request: { choice: "no", confidence: .3 },
+    product_action: { choice: "no", confidence: .3 },
   },
 });
 assert.equal(productComment.primaryIntent, "daily_chat");
 assert.equal(productComment.productIntent, "none");
-assert.equal(productComment.productAction, 0.08);
+assert.equal(productComment.productAction, 0);
 
 const productRequest = normalizeJevResponse({
   answers: {
     route: { choice: "product_request", confidence: 0.94 },
-    product_request: { noul: 0.96 },
-    product_action: { noul: 0.91 },
+    product_request: { choice: "yes", confidence: .3 },
+    product_action: { choice: "yes", confidence: .3 },
   },
 });
 assert.equal(productRequest.productIntent, "search");
 const mixedPublicAndProduct = normalizeJevResponse({ answers: {
   route: { choice: "product_request", confidence: .95 },
-  product_request: { noul: .95 }, product_action: { noul: .92 }, web_search: { noul: .93 },
+  product_request: { choice: "yes", confidence: .3 }, product_action: { choice: "yes", confidence: .3 }, web_search: { choice: "yes", confidence: .3 },
 } });
 assert.equal(mixedPublicAndProduct.productIntent, "search", "an independent public question does not erase the primary product action");
 assert.equal(mixedPublicAndProduct.webSearchIntent, true, "an explicit public fact can coexist with a product request");
-assert.equal(mixedPublicAndProduct.webSearchScore, .93, "preserve finite web-purpose diagnostic score without changing thresholds");
+assert.equal(mixedPublicAndProduct.webSearchScore, 1, "the explicit yes choice maps to the legacy binary signal");
 assert.match(buildQuestions().web_search.instructions, /catalogue/i, "web purpose must distinguish catalogue requirements from public-world research");
+const routeQuestion = buildQuestions().route;
+assert.match(routeQuestion.criteria.product_request, /existing image/i, 'catalogue product photos belong to product consultation');
+assert.match(routeQuestion.criteria.daily_chat, /status of an earlier image/i, 'image status alone is not a new request');
+assert.match(routeQuestion.criteria.try_on, /third person/i, 'try-on must identify the character, not a third person');
+assert.match(routeQuestion.instructions, /previous image is ready/i, 'main route must distinguish image status');
+assert.match(routeQuestion.instructions, /photo is product_request/i, 'main route must distinguish catalogue viewing');
 
 
 const dailyRouteWins = normalizeJevResponse({
   answers: {
     route: { choice: "daily_chat", confidence: 0.91 },
-    product_request: { noul: 0.94 },
-    product_action: { noul: 0.94 },
+    product_request: { choice: "yes", confidence: .3 },
+    product_action: { choice: "yes", confidence: .3 },
   },
 });
 assert.equal(dailyRouteWins.productIntent, "none", "daily_chat must not be upgraded by secondary product scores");
@@ -86,8 +95,8 @@ assert.equal(dailyRouteWins.productIntent, "none", "daily_chat must not be upgra
 const unsupported = normalizeJevResponse({
   answers: {
     route: { choice: "product_request", confidence: 0.9 },
-    product_request: { noul: 0.95 },
-    product_action: { noul: 0.95 },
+    product_request: { choice: "yes", confidence: .3 },
+    product_action: { choice: "yes", confidence: .3 },
   },
 }, { canRecommendProducts: false });
 assert.equal(unsupported.unsupported, true);
@@ -96,8 +105,8 @@ assert.equal(unsupported.unsupportedIntent, "product_request");
 const genericPhoto = normalizeJevResponse({
   answers: {
     route: { choice: "character_photo", confidence: 0.9 },
-    wants_character_image: { noul: 0.96 },
-    explicit_generation: { noul: 0.08 },
+    wants_character_image: { choice: "yes", confidence: .3 },
+    explicit_generation: { choice: "no", confidence: .3 },
   },
 });
 assert.equal(genericPhoto.imageIntent, "library_photo");
@@ -107,8 +116,8 @@ assert.equal(mapJevImageIntent(genericPhoto).explicitGeneration, false);
 const priorImageTryOn = normalizeJevResponse({
   answers: {
     route: { choice: "try_on", confidence: 0.9 },
-    image_inspection: { noul: 0.95 },
-    explicit_generation: { noul: 0.85 },
+    image_inspection: { choice: "yes", confidence: .3 },
+    explicit_generation: { choice: "yes", confidence: .3 },
   },
 });
 assert.equal(priorImageTryOn.imageIntent, "try_on");
@@ -125,10 +134,15 @@ assert.equal(failed.fallbackReason, "provider_error");
 
 const lowConfidence = normalizeJevResponse({ answers: {
   route: { choice: "character_photo", confidence: 0.59 },
-  wants_character_image: { noul: 0.9 },
+  wants_character_image: { choice: "yes", confidence: .3 },
 } });
-assert.equal(lowConfidence.confident, false);
-assert.equal(mapJevImageIntent(lowConfidence), null);
+assert.equal(lowConfidence.confident, true, 'an explicit primary choice is not rejected due to its confidence');
+assert.equal(mapJevImageIntent(lowConfidence).intentType, 'library_photo');
+const unclear = normalizeJevResponse({ answers: { route: { choice: 'unclear', confidence: .99 } } });
+assert.equal(unclear.confident, false, 'an explicit unclear choice remains unclear');
+const languageChoice = normalizeJevResponse({ answers: { route: { choice: 'daily_chat', confidence: .12 },
+  reply_language: { choice: 'es', confidence: .2 }, reply_language_scope: { choice: 'turn', confidence: .3 } } });
+assert.equal(languageChoice.languageDecision?.targetCode, 'es', 'explicit language choice does not require an arbitrary confidence threshold');
 
 const invalid = await classifyJevIntent({
   userText: "Could you show me a picture?",
@@ -224,19 +238,30 @@ if (!process.argv.includes("--real")) {
   const { evaluateChatImageRequest } = await import("../server/chat-image-generation-service.js");
   const { resolveChatImageRequestConstraints, createChatImageVariation } = await import("../server/chat-image-variation-service.js");
   const originalFetch = globalThis.fetch;
-  let conditionRequests = 0;
+  let conditionRequests = 0, typeRequests = 0;
   globalThis.fetch = async (url, options = {}) => {
     assert.equal(String(url), `${SERVER_CONFIG.typeSafe.baseUrl}/systemone`);
-    conditionRequests += 1;
     const body = JSON.parse(options.body);
+    if (body.questions.image_type) {
+      typeRequests += 1;
+      const answers = Object.fromEntries(Object.entries(body.questions).map(([key, q]) => [key, {
+        choice: key === 'image_type' ? 'explicit_generation' : key === 'image_scope' ? 'image_only'
+          : Object.hasOwn(q.criteria, 'none') ? 'none' : Object.keys(q.criteria)[0], confidence: .3,
+      }]));
+      return new Response(JSON.stringify({ answers }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }
+    conditionRequests += 1;
     assert.ok(body.questions.image_wants_no_clothing, "real adapter request must ask for clothing conditions");
     const noClothing = body.state.message.includes("不穿衣服");
-    return new Response(JSON.stringify({ answers: {
+    const defaults = Object.fromEntries(Object.entries(body.questions).map(([key, q]) => [key, {
+      choice: key === 'route' ? 'new_image' : Object.hasOwn(q.criteria, 'no') ? 'no' : Object.keys(q.criteria)[0], confidence: .3,
+    }]));
+    return new Response(JSON.stringify({ answers: { ...defaults,
       route: { choice: "new_image", confidence: 0.95 },
-      wants_character_image: { noul: 0.99 },
-      explicit_generation: { noul: 0.99 },
-      image_wants_no_clothing: { noul: noClothing ? 0.99 : 0.01 },
-      image_wants_clothing: { noul: 0.01 },
+      wants_character_image: { choice: "yes", confidence: .3 },
+      explicit_generation: { choice: "yes", confidence: .3 },
+      image_wants_no_clothing: { choice: noClothing ? "yes" : "no", confidence: .3 },
+      image_wants_clothing: { choice: "no", confidence: .3 },
     } }), { status: 200, headers: { "Content-Type": "application/json" } });
   };
   try {
@@ -251,6 +276,7 @@ if (!process.argv.includes("--real")) {
     assert.equal(createChatImageVariation({ userText, constraints }).wardrobe, "");
     await evaluateChatImageRequest(null, options);
     assert.equal(conditionRequests, 1, "same-message semantic decisions must reuse the JEV cache");
+    assert.equal(typeRequests, 1, "same-message image type must reuse the JEV cache");
     const neutral = await evaluateChatImageRequest(null, {
       userText: "不要穿红色衣服给我拍一张照片", cacheKey: "image-conditions-entry-neutral",
     });

@@ -22,7 +22,7 @@ import { guestVoiceMeta } from "./guest-session-service.js";
 import { parseJsonValue } from "./chat-message-payload-utils.js";
 import { acquireDedicatedDbAdvisoryLock } from "./db-advisory-lock-service.js";
 
-import { enforceReplyBoundary } from "./chat-reply-boundary-service.js";
+import { assessImageTerminalCaption } from "./chat-image-caption-review-service.js";
 import { resolveChatImageStatusContext, buildChatImageStatusInstruction } from "./chat-image-status-context-service.js";
 import { buildImageReplyRecoveryPrompt } from "./chat-image-reply-recovery-service.js";
 
@@ -141,18 +141,23 @@ export async function generateChatImageTerminalReplyFromJob(job = {}) {
       context = await checkpointTerminalReply(job, context, { draft: reviewDraft, reviewStarted: true }, "review");
       if (!context) return { ok: true, skipped: true, reason: "state_changed" };
       try {
-        // The shared reviewer may repair only this ready-image caption once.
-        // reviewStarted is already durable, so task replay cannot repeat it.
-        const reviewed = await enforceReplyBoundary({ replyResult: context.terminalReply.draft,
-          character: context.character, userText, recentMessages, language: context.languageCode,
-          languageQualityRequired: true, requireIdentityReview: true,
-          independentLanguageQualityRequired: true, chatImageContext: imageContext,
-          searchIntent: { replyBoundary: { salesAllowed: false, contactAllowed: false } }, logContext,
-          refreshImageStatus: () => terminalImageContext(context),
-          regenerateReply: (_rejected, recovery) => recovery?.kind === "image"
-            ? generateTerminalCaption({ context, recentMessages, userText, imageContext: recovery.chatImageContext, logContext, recovery })
-            : null });
-        if (!reviewed.degraded && !reviewed.replyRecoveryState) reply = boundedReply(reviewed, context, userText);
+        let reviewed = await assessImageTerminalCaption({ replyResult: context.terminalReply.draft,
+          userText, language: context.languageCode, logContext });
+        let candidate = context.terminalReply.draft;
+        if (!reviewed.allowed && reviewed.reviewStatus === 'valid') {
+          context = await checkpointTerminalReply(job, context, { regenerationStarted: true });
+          if (!context) return { ok: true, skipped: true, reason: "state_changed" };
+          const rewritten = await generateTerminalCaption({ context, recentMessages, userText, imageContext, logContext, reviewFailures: reviewed.failures });
+          if (rewritten) {
+            candidate = rewritten;
+            reviewed = await assessImageTerminalCaption({ replyResult: candidate, userText, language: context.languageCode, logContext });
+          }
+        }
+        if (reviewed.allowed) reply = boundedReply(candidate, context, userText);
+        context = await checkpointTerminalReply(job, context, { reviewResult: {
+          status: reviewed.reviewStatus, failures: reviewed.failures || [], confidence: reviewed.confidence ?? null,
+        } });
+        if (!context) return { ok: true, skipped: true, reason: "state_changed" };
       } catch (error) { console.warn("[aiove] image terminal reply review unavailable:", error.code || "review_failed"); }
       reply ||= terminalFallback(context);
       context = await checkpointTerminalReply(job, context, { approvedReply: reply });
@@ -168,10 +173,12 @@ export async function generateChatImageTerminalReplyFromJob(job = {}) {
   } finally { await releaseLock(); }
 }
 
-async function generateTerminalCaption({ context, recentMessages, userText, imageContext, logContext, recovery = null }) {
+async function generateTerminalCaption({ context, recentMessages, userText, imageContext, logContext, recovery = null, reviewFailures = [] }) {
   let promptContext = buildChatReplyPrompt({ character: context.character, recentMessages, userText, chatImageContext: imageContext });
   if (context.guestSessionId) promptContext = applyGuestPromptPolicy(promptContext);
   promptContext = projectTerminalImageReplyPrompt(promptContext, { originalRequest: userText, imageContext });
+  const failureHints = reviewFailures.filter(value => ['languageSupported', 'noRepeatedBusinessAnswer', 'noInternalLeak', 'confidence'].includes(value));
+  if (failureHints.length) promptContext.messages.push({ role: 'system', content: `The previous caption did not pass these checks: ${failureHints.join(', ')}. Write a fresh caption addressing them without answering the original business questions.` });
   if (recovery) {
     promptContext = buildImageReplyRecoveryPrompt(promptContext, recovery);
     if (!promptContext) return null;

@@ -26,14 +26,14 @@ function reconcileCatalogueContinuation(decision, { userText, recentMessages, si
     && ['daily_chat','product_request'].includes(jevDecision.primaryIntent)
     && (!jevDecision.imageIntent || jevDecision.imageIntent === 'none') && (!jevDecision.orderIntent || jevDecision.orderIntent === 'none')
     && !jevDecision.webSearchIntent && !searchIntent.nonShoppingReason
-    && !(jevDecision.productIntent === 'search' && Number(jevDecision.productAction) >= .72)) {
+    && !(jevDecision.productIntent === 'search' && Number(jevDecision.productAction) === 1)) {
     return { ...decision, route: 'product_question', needsLiveProductData: false,
       childSizingUpdateOnly: ['catalogue_only','sizing_update'].includes(sizingAct) };
   }
   const action = jevDecision?.productAction;
   if (!['store_policy', 'product_question'].includes(decision.route) || decision.declaredLiveProductData !== true
     || !jevDecision?.ok || !['product_request', 'try_on'].includes(jevDecision.primaryIntent)
-    || jevDecision.productIntent !== 'search' || action === null || !Number.isFinite(Number(action)) || Number(action) < .72
+    || jevDecision.productIntent !== 'search' || action === null || Number(action) !== 1
     || searchIntent.nonShoppingReason || decision.replyBoundary?.salesAllowed === false
     || decision.productRequirement?.action !== 'continue') return decision;
   const assistance = normalizeCommerceAssistance(decision, { userText, recentMessages });
@@ -81,7 +81,7 @@ function primaryConversationPurpose({ decision, jevDecision, searchIntent, recen
     || jevDecision.primaryIntent !== 'daily_chat' || jevDecision.productIntent !== 'none'
     || jevDecision.imageIntent !== 'none' || jevDecision.orderIntent !== 'none'
     || jevDecision.webSearchIntent !== false || jevDecision.unsupported !== false
-    || !Number.isFinite(jevDecision.productAction) || jevDecision.productAction < 0 || jevDecision.productAction >= .72
+    || jevDecision.productAction !== 0
     || !Number.isFinite(decision?.confidence) || decision.confidence < 0 || decision.confidence > 1
     || decision?.confident !== false || !['chat', 'unclear'].includes(decision.route)
     || decision.topic !== 'other' || decision.knowledgeScope !== 'general'
@@ -206,9 +206,9 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
     return clearProductRoutingState(scoped, { recentMessages, siteId, characterId, clearRequestScope: false });
   }
   const actionVerified = jevDecision?.productAction === undefined
-    || (jevDecision.productAction !== null && Number.isFinite(Number(jevDecision.productAction)) && Number(jevDecision.productAction) >= 0.72);
+    || Number(jevDecision.productAction) === 1;
   // Legacy JEV fallbacks may omit the score, but must still explicitly permit
-  // search. A reliable primary label alone cannot bypass the action threshold.
+  // search. A primary label alone cannot bypass an explicit no-action choice.
   const primaryAllowsSearch = ["product_request", "try_on"].includes(jevDecision?.primaryIntent)
     && jevDecision.productIntent === "search" && actionVerified
     && !(jevDecision.unsupported && jevDecision.unsupportedIntent === "product_request");
@@ -226,14 +226,38 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
   if (confirmation) return confirmation;
   decision = reconcileCatalogueContinuation(decision, { userText, recentMessages, siteId, characterId, jevDecision, searchIntent, current: currentRequirement });
   const assistance = normalizeCommerceAssistance(decision, { userText, recentMessages });
+  // A typed whole-turn JEV decision may include a general definition alongside
+  // a policy question; use business retrieval without granting shopping actions.
+  const conceptAndPolicy = normalizeCommerceKnowledgeRequest(decision.knowledgeRequest, { userText, recentMessages })?.kind === 'concept_and_policy'
+    && jevDecision?.ok === true && jevDecision.orderIntent === 'none'
+    && !['product_request', 'order_lookup', 'new_image', 'try_on'].includes(jevDecision.primaryIntent)
+    && ['chat', 'store_policy'].includes(decision.route) && decision.answerRequired === true
+    && decision.declaredLiveProductData === false && !decision.referencedProductId && !(decision.referencedProductIds || []).length
+    && !assistance.businessInquiry && !assistance.humanHandoff && !assistance.promotionInquiry && !assistance.checkoutIssue;
   const answerRequired = Boolean(assistance.businessInquiry || assistance.humanHandoff || assistance.promotionInquiry || assistance.checkoutIssue) || decision.answerRequired === true || ["store_policy", "product_question"].includes(decision.route);
-  const knowledgeScope = assistance.businessInquiry || assistance.humanHandoff || assistance.promotionInquiry || assistance.checkoutIssue || decision.knowledgeScope === "business" || ["product_search", "product_question", "store_policy"].includes(decision.route) ? "business" : "general";
-  const catalogueOnly = decision.boundaryVerified === true && decision.confidence >= .8
+  const knowledgeScope = conceptAndPolicy || assistance.businessInquiry || assistance.humanHandoff || assistance.promotionInquiry || assistance.checkoutIssue || decision.knowledgeScope === "business" || ["product_search", "product_question", "store_policy"].includes(decision.route) ? "business" : "general";
+  const catalogueOnly = decision.boundaryVerified === true
     && decision.route === 'product_search' && decision.topic === 'other'
     && normalizeCommerceKnowledgeRequest(decision.knowledgeRequest, { userText, recentMessages })?.kind === 'catalogue_only'
     && !assistance.businessInquiry && !assistance.humanHandoff && !assistance.promotionInquiry && !assistance.checkoutIssue
     && !searchIntent.customerServiceKnowledgeRequest && !(searchIntent.answerRequired && searchIntent.knowledgeScope === 'business');
   const knowledgeRequest = ["store_policy", "product_question"].includes(decision.route) || (answerRequired && knowledgeScope === "business");
+  const generalTermExplanation = normalizeCommerceKnowledgeRequest(decision.knowledgeRequest, { userText, recentMessages })?.kind === 'general_explanation'
+    && ['chat', 'product_question'].includes(decision.route) && decision.declaredLiveProductData === false
+    && !decision.referencedProductId && !(decision.referencedProductIds || []).length
+    && !assistance.businessInquiry && !assistance.humanHandoff && !assistance.promotionInquiry && !assistance.checkoutIssue
+    && !['order_lookup', 'new_image', 'try_on'].includes(jevDecision?.primaryIntent);
+  const orderAndPolicy = normalizeCommerceKnowledgeRequest(decision.knowledgeRequest, { userText, recentMessages })?.kind === 'order_and_policy'
+    && jevDecision?.ok === true && jevDecision.orderIntent === 'lookup'
+    && ['chat', 'store_policy'].includes(decision.route) && decision.knowledgeScope === 'business' && decision.answerRequired === true
+    && !decision.referencedProductId && !(decision.referencedProductIds || []).length && decision.declaredLiveProductData === false
+    && !assistance.businessInquiry && !assistance.humanHandoff && !assistance.promotionInquiry && !assistance.checkoutIssue;
+  const pureStorePolicy = normalizeCommerceKnowledgeRequest(decision.knowledgeRequest, { userText, recentMessages })?.kind === 'store_policy_only'
+    && jevDecision?.ok === true && jevDecision.orderIntent === 'none'
+    && !['new_image', 'try_on', 'order_lookup'].includes(jevDecision.primaryIntent)
+    && decision.route === 'store_policy' && decision.knowledgeScope === 'business' && decision.answerRequired === true
+    && !decision.referencedProductId && !(decision.referencedProductIds || []).length && decision.declaredLiveProductData === false
+    && !assistance.businessInquiry && !assistance.humanHandoff && !assistance.promotionInquiry && !assistance.checkoutIssue;
   const replyBoundary = { salesAllowed: decision.replyBoundary?.salesAllowed !== false, contactAllowed: decision.replyBoundary?.contactAllowed !== false };
   // Commerce metadata can enrich a primary action; it cannot turn a JEV chat,
   // image/order or unsupported action into a new product search/card.
@@ -264,6 +288,10 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
     referencedProductIds: [],
     replyTopicHint: "", replyClarificationContext: null,
     commerceTopic: decision.topic,
+    generalTermExplanation: Boolean(generalTermExplanation),
+    orderAndPolicy: Boolean(orderAndPolicy),
+    pureStorePolicy: Boolean(pureStorePolicy),
+    conceptAndPolicy: Boolean(conceptAndPolicy),
     childSizingUpdateOnly: decision.childSizingUpdateOnly === true,
     commerceConfidence: decision.confidence,
     primarySearchBlocked: primaryBlocksSearch,

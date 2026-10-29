@@ -1,15 +1,33 @@
-import { jevImageAnswerFixture } from './fixtures/jev-image-answer-fixture.mjs';
 import assert from 'node:assert/strict';
 process.env.AIOVE_PROVIDER_LOG_WRITE_ENABLED = 'false';
 process.env.VENICE_API_KEY = 'isolated-image-boundary';
 process.env.TYPESAFE_API_KEY = 'fixture-image-jev';
-const { classifyChatImageIntent: actualClassifyImage } = await import('../server/chat-image-intent-classifier-service.js');
+const { classifyChatImageIntent: actualClassifyImage, isProductCapableCharacter } = await import('../server/chat-image-intent-classifier-service.js');
 const { classifyJevImageDetails } = await import('../server/jev-image-decision-service.js');
-const { evaluateJevQuestions } = await import('../server/jev-intent-service.js');
 const classifyChatImageIntent = (text, options) => actualClassifyImage(text, { ...options,
- classifyImageJev: (message, context) => classifyJevImageDetails(message, { ...context,
-  evaluate: request => evaluateJevQuestions({ ...request, forceRefresh: true }) }) });
-const { evaluateChatImageRequest: actualEvaluateImage, maybeCreateGuestChatImagePlaceholder } = await import('../server/chat-image-generation-service.js');
+  classifyImageJev: (input, detailOptions) => classifyJevImageDetails(input, { ...detailOptions,
+    evaluate: async body => {
+      calls++; lastBody = { ...body, messages: [{ content: Object.values(body.questions).map(q => q.instructions).join('\n') }, { content: JSON.stringify(body.state) }] };
+      if (fail) return { ok: false };
+      const chooseSpan = (criteria, evidence) => Object.keys(criteria).find(key => key !== 'none' && criteria[key] === evidence) || 'none';
+      const selected = { image_type: response?.intentType || 'unclear', image_scope: response?.requestScope || 'unknown',
+        clothing_target: response?.clothingTarget || (response?.intentType === 'try_on' ? 'generic' : 'none'),
+        previous_outfit: response?.appearanceContext?.previousOutfit || 'uncertain', appearance_relation: response?.appearanceContext?.relation || 'uncertain' };
+      const answers = Object.fromEntries(Object.entries(body.questions).map(([key, q]) => [key, {
+        choice: key === 'actor_evidence' ? chooseSpan(q.criteria, response?.actorEvidence)
+          : key === 'action_evidence' ? chooseSpan(q.criteria, response?.requestEvidence || response?.actionEvidence)
+          : selected[key] || Object.keys(q.criteria)[0], confidence: response?.confidence ?? .98,
+      }]));
+      return { ok: true, answers };
+    },
+  }),
+});
+const { evaluateChatImageRequest: actualEvaluateImage, maybeCreateGuestChatImagePlaceholder: actualMaybeGuest } = await import('../server/chat-image-generation-service.js');
+const maybeCreateGuestChatImagePlaceholder = async (db, options) => {
+ const imageDecision = options.imageDecision || await classifyChatImageIntent(options.userText, { character: options.character,
+  jevDecision: options.jevDecision, conversationContext: options.conversationContext, forceTargetVerification: true });
+ return actualMaybeGuest(db, { ...options, imageDecision });
+};
 const evaluateChatImageRequest = async (db, options) => {
  if (!options.imageDecision && options.jevDecision) {
   const imageDecision = await classifyChatImageIntent(options.userText, { character: options.character,
@@ -22,16 +40,7 @@ const { normalizeGuestReplyText } = await import('../server/guest-chat-output-po
 const { getChatImageStatusCopy } = await import('../server/chat-image-copy-service.js');
 const character = { id: 'mascot_test', category_id: 'mascot' };
 const mistaken = { ok: true, confident: true, confidence: .99, imageIntent: 'try_on', imageConditions: { wants_clothing: true, wants_no_clothing: false } };
-const originalFetch = globalThis.fetch;
 let response, calls = 0, lastBody, fail = false;
-globalThis.fetch = async (_url, options) => {
-  calls++; const body = JSON.parse(options.body);
- if (body.questions?.actor_is_character) return { ok: true, json: async () => jevImageAnswerFixture(body, response) };
-  lastBody = body.questions ? { ...body, messages: [{ content: Object.values(body.questions).map(q => q.instructions).join('\n') }, { content: JSON.stringify(body.state) }] } : body;
-  if (fail) throw new Error('isolated timeout');
-  if (body.questions) return { ok: true, json: async () => jevImageAnswerFixture(body, response) };
-  return { ok: true, json: async () => ({ choices: [{ message: { content: JSON.stringify(response) } }] }) };
-};
 const { applyChatImageCommercePolicy } = await import('../server/chat-image-commerce-policy-service.js');
 const mistakenPhoto = { hasIntent: true, allowed: true, intentType: 'library_photo', actionEvidence: 'La del paris st de dior', actorEvidence: 'dior' };
 for (const intent of [
@@ -43,6 +52,8 @@ for (const intent of [
 }
 let checks = 0;
 try {
+  const nonImage = { ...mistaken, imageIntent: 'none', primaryIntent: 'chat' };
+  const beforeNonImage = calls;
   for (const text of [
     'Hola camiseta de Italia ?',
     'Hello do you guys provide discounts for bulk orders?',
@@ -66,10 +77,11 @@ try {
     'このユニフォームを見せて、配送は何日ですか？',
   ]) {
     response = { hasIntent: false, allowed: false, confidence: .98, intentType: 'none', imageSubject: 'product', requestEvidence: text };
-    const result = await maybeCreateGuestChatImagePlaceholder({ execute: () => { throw new Error('commerce must never touch image writes or quota'); } }, { character, userText: text, jevDecision: mistaken, conversationContext: {} });
+    const result = await maybeCreateGuestChatImagePlaceholder({ execute: () => { throw new Error('commerce must never touch image writes or quota'); } }, { character, userText: text, jevDecision: nonImage, conversationContext: {} });
     assert.equal(result.requested, false, text); assert.equal(result.taskCreated, false); checks++;
   }
-  assert(calls >= 8, 'JEV positives require independent target verification for commerce characters');
+  assert.equal(calls, beforeNonImage, 'non-image primary selection must not invoke image type classification');
+  // A mistaken positive primary decision is no longer overturned by stage two; test primary routing separately.
   for (const [text, intentType] of [['Send your selfie', 'library_photo'], ['Try this shirt on', 'try_on'], ['Create a photo of us together', 'group_photo']]) {
     response = { hasIntent: true, allowed: true, confidence: .98, intentType, communicativeAction: 'request_visual_output', requestKind: 'character_image', imageSubject: 'character', requestEvidence: text, actorEvidence: text.split(' ')[0], actionEvidence: text, clothingTarget: intentType === 'try_on' ? 'generic' : 'none', wants_clothing: intentType === 'try_on', wants_no_clothing: false };
     const result = await evaluateChatImageRequest(null, { character, userText: text, jevDecision: mistaken, conversationContext: { recentConversation: [{ role: 'user', text: 'Arsenal shirt' }], latestImageKind: 'product' } });
@@ -80,7 +92,7 @@ try {
     requestEvidence: 'send it to me again', actorEvidence: 'your', actionEvidence: 'send it to me again',
     clothingTarget: 'none', wants_clothing: false, wants_no_clothing: false };
   const resendText = 'Okay, send it to me again, see if I can see the image.';
-  const resend = await classifyChatImageIntent(resendText, { character, jevDecision: mistaken, conversationContext: { recentConversation: [
+  const resend = await classifyChatImageIntent(resendText, { character, jevDecision: { ...mistaken, imageConditions: {} }, conversationContext: { recentConversation: [
     { role: 'user', kind: 'text', text: 'Send your photo' }, { role: 'assistant', kind: 'mascot_library_image', text: '' },
   ], latestImageKind: 'character' } });
   assert.equal(resend.hasIntent, true, 'inspection wording cannot discard an independently grounded resend request');
@@ -94,19 +106,16 @@ try {
   await classifyChatImageIntent('Create a photo of us together', { character, jevDecision: mistaken, conversationContext: { recentConversation: [{ role: 'user', text: 'Arsenal shirt' }], latestImageKind: 'product' } });
   const payload = JSON.parse(lastBody.messages[1].content);
   assert.equal(payload.recentConversation[0].text, 'Arsenal shirt'); assert.equal(payload.latestImageKind, 'product'); checks++;
-  for (const bad of [
-    { communicativeAction: 'merchandise_question' }, { communicativeAction: '' }, { requestKind: 'non_image' }, { requestKind: '' }, { intentType: 'none' }, { intentType: '' }, { imageSubject: 'product' }, { confidence: 'Infinity' }, { requestEvidence: 'invented words' },
-  ]) {
-    response = { hasIntent: true, allowed: true, confidence: .99, intentType: 'try_on', communicativeAction: 'request_visual_output', requestKind: 'character_image', imageSubject: 'character', requestEvidence: 'Show your photo', ...bad };
-    const result = await evaluateChatImageRequest(null, { character, userText: 'Show your photo', jevDecision: mistaken, conversationContext: {} });
-    assert.equal(result.trigger.hasIntent, false, JSON.stringify(bad)); checks++;
-  }
+  // A real selected type remains valid even at low confidence. Evidence and unsupported-task safeguards remain independent.
+  response = { intentType: 'library_photo', confidence: .1, requestEvidence: 'Show your photo', actorEvidence: 'your' };
+  const lowScore = await evaluateChatImageRequest(null, { character, userText: 'Show your photo', jevDecision: mistaken, conversationContext: {} });
+  assert.equal(lowScore.trigger.hasIntent, true); checks++;
   response = { hasIntent: false, allowed: false, confidence: .98, intentType: 'none', communicativeAction: 'merchandise_question', requestKind: 'non_image' };
   await classifyChatImageIntent('Can this shirt be supplied without a name?', { character, jevDecision: mistaken, conversationContext: { latestImageKind: 'character', recentConversation: [{ role: 'assistant', kind: 'mascot_greeting_image', text: 'Welcome!' }] } });
   const greetingPayload = JSON.parse(lastBody.messages[1].content);
-  assert.equal(greetingPayload.latestImageKind, ''); assert.deepEqual(greetingPayload.recentConversation, []); checks++;
+  assert.equal(greetingPayload.characterImageFollowup, null, 'automatic greeting cannot establish followup permission'); assert.deepEqual(greetingPayload.recentConversation, []); checks++;
   await classifyChatImageIntent('Can this shirt be supplied without a name?', { character, jevDecision: mistaken, conversationContext: { latestImageKind: 'character', recentConversation: [{ role: 'assistant', kind: 'mascot_greeting_image', text: 'Welcome!' }, ...Array.from({ length: 6 }, () => ({ role: 'user', kind: 'text', text: 'Hello' }))] } });
-  assert.equal(JSON.parse(lastBody.messages[1].content).latestImageKind, '', 'an older automatic greeting cannot supply character-image evidence'); checks++;
+  assert.equal(JSON.parse(lastBody.messages[1].content).characterImageFollowup, null, 'an older automatic greeting cannot establish followup permission'); checks++;
   await classifyChatImageIntent('Can this shirt be supplied without a name?', { character, jevDecision: mistaken, conversationContext: { latestImageKind: 'character', recentConversation: [{ role: 'assistant', kind: 'mascot_greeting_image', text: 'Welcome!' }, { role: 'user', kind: 'text', text: 'Send your selfie' }, { role: 'assistant', kind: 'image_generation', text: 'Here is my photo' }] } });
   const requestedPayload = JSON.parse(lastBody.messages[1].content);
   assert.equal(requestedPayload.latestImageKind, 'character'); assert.equal(requestedPayload.recentConversation.length, 2); checks++;
@@ -140,7 +149,7 @@ try {
       requestEvidence: 'Send your selfie', actionEvidence: 'Send your selfie', actorEvidence: 'your', conditions: { wants_clothing: false, wants_no_clothing: false } } });
   assert.equal(mixedDomain.trigger.allowed, false, 'retain the pre-existing product-artwork restriction for mixed image tasks'); checks++;
   response = { hasIntent: false, allowed: false, confidence: 1, intentType: 'none', communicativeAction: 'other', requestKind: 'non_image' };
-  const inspectOnly = await evaluateChatImageRequest(null, { character, userText: 'What is this picture?', jevDecision: mistaken, conversationContext: {} });
+  const inspectOnly = await evaluateChatImageRequest(null, { character, userText: 'What is this picture?', jevDecision: nonImage, conversationContext: {} });
   assert.equal(inspectOnly.hasIntent, false, 'semantic confirmation keeps actual inspection free of image actions'); checks++;
   for (const text of ['Generate a white background product photo', '创建一张商品主图']) {
     response = { hasIntent: true, allowed: false, confidence: .99, intentType: 'disallowed', communicativeAction: 'request_visual_output',
@@ -150,8 +159,9 @@ try {
     assert.equal(unsupported.trigger.reason, 'disallowed_request'); checks++;
   }
   const before = calls;
+  response = { intentType: 'try_on', clothingTarget: 'generic', requestEvidence: 'Try this shirt on', actorEvidence: '' };
   const other = await classifyChatImageIntent('Try this shirt on', { character: { id: 'companion' }, jevDecision: mistaken });
-  assert.equal(other.hasIntent, true); assert.equal(calls, before, 'non-commerce JEV behavior is preserved'); checks++;
+  assert.equal(other.hasIntent, true); assert.equal(calls, before + 1, 'non-commerce image requests also select a type'); checks++;
   const ordinary = 'El envío estándar tarda el plazo indicado en la política de esta tienda.';
   assert.equal(normalizeGuestReplyText({ text: ordinary, imageTaskCreated: true, languageCode: 'es', userText: 'Manda tu foto y dime cuándo llega.' }), ordinary, 'image status must not overwrite the other answer'); checks++;
   for (const languageCode of ['es', 'hu', 'zh']) {
@@ -172,5 +182,5 @@ try {
     assert.equal(normalizeGuestReplyText({ ...input, imageTaskCreated: true }), guarded, 'image delivery must preserve product/order/promotion guards'); checks++;
   }
   assert.equal(normalizeGuestReplyText({ text: ordinary, productRequested: true, skipProductClarification: true, productSearchIntent: { commerceRoute: 'store_policy', needsLiveProductData: false, customerServiceKnowledgeRequest: true }, languageCode: 'es', userText: 'How long is standard delivery?' }), ordinary, 'general policy answers remain available without a product'); checks++;
-  console.log(`image commerce boundary self-check passed: ${checks} cases; isolated classifier, no DB writes or images generated`);
-} finally { globalThis.fetch = originalFetch; }
+  console.log(`image commerce boundary self-check passed: ${checks} cases; synthetic image type choices, no DB writes or images generated`);
+} finally { /* No external calls or database writes. */ }

@@ -13,7 +13,7 @@ const payload = { route: 'product_search', topic: 'other', needsLiveProductData:
   productRequirement: { action: 'new', evidence: 'Real Madrid away shirt 2026/27', priorTargetEvidence: '', updates: [], suspectedTerm: null },
   candidateResponse: { action: 'none', evidence: '', candidateId: '' }, confidence: .95 };
 const userText = 'Real Madrid away shirt 2026/27';
-const jevDecision = { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'search', productAction: .9 };
+const jevDecision = { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'search', productAction: 1 };
 const config = { id: 'venice', apiKey: 'fixture', baseUrl: 'https://fixture.example.test', model: 'fixture', apiMode: 'chat_completions' };
 let body;
 const invoke = (output, primary = jevDecision) => classifyCommerceIntent(userText, { config, jevDecision: primary, fetchImpl: async (_url, options) => {

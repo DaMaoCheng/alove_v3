@@ -79,11 +79,14 @@ try {
   for (const text of ['Do not reply in English.', 'He said "reply in English", what does that mean?', 'Why do you speak English?', 'Translate "hello" into English.', 'Beszéljünk angolul.', 'Hablemos en inglés.']) {
     assert.equal(detectRequestedLanguageSwitch(text), null, 'complex language meaning is never authorized by a verb regex');
   }
-  for (const decision of [null, { ok: false }, semantic('none'), semantic('xx'), semantic('en', 'none'), semantic('en', 'session', .79), semantic('en', 'session', '0.95'), { ok: true, languageDecision: { targetCode: 'en', scope: 'session', confidence: NaN } }]) {
+  for (const decision of [null, { ok: false }, semantic('none'), semantic('xx'), semantic('en', 'none'), semantic('en', 'session', '0.95'), { ok: true, languageDecision: { targetCode: 'en', scope: 'session', confidence: NaN } }]) {
     writes.length = 0;
     const unchanged = await applySessionLanguagePreference(mockDb, { character: baseCharacter, session: makeSession(), userText: 'chat in English', jevDecision: decision });
     assert.equal(unchanged.languageCode, 'hu'); assert.equal(writes.length, 0, 'missing/old/failed/invalid semantic output preserves preferences');
   }
+  writes.length = 0;
+  const lowScoreChoice = await applySessionLanguagePreference(mockDb, { character: baseCharacter, session: makeSession(), userText: 'chat in English', jevDecision: semantic('en', 'session', .01) });
+  assert.equal(lowScoreChoice.languageCode, 'en', 'valid selected language is not discarded for low confidence');
   writes.length = 0;
   const loadOnly = await applySessionLanguagePreference(mockDb, { character: baseCharacter, session: makeSession(), userText: 'English', resolveOnly: true, jevDecision: semantic('en') });
   assert.equal(loadOnly.languageCode, 'hu'); assert.equal(writes.length, 0, 'initial load waits for the existing request JEV decision');

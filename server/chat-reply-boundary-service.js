@@ -151,6 +151,7 @@ export function needsBusinessFactsReview(searchIntent = {}, character = {}) {
   return isStorefrontGuidanceCharacter(character) && searchIntent.answerRequired === true
     && (isGeneralCommerceExplanation(searchIntent) || searchIntent.knowledgeScope === "business"
       && (["store_policy", "product_question", "product_search"].includes(searchIntent.commerceRoute)
+        || searchIntent.commerceRoute === "chat" && searchIntent.customerServiceKnowledgeRequest === true
         || searchIntent.commerceRoute === "unclear" && searchIntent.customerServiceKnowledgeRequest === true));
 }
 
@@ -498,7 +499,8 @@ export async function enforceReplyBoundary(options = {}) {
     : sizingRequired || sizingConversationContext ? buildProductSizingFallback(productContext?.sizingProduct, code)
     : checkoutContext ? buildCheckoutNextStepCopy(searchIntent.checkoutIssue, code)
     : guestBenefitReview ? buildGuestBenefitFallback(guestBenefitContext)
-    : orderGuidanceRequired ? getChatOrderEntryCopy(code, orderActionState)
+    : orderGuidanceRequired ? [getChatOrderEntryCopy(code, orderActionState),
+      searchIntent.orderAndPolicy === true && !retained ? buildSupportGuidanceUnavailableCopy(code) : ''].filter(Boolean).join('\n\n')
     : imageCopy || scopeCopy || expressionFailureCopy || (guidanceRequired || businessFactsRequired ? buildSupportGuidanceUnavailableCopy(code) : "")
       || ((qualityRequired || factualRequired) && (languageRejected || !reviewValid || failedContracts.includes("factual_limitation") || failedContracts.includes("confidence")) ? buildLanguageQualityFallbackReply(code) : "")
       || (factualFallbackRequired ? buildFactualUnavailableCopy(code) : "") || ACKNOWLEDGEMENTS[code] || ACKNOWLEDGEMENTS.en);

@@ -50,10 +50,10 @@ const COPY = Object.freeze({
 });
 
 export function buildGuestBenefitContext({ searchIntent = {}, userText = "", languageCode = "en", isGuest = false } = {}) {
-  const confidence = Number(searchIntent.commerceConfidence);
+  const confidence = searchIntent.commerceConfidence;
   const evidence = typeof searchIntent.promotionInquiry?.evidence === "string" ? searchIntent.promotionInquiry.evidence.trim() : "";
   if (isGuest !== true || searchIntent.promotionInquiry?.kind !== "benefit_request"
-    || !Number.isFinite(confidence) || confidence < .75 || confidence > 1
+    || typeof confidence !== 'number' || !Number.isFinite(confidence) || confidence < 0 || confidence > 1
     || !evidence || evidence.length > 500 || !String(userText).includes(evidence)) return null;
   const code = normalizeCharacterLanguage(languageCode)?.code
     || normalizeCharacterLanguage(String(languageCode).split(/[-_]/)[0])?.code || "en";

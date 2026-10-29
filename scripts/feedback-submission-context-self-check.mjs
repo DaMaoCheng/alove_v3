@@ -16,6 +16,10 @@ assert(calls[1].sql.includes('site_id = ?')&&calls[1].sql.includes('guest_sessio
 assert(calls[1].args.includes('guest_owned')&&calls[1].args.includes('site_owned'));
 assert(!JSON.stringify(history).includes('user_email'));
 const followup=normalizeSupportFollowup(current.supportFollowup,{userText:text,recentMessages:[entry],confidence:.99});
+assert(normalizeSupportFollowup(current.supportFollowup,{userText:text,recentMessages:[entry],confidence:0}), 'zero confidence remains a valid selected followup');
+for (const confidence of [null, '', '0.2', false, undefined, NaN, Infinity, -1, 2]) {
+  assert.equal(normalizeSupportFollowup(current.supportFollowup,{userText:text,recentMessages:[entry],confidence}),null,`invalid confidence ${String(confidence)}`);
+}
 assert.equal(followup.relation,'submitted_followup');
 assert.equal(normalizeSupportFollowup({...current.supportFollowup,evidence:'another text'},{userText:text,recentMessages:[entry],confidence:.99}),null);
 assert.equal(normalizeSupportFollowup(current.supportFollowup,{userText:text,recentMessages:[],confidence:.99}),null);

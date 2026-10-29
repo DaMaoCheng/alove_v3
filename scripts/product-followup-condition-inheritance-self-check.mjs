@@ -17,7 +17,7 @@ const text = 'Gracias, pero estoy interesado en la camiseta para niño';
 async function route({ userText = text, action = 'new', updates = [{ field: 'requestedProductType', value: 'shirt', evidence: 'camiseta' }],
   recentMessages = history, reject = true, extras = {} } = {}) {
   return resolveCommerceSearchIntent({ ...location, userText, recentMessages, searchIntent: buildProductSearchIntent(userText),
-    jevDecision: { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'search', productAction: .99 },
+    jevDecision: { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'search', productAction: 1 },
     classifyCommerce: async () => ({ route: 'product_search', topic: 'other', confident: true, confidence: .99,
       needsLiveProductData: true, declaredLiveProductData: true, searchQuery: 'Real Madrid kids away shirt',
       replyBoundary: { salesAllowed: true, contactAllowed: true }, commerceConstraints: { team: null, edition: null },
