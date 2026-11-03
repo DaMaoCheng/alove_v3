@@ -25,7 +25,7 @@ for (const patch of [{ answerRequired: false }, { knowledgeScope: "none" }, { co
   assert.equal(result, original);
 }
 assert.equal(await enforceReplyBoundary({ replyResult: original, character: { category_id: "companion" }, searchIntent, assess: async () => { throw new Error("other persona"); } }), original);
-for (const patch of [{ businessFactsSupported: undefined }, { businessFactsSupported: "true" }, { confidence: "0.99" }, { confidence: 1.1 }, { confidence: .7 }, { confidence: NaN }]) {
+for (const patch of [{ businessFactsSupported: undefined }, { businessFactsSupported: "true" }, { confidence: "0.99" }, { confidence: 1.1 }, { confidence: .539 }, { confidence: NaN }]) {
   const result = await enforceReplyBoundary({ replyResult: original, character, searchIntent, assess: async () => ({ ...verdict, ...patch }) });
   assert.equal(result.degradationReason, "business_facts_unverified");
 }

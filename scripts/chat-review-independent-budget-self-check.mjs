@@ -39,7 +39,7 @@ const originalNow=Date.now;let clock=1000,repairBudget,reviewOptions;
 try{
  Date.now=()=>clock;
  const r=await recoverReviewedLanguageReply({replyResult:{text:'Before.'},repairLanguageReply:async input=>{repairBudget=input.timeoutMs;clock+=14000;return{text:'After.'}},
-  reviewCandidate:async(text,options)=>{reviewOptions=options;clock+=25000;return text},recordReview:async()=>{}});
+  reviewCandidate:async(text,options)=>{reviewOptions=options;clock+=25000;await options.recordReview({guardApplied:false});return text},recordReview:async()=>{}});
  check(r.recovered&&r.reply.text==='After.','long correction and full review are not rejected by the former shared twelve-second deadline');
  check(repairBudget===15000&&reviewOptions.reviewTimeoutMs===60000&&!Object.hasOwn(reviewOptions,'languageRecoveryDeadline'),'repair and full primary review receive separate finite budgets');
 }finally{Date.now=originalNow}

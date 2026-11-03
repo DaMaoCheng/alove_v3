@@ -3,6 +3,7 @@ import { hasCheckoutIssue } from "./checkout-support-guidance.js";
 import { isAiTransportFallback } from "./ai-reply-fallback-service.js";
 import { isStorefrontGuidanceCharacter, resolveOrderActionPromptState } from "./chat-global-reply-policy.js";
 import { normalizeCharacterLanguage } from "../shared/language-library.js";
+const priorFeedbackInstructions = new WeakMap();
 
 const HUMAN_HANDOFF_LABELS = Object.freeze({
   en: "Click here", zh: "点击这里", es: "Haz clic aquí", fr: "Cliquez ici", de: "Hier klicken",
@@ -16,7 +17,7 @@ const HUMAN_HANDOFF_LABELS = Object.freeze({
   lt: "Spustelėkite čia", lv: "Noklikšķiniet šeit", et: "Klõpsake siin",
 });
 
-export function resolveChatFeedbackActionCandidate({ character = {}, productContext = null, knowledgeContext = null, orderActionCandidate = null, userText = "", searchIntent = productContext?.searchIntent || {} } = {}) {
+export function resolveChatFeedbackActionCandidate({ character = {}, productContext = null, knowledgeContext = null, orderActionCandidate = null, userText = "", feedbackHistory = null, recentMessages = [], searchIntent = productContext?.searchIntent || {} } = {}) {
   if (searchIntent?.replyBoundary?.contactAllowed === false) return null;
   if (!isStorefrontGuidanceCharacter(character)) return null;
   const handoff = searchIntent?.humanHandoff;
@@ -66,21 +67,41 @@ export function resolveChatFeedbackActionCandidate({ character = {}, productCont
   const missingKnowledgeNeedsService = searchIntent?.commerceRoute === "store_policy"
     || productQuestionNeedsService
     || verifiedBusinessInquiry
+    || searchIntent?.unresolvedUserComplaint === true
     || legacyServiceTopic;
   // A failed selector has not established that policy is absent. Keep real
   // human requests, returns, tracking and business-review actions independent.
   const retrievalUnavailable = ["business_selection_unavailable", "business_directory_limit"].includes(knowledgeContext?.strategy);
-  const noKnowledgeReference = searchIntent?.commerceTopic !== "sizing" && !retrievalUnavailable && !orderDeliveryHandoff && knowledgeContext?.customerServiceIntent === true
+  const sizingComplaint = searchIntent?.commerceTopic === 'sizing' && searchIntent?.unresolvedUserComplaint === true
+    && knowledgeContext?.businessOwner?.characterId === character.id && Boolean(knowledgeContext?.businessOwner?.siteId)
+    && !productContext?.sizingProduct && !productContext?.products?.length && !productContext?.candidateContext
+    && !orderActionAvailable && !searchIntent.cardAllowed && !searchIntent.shouldLoadProductContext;
+  const noKnowledgeReference = (searchIntent?.commerceTopic !== "sizing" || sizingComplaint) && !retrievalUnavailable && !orderDeliveryHandoff && knowledgeContext?.customerServiceIntent === true
     && Array.isArray(knowledgeContext?.items)
     && knowledgeContext.items.length === 0 && missingKnowledgeNeedsService;
   // A catalogue miss is a search result, not a request to contact the team.
   // Independent support, tracking, returns and business handoffs still qualify.
   if (!jerseyCustomizationInquiry && !noKnowledgeReference && !unavailableTracking && !returnsInquiry) return null;
 
-  return {
+  const action = {
     kind: jerseyCustomizationInquiry ? "jersey_customization" : "feedback",
     label: resolveFeedbackActionLabel(character),
   };
+  const followup = searchIntent.supportFollowup;
+  if (action.kind === 'feedback' && followup?.relation === 'offered_issue_followup'
+    && followup.evidence === String(userText).trim() && searchIntent.humanHandoff?.explicitRequest !== true
+    && !orderActionCandidate && !searchIntent.checkoutIssue && !searchIntent.shouldLoadProductContext && !searchIntent.needsLiveProductData
+    && !['product_search', 'product_question'].includes(searchIntent.commerceRoute) && !productContext?.products?.length && !productContext?.candidateContext) {
+    const entry = [...(feedbackHistory?.entries || [])].reverse().find(row => row.contentType === 'feedback_action' && row.senderType === 'character' && row.characterId === character.id);
+    const preceding = entry && [...recentMessages].reverse().find(row => Number(row.displayOrder) < Number(entry.displayOrder));
+    const origin = entry?.feedbackInstructionOrigin
+      ? recentMessages.find(row => row.id === entry.feedbackInstructionOrigin && Number(row.displayOrder) < Number(entry.displayOrder))
+      : preceding;
+    if (origin?.id && origin.senderType === 'character' && origin.characterId === character.id && origin.contentType === 'text'
+      && (entry.feedbackInstructionOrigin || Number(entry.displayOrder) === Number(origin.displayOrder) + 5))
+      priorFeedbackInstructions.set(action, { id: origin.id, text: String(origin.text || '') });
+  }
+  return action;
 }
 
 export function resolveChatFeedbackAction({ character = {}, productContext = null, knowledgeContext = null, orderActionCandidate = null, replyResult = {}, userText = "", feedbackActionCandidate = null, searchIntent = productContext?.searchIntent || replyResult || {} } = {}) {
@@ -122,6 +143,11 @@ export function appendFeedbackFollowupCopy(text, { character = {}, languageCode 
   const reply = String(text || "").trim();
   if (!feedbackAction || searchIntent?.replyBoundary?.contactAllowed === false) return reply;
   const suffix = resolveHumanHandoffFollowupCopy(character, languageCode);
+  const prior = priorFeedbackInstructions.get(feedbackAction);
+  if (suffix && reply && prior?.text.trim().endsWith(suffix)) {
+    feedbackAction.feedbackInstructionOrigin = prior.id;
+    return reply;
+  }
   // A chat email or a vague contact invitation does not submit the real form.
   // Deduplicate only the actual localized submission copy; preserve reviewed text.
   if (!suffix || reply.endsWith(suffix)) return reply;

@@ -81,6 +81,11 @@ export function buildQuestions(_capabilities = {}, conversationContext = {}) {
       instructions: "What is the user's primary requested action? First distinguish an action request from a comment or compliment. Comments such as 'Bonito bikini', 'Nice shirt', or a bare team name are daily_chat even when they mention a product. Generic or plural requests to see existing character photos go to character_photo and use the existing library first. A standalone request for one picture can count as new_image in character context, but viewing an existing catalogue product or its photo is product_request; asking whether a previous image is ready is daily_chat, not a new image request. Do not treat a third person or product as the AI character. Requests for the character to wear or try on an item from an earlier image go to try_on and override image inspection. Use unsupported_request when the user clearly asks for an unavailable specialized function. Use unclear only when the meaning is genuinely ambiguous.",
       criteria: ROUTE_CRITERIA,
     },
+    input_language: {
+      type: "choice",
+      instructions: "Identify the language the CURRENT user message is written in, independently of requests to change output language. Use none for ambiguous, short, mixed, unsupported, names-only or insufficient evidence. Never infer from place names, product names or assistant history.",
+      criteria: { none: "Cannot reliably identify one supported input language.", ...Object.fromEntries(SUPPORTED_CHARACTER_LANGUAGES.map(language => [language.code, `Current message is written in ${language.label}.`])) },
+    },
     reply_language: {
       type: "choice",
       instructions: "Independently identify whether the CURRENT message explicitly directs the assistant to communicate in one supported language. Interpret meaning in every language, including native names and inflections. This is output-language preference only, never an action permission. A language merely used by the user, a product/country mention, a negated instruction, quoted dialogue, discussion of a language, or translation of a quoted fragment is not a switch. An explicit request to explain the answer in a language does qualify. If multiple output languages are requested, the target is ambiguous or unsupported, choose none. Do not inherit requests from history. Return the target supported code only when explicit; otherwise none.",
@@ -184,6 +189,7 @@ export function normalizeJevResponse(payload = {}, capabilities = {}, conversati
     webSearchIntent: webSearch === 1 || primaryIntent === "web_search",
     webSearchScore: webSearch,
     languageDecision: normalizeReplyLanguageDecision(answers),
+    inputLanguage: normalizeInputLanguage(answers.input_language),
     unsupported: supported.unsupported,
     unsupportedIntent: supported.intent,
     imageConditions: { wants_no_clothing: wantsNoClothing, wants_clothing: wantsClothing },
@@ -268,6 +274,12 @@ export function normalizeConversationContext(value = {}) {
 function normalizeRoute(value) {
   const route = String(value || "").trim().toLowerCase();
   return Object.prototype.hasOwnProperty.call(ROUTE_CRITERIA, route) ? route : "unclear";
+}
+
+function normalizeInputLanguage(answer) {
+  if (!answer || typeof answer.confidence !== 'number' || !Number.isFinite(answer.confidence)
+      || answer.confidence < 0 || answer.confidence > 1) return null;
+  return SUPPORTED_CHARACTER_LANGUAGES.some(language => language.code === answer.choice) ? answer.choice : null;
 }
 
 function normalizeReplyLanguageDecision(answers) {

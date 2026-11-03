@@ -11,6 +11,52 @@ const select = async (input) => input.stage === "directory" ? { ids: ["invented-
 const result = await selectBusinessKnowledgeReferences({ query: "¿Puedo pagar en efectivo?", sections: [reference], siteId: "store-a", select });
 assert.equal(result.items[0].content, reference.content);
 assert.equal(result.items[0].id, reference.id, "new IDs/topics need no code registration");
+const boundaryRef = { ...reference, id: 'boundary', content: 'Final delivery destination must be checked at checkout.' };
+const diagnosed = await selectBusinessKnowledgeReferences({ query: 'Delivery to my destination?', sections: [reference, boundaryRef], recheckLowConfidence: true,
+  select: async input => input.stage === 'directory' ? { ids: [reference.id, boundaryRef.id] } : { matches: [
+    { id: reference.id, quote: reference.content, confidence: .72, answersQuestion: true },
+    { id: boundaryRef.id, quote: boundaryRef.content, confidence: .62, answersQuestion: true },
+  ] } });
+assert.deepEqual(diagnosed.selectionDiagnostics.candidates, [{ id: reference.id, initial: 'accepted', selected: true, rechecked: false }, { id: boundaryRef.id, initial: 'low_confidence', selected: false, rechecked: true }]);
+assert(!JSON.stringify(diagnosed.selectionDiagnostics).includes(reference.content), 'diagnostic contains no source or user text');
+let partialRounds=0;
+const recoveredPartial = await selectBusinessKnowledgeReferences({ query:'policy?',sections:[reference,boundaryRef],recheckLowConfidence:true,select:async input=>{
+  if(input.stage==='directory') return {ids:[reference.id,boundaryRef.id]};
+  if(++partialRounds===1) return {matches:[{id:reference.id,quote:reference.content,confidence:.6,answersQuestion:true}, {id:boundaryRef.id,quote:boundaryRef.content,confidence:.95,answersQuestion:true}]};
+  assert.deepEqual(input.sections.map(row=>row.id),[reference.id]);
+  return {matches:[{id:reference.id,quote:reference.content,confidence:.9,answersQuestion:true}]};
+}});
+assert.deepEqual(recoveredPartial.items.map(item=>item.id),[boundaryRef.id,reference.id], 'retain accepted boundary and add only source-grounded recovered evidence');
+assert.equal(partialRounds,2,'one bounded recheck even when a different source already passed');
+for (const failure of ['timeout','invalid']) {
+ let calls=0;
+ const preserved=await selectBusinessKnowledgeReferences({query:'policy?',sections:[reference,boundaryRef],recheckLowConfidence:true,select:async input=>{
+  if(input.stage==='directory')return {ids:[reference.id,boundaryRef.id]};
+  if(++calls===1)return {matches:[{id:reference.id,quote:reference.content,confidence:.6,answersQuestion:true},{id:boundaryRef.id,quote:boundaryRef.content,confidence:.95,answersQuestion:true}]};
+  if(failure==='timeout')throw Object.assign(new Error('timeout'),{code:'AI_REPLY_TIMEOUT'});
+  return {matches:'invalid'};
+ }});
+ assert.deepEqual(preserved.items.map(item=>item.id),[boundaryRef.id]);
+ assert.equal(preserved.selectionDiagnostics.recheck,'unavailable','failed optional recheck must preserve already verified evidence');
+}
+for (const [enabled,limit] of [[false,4],[true,1]]) {
+ let calls=0;
+ await selectBusinessKnowledgeReferences({query:'policy?',sections:[reference,boundaryRef],recheckLowConfidence:enabled,limit,select:async input=>{
+  if(input.stage==='directory')return {ids:[reference.id,boundaryRef.id]}; calls++;
+  return {matches:[{id:boundaryRef.id,quote:boundaryRef.content,confidence:.95,answersQuestion:true},{id:reference.id,quote:reference.content,confidence:.6,answersQuestion:true}]};
+ }});
+ assert.equal(calls,1,'non-policy or full result must not add a recheck');
+}
+const duplicateDiagnosed = await selectBusinessKnowledgeReferences({ query:'payment?',sections:[reference,boundaryRef],limit:1,select:async input => input.stage==='directory'
+  ? {ids:[reference.id,boundaryRef.id]} : {matches:[
+    {id:reference.id,quote:reference.content,confidence:.2,answersQuestion:true},
+    {id:reference.id,quote:reference.content,confidence:.9,answersQuestion:true},
+    {id:boundaryRef.id,quote:boundaryRef.content,confidence:.9,answersQuestion:true}]}});
+assert.deepEqual(duplicateDiagnosed.selectionDiagnostics.candidates.map(x=>[x.initial,x.selected]),[['accepted',true],['accepted',false]], 'diagnostics distinguish a valid candidate from one actually consumed under the limit');
+let rounds=0;
+const recheckedDiagnosed = await selectBusinessKnowledgeReferences({query:'payment?',sections:[reference],recheckLowConfidence:true,select:async input=>input.stage==='directory'
+  ? {ids:[reference.id]} : {matches:[{id:reference.id,quote:reference.content,confidence:++rounds===1?.65:.9,answersQuestion:true}]}});
+assert.deepEqual(recheckedDiagnosed.selectionDiagnostics.candidates,[{id:reference.id,initial:'low_confidence',selected:true,rechecked:true}], 'recheck success is not mistaken for initial acceptance');
 const qualified = { ...reference, content: "Cash is supported only for local pickup in region A. International orders require card payment." };
 const qualification = await selectBusinessKnowledgeReferences({ query: "cash?", sections: [qualified], select: async (input) => input.stage === "directory" ? { ids: [reference.id] }
   : { matches: [{ id: reference.id, quote: "Cash is supported", confidence: .95, answersQuestion: true }] } });
@@ -226,3 +272,71 @@ for (const strategy of ['general_no_reference', 'general_directory_limit', 'gene
   assert.equal(JSON.parse(buildCommerceDecisionLogEvent({ knowledgeContext: { strategy } }).errorMessage).knowledgeStrategy, strategy);
 }
 console.log("business knowledge selection self-check passed (scope, exact evidence, finite failures and independent directory/evidence provider budgets; no network/DB)");
+
+// Reconsideration retains the scoped policy acceptance gate.
+let retryCalls = 0;
+const reconsidered = await selectBusinessKnowledgeReferences({ recheckLowConfidence: true, query: 'Delivery to another country?', sections: [excerptPolicy], select: async input => {
+  if (input.stage === 'directory') return { ids: [excerptPolicy.id] };
+  retryCalls++;
+  return { matches: [{ id: excerptPolicy.id, quote: lastQuote, answersQuestion: true, confidence: retryCalls === 1 ? .65 : .9 }] };
+} });
+assert.equal(retryCalls, 2);
+assert.equal(reconsidered.items.length, 1);
+assert.equal(reconsidered.items[0].content, excerptPolicy.content);
+assert.equal(reconsidered.selectionDiagnostics.recheck, 'verified');
+for (const second of [ {id: 'other', quote: lastQuote, answersQuestion: true, confidence: .99}, {id: excerptPolicy.id, quote: 'invented content about destination', answersQuestion: true, confidence: .99}, {id: excerptPolicy.id, quote: lastQuote, answersQuestion: true, confidence: .69}, {id: excerptPolicy.id, quote: lastQuote, answersQuestion: false, confidence: .99} ]) {
+  let n = 0;
+  const result = await selectBusinessKnowledgeReferences({ recheckLowConfidence: true, query: 'Shipping?', sections: [excerptPolicy], select: async input => input.stage === 'directory' ? {ids:[excerptPolicy.id]} : {matches: [++n === 1 ? {id:excerptPolicy.id,quote:lastQuote,answersQuestion:true,confidence:.6} : second]} });
+  assert.equal(n, 2); assert.equal(result.items.length, 0);
+}
+let countNoRetry = 0;
+await selectBusinessKnowledgeReferences({ recheckLowConfidence: true, query: 'Shipping?', sections: [excerptPolicy], select: async input => input.stage === 'directory' ? {ids:[excerptPolicy.id]} : (countNoRetry++, {matches:[{id:excerptPolicy.id,quote:'fabricated quote here',answersQuestion:true,confidence:.6}]}) });
+assert.equal(countNoRetry, 1);
+console.log('Low confidence bounded recheck, source and scope protections passed');
+let retryFailureCalls = 0;
+const retryFailed = await selectBusinessKnowledgeReferences({ recheckLowConfidence: true, query: 'Shipping?', sections: [excerptPolicy], select: async input => {
+  if (input.stage === 'directory') return {ids:[excerptPolicy.id]};
+  if (++retryFailureCalls === 1) return {matches:[{id:excerptPolicy.id,quote:lastQuote,answersQuestion:true,confidence:.6}]};
+  throw Object.assign(new Error('unavailable'), {code:'AI_REPLY_TIMEOUT'});
+} });
+assert.equal(retryFailureCalls,2); assert.equal(retryFailed.items.length,0); assert.equal(retryFailed.selectionFailure.kind,'timeout');
+let unrelatedCalls = 0;
+await selectBusinessKnowledgeReferences({recheckLowConfidence:true,query:'Shipping?',sections:[excerptPolicy],select:async input=>input.stage==='directory'?{ids:[excerptPolicy.id]}:(unrelatedCalls++,{matches:[{id:excerptPolicy.id,quote:lastQuote,answersQuestion:false,confidence:.6}]})});
+assert.equal(unrelatedCalls,1);
+
+let malformedCalls = 0;
+const malformedRetry = await selectBusinessKnowledgeReferences({recheckLowConfidence:true,query:'Shipping?',sections:[excerptPolicy],select:async input=>input.stage==='directory'?{ids:[excerptPolicy.id]}:++malformedCalls===1?{matches:[{id:excerptPolicy.id,quote:lastQuote,answersQuestion:true,confidence:.6}]}:{matches:'bad'}});
+assert.equal(malformedCalls,2); assert.equal(malformedRetry.reason,'business_selection_unavailable'); assert.equal(malformedRetry.selectionFailure.kind,'protocol_shape');
+let defaultCalls = 0;
+const noOptIn = await selectBusinessKnowledgeReferences({query:'A complaint, no policy question',sections:[excerptPolicy],select:async input=>input.stage==='directory'?{ids:[excerptPolicy.id]}:(defaultCalls++,{matches:[{id:excerptPolicy.id,quote:lastQuote,answersQuestion:true,confidence:.6}]})});
+assert.equal(defaultCalls,1); assert.equal(noOptIn.items.length,0); assert.equal(noOptIn.selectionDiagnostics.recheck,undefined);
+
+// Pure policy opt-in uses a lower threshold without weakening other scopes or source checks.
+const lowEvidence = {id: excerptPolicy.id, quote: lastQuote, answersQuestion: true, confidence: .7};
+const lowSelect = async input => input.stage === 'directory' ? {ids:[excerptPolicy.id]} : {matches:[lowEvidence]};
+assert.equal((await selectBusinessKnowledgeReferences({recheckLowConfidence:true,query:'policy?',sections:[excerptPolicy],select:lowSelect})).items.length,1);
+assert.equal((await selectBusinessKnowledgeReferences({query:'mixed order?',sections:[excerptPolicy],select:lowSelect})).items.length,0);
+for (const bad of [{...lowEvidence,quote:'invented source quote'}, {...lowEvidence,id:'other'}, {...lowEvidence,answersQuestion:false}]) {
+  let result=await selectBusinessKnowledgeReferences({recheckLowConfidence:true,query:'policy?',sections:[excerptPolicy],select:async input=>input.stage==='directory'?{ids:[excerptPolicy.id]}:{matches:[bad]}});
+  assert.equal(result.items.length,0);
+}
+console.log('Scoped 0.7 policy threshold and unchanged other scopes passed');
+
+// The adjusted scoring instruction belongs only to opted-in business policy evidence.
+async function capturedSelectionPrompt(input) {
+  let captured = '';
+  await requestBusinessKnowledgeSelection(input, {config:[protocolConfig[0]], fetchImpl:async(_url, options) => {
+    captured = JSON.parse(options.body).messages.filter(message => message.role === 'system').map(message => message.content).join('\n');
+    return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(input.stage==='directory'?{ids:[]}:{matches:[]})}}]}));
+  }});
+  return captured;
+}
+const scoreRule = /Score confidence only in whether the exact cited text/;
+assert.match(await capturedSelectionPrompt({...evidenceInput,partialEvidenceScoring:true}),scoreRule);
+assert.doesNotMatch(await capturedSelectionPrompt(evidenceInput),scoreRule);
+assert.doesNotMatch(await capturedSelectionPrompt({...evidenceInput,purpose:'general',partialEvidenceScoring:true}),scoreRule);
+assert.doesNotMatch(await capturedSelectionPrompt({...evidenceInput,stage:'directory',partialEvidenceScoring:true}),scoreRule);
+const passedFlags=[];
+await selectBusinessKnowledgeReferences({recheckLowConfidence:true,query:'policy?',sections:[reference],select:async input=>{passedFlags.push([input.stage,input.partialEvidenceScoring]);return input.stage==='directory'?{ids:[reference.id]}:{matches:[]}}});
+assert.deepEqual(passedFlags,[['directory',undefined],['evidence',true]]);
+console.log('Partial scoring prompt confined to opted-in business policy evidence');

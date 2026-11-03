@@ -37,20 +37,22 @@ export async function classifyJevImageDetails(text, { character = null, conversa
   primaryDecision = null, evaluate = evaluateJevQuestions, logContext = {} } = {}) {
   const followup = resolveCharacterImageFollowupContext(conversationContext);
   const pending = !followup ? pendingAppearanceUserContext(conversationContext) : null;
+  const previousRequest = pending || (followup ? { userText: followup.requestText } : null);
   const recent = (conversationContext?.recentConversation || []).slice(-6);
   const latestImageKind = conversationContext?.latestImageKind === 'character'
     && !recent.some(item => ['product', 'attachment', 'image_generation', 'mascot_library_image'].includes(item.kind))
     ? '' : conversationContext?.latestImageKind || '';
-  const actors = evidenceChoices(text, followup), actions = actionChoices(text);
+  const actors = evidenceChoices(text, followup || (pending ? { requestText: pending.userText } : null)), actions = actionChoices(text);
   const questions = {
     image_type: choice('The primary intent is already a character image request. Select how to fulfill it: library_photo for an ordinary or additional existing character photo; explicit_generation for a new character image; try_on for a character wearing a requested outfit; group_photo for a character with another person; disallowed for explicitly unsupported posters, ads or product artwork; unclear only if the type itself is genuinely ambiguous. Do not reclassify whether the user requested a picture.', ['library_photo', 'explicit_generation', 'try_on', 'group_photo', 'disallowed', 'unclear']),
     image_scope: choice('Does the ENTIRE message contain only the image request or also a separate question or task? Choose mixed when there is an additional request; unknown if genuinely unclear.', ['image_only', 'mixed', 'unknown']),
     clothing_target: choice('For the requested outfit, select its actual source: catalogue_product means a specific selected or referenced store item; user_upload requires a real supplied image; generic means a described or imagined outfit; none means no outfit; unclear means the source is genuinely unclear. A team name or color alone is not proof of a selected store product.', ['catalogue_product', 'user_upload', 'generic', 'none', 'unclear']),
-    actor_evidence: { type: 'choice', instructions: 'Select the exact original span referring to the character for this already-established image request. Use a prior user span only for an unambiguous additional-photo followup. Choose none if no span exists.', criteria: actors },
+    actor_evidence: { type: 'choice', instructions: 'Select the exact original span referring to the character for this already-established image request. A clear second-person imperative addressing the character may be the actor span. A prior USER span is permitted for an unambiguous additional-photo followup or when the current request unambiguously continues that same earlier character outfit request; select appearance_relation=continue and previous_outfit=clothed accordingly. Never use assistant text, a product, another person, or unrelated history. Choose none if no supported span exists.', criteria: actors },
     action_evidence: { type: 'choice', instructions: 'Select the exact current image request clause, excluding any separate question; short requests for another photo may be elliptical. Choose none if no span exists.', criteria: actions },
   };
-  if (pending) Object.assign(questions, {
-    previous_outfit: choice('What does the last user context contain: a still-pending clothed appearance, no such appearance, or genuinely unclear?', ['none', 'clothed', 'uncertain']),
+  if (previousRequest) Object.assign(questions, {
+    previous_subject: choice('In the previous USER request alone, who is asked to wear the outfit or be depicted? character only if the user directly addresses the AI character as wearer; a named third person, product, user or ambiguous subject is not character.', ['character', 'other', 'unclear']),
+    previous_outfit: choice(followup ? 'In the previous USER request associated with the character image, did the user describe a clothed appearance? Select clothed regardless of whether that earlier image completed, failed or is still pending. Do not use assistant or image content as evidence.' : 'What does the last user context contain: a still-pending clothed appearance, no such appearance, or genuinely unclear?', ['none', 'clothed', 'uncertain']),
     appearance_relation: choice('For the already-established image request, select whether it continues that pending appearance, requests a different appearance, has neither relation, or is genuinely unclear.', ['none', 'continue', 'different', 'uncertain']),
   });
   const result = await evaluate({ sourceRef: 'jev-image-type', logContext, state: {
@@ -76,7 +78,7 @@ export async function classifyJevImageDetails(text, { character = null, conversa
     wants_no_clothing: primaryDecision?.imageConditions?.wants_no_clothing === true,
     clothingTargetUncertain: intentType === 'try_on' && (['none', 'unclear'].includes(target)
       || (target === 'user_upload' && conversationContext?.hasRecentUserImage !== true)),
-    ...(pending ? { appearanceContext: { previousOutfit: a.previous_outfit.choice, relation: a.appearance_relation.choice,
-      previousEvidence: normalize(pending.userText).slice(0, 240), currentEvidence: normalize(text).slice(0, 240), target } } : {}),
+    ...(previousRequest ? { appearanceContext: { previousSubject: a.previous_subject?.choice, previousOutfit: a.previous_outfit.choice, relation: a.appearance_relation.choice,
+      previousEvidence: normalize(previousRequest.userText).slice(0, 240), currentEvidence: normalize(text).slice(0, 240), target } } : {}),
   } };
 }

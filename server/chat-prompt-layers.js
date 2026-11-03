@@ -1,3 +1,4 @@
+import { upsertPersonaLanguageSetting } from "./chat-language-preference-service.js";
 import { toAlternativeReviewContext, PRODUCT_ALTERNATIVE_CONTRACT } from "./product-alternative-service.js";
 import { buildProductCardDeliveryContext } from "./chat-product-reply-service.js";
 import { toNameCandidateUncertaintyContext, toCandidateReviewContext, productCandidateConditionsContract } from "./product-candidate-context-service.js";
@@ -215,7 +216,7 @@ export function buildPersonaLayer(character, trustedSite = null) {
     character.roleTitle ? `Role: ${character.roleTitle}` : "",
     character.shortBio ? `Bio: ${character.shortBio}` : "",
     character.profile.category ? `Category: ${character.profile.category}` : "",
-    character.profile.language ? `Language guidance: Use ${character.profile.language} as the configured output language. Do not change output language just because the user's message is written in another language. Change language only when the user explicitly asks you to reply, speak, or write in a specific language.` : "",
+    character.profile.language ? upsertPersonaLanguageSetting('', character.profile.language) : "",
     character.openingLine ? `Opening line: ${character.openingLine}` : "",
     character.personaPrompt ? `Persona: ${character.personaPrompt}` : "",
     character.tags.length ? `Tags: ${character.tags.join(", ")}` : "",
@@ -239,7 +240,7 @@ export function buildVoiceLayer(character) {
     character.voiceStyle ? `Voice style: ${character.voiceStyle}` : "",
     character.speakingStyle ? `Speaking details: ${character.speakingStyle}` : "",
     character.profile.style ? `Personality: ${character.profile.style}` : "",
-    character.profile.language ? `Conversation language: ${character.profile.language}. Do not change output language just because the user's message is written in another language. Change language only when the user explicitly asks you to reply, speak, or write in a specific language.` : "",
+    character.profile.language ? `Conversation language: ${character.profile.language}. Keep speech in the same active language selected for this turn's text.` : "",
   ].filter(Boolean);
 
   return {

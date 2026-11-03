@@ -43,15 +43,17 @@ const { buildReplyReviewLogEvent } = await import('../server/ai-reply-log-servic
 assert(languageQualityPassed({confidence:.54,languageQualitySupported:true}));
 assert(!languageQualityPassed({confidence:.539,languageQualitySupported:true}));
 assert(evaluateReplyReview({allowed:true,confidence:.54,languageQualitySupported:true},['language']).accepted);
-assert(!evaluateReplyReview({allowed:true,boundarySupported:true,confidence:.54,languageQualitySupported:true},['language']).accepted,'business confidence remains .8');
-assert(!evaluateReplyReview({allowed:true,confidence:.54,evidenceSupported:true},['evidence']).accepted);
+assert(evaluateReplyReview({allowed:true,boundarySupported:true,confidence:.54,languageQualitySupported:true},['language']).accepted,'business confidence uses the shared .54 threshold');
+assert(evaluateReplyReview({allowed:true,confidence:.54,evidenceSupported:true},['evidence']).accepted);
+assert(!evaluateReplyReview({allowed:true,confidence:.539,evidenceSupported:true},['evidence']).accepted);
+assert(!evaluateReplyReview({allowed:true,confidence:.99,evidenceSupported:false},['evidence']).accepted);
 for (const score of [NaN, Infinity, -1, 1.01, '0.54']) assert(!languageQualityPassed({confidence:score,languageQualitySupported:true}));
 const malformed = normalizeLanguageAssessment({languageQualitySupported:false,languageQualityConfidence:.7,languageIssues:[{type:'grammar',severity:'major',field:'display',span:'NOT IN ORIGINAL'}]}, {text:original.text});
 assert.equal(malformed.protocolFailure,'span_mismatch');
 const event = buildReplyReviewLogEvent({reviewStatus:'valid',languageDiagnostics:{languageReviewStatus:'valid',languageConfidence:.7,repairKind:'regeneration',repairState:'accepted',initialReviewStatus:'invalid_fields',initialLanguageProtocolFailure:'span_mismatch',languageSeverity:'none'}});
 const details=JSON.parse(event.errorMessage);
 assert.equal(details.regeneration.initialProtocol,'span_mismatch');assert.equal(details.regeneration.state,'accepted');assert.equal(details.languageReview.confidence,.7);assert(event.errorMessage.length<=500);
-for (const primary of [{allowed:false,boundarySupported:false,confidence:.99,factualSupported:true},{allowed:true,boundarySupported:true,confidence:.54,factualSupported:true}]) {
+for (const primary of [{allowed:false,boundarySupported:false,confidence:.99,factualSupported:true},{allowed:true,boundarySupported:true,confidence:.539,factualSupported:true}]) {
  let generations=0;
  const output=await enforceReplyBoundary({...opts,searchIntent:{commerceRoute:'chat',replyBoundary:{salesAllowed:false,contactAllowed:false}},factualContext:{required:false,status:'not_required',asOfUtc:'2026-10-15T00:00:00Z'},assess:async()=>primary,assessLanguageQuality:async()=>pass,regenerateReply:async()=>{generations++;return fresh;}});
  assert.notEqual(output.text,original.text);assert.equal(generations,1,'valid low-confidence pure chat can regenerate once without approving either candidate');

@@ -137,8 +137,8 @@ const migrated=upsertPersonaLanguageSetting(`Existing persona.\n\n${originalGuid
 const repeated=upsertPersonaLanguageSetting(migrated,'Spanish');
 check(migrated.startsWith('Existing persona.')&&repeated.startsWith('Existing persona.'),'language guidance migration preserves original persona');
 check((migrated.match(/Language guidance:/g)||[]).length===1&&(repeated.match(/Language guidance:/g)||[]).length===1,'old and new canonical guidance are each deduplicated');
-check(repeated.includes('Use Spanish as the configured output language')&&!repeated.includes('Use English as the configured output language'),'repeat application replaces the previous target');
-check(repeated.includes('Do not change output language just because')&&repeated.includes('after complete review; it never changes this configured language'),'ordinary foreign input remains configured; only reviewed current-turn clarification is exempt');
+check(repeated.includes('Use Spanish as the output language for this turn')&&!repeated.includes('Use English as the output language for this turn'),'repeat application replaces the previous target');
+check(repeated.includes('Follow the validated current user language')&&repeated.includes('Explicit user language requests take priority'),'user language follows validated selection with explicit requests first');
 const {buildReplyPurposeRecoveryPrompt}=await import('../server/chat-reply-purpose-service.js');
 const recoveryPrompt=buildReplyPurposeRecoveryPrompt({systemPrompt:'Original global rules',layers:[]},{kind:'purpose',purpose:'conversation',failedContracts:['language']});
 check(recoveryPrompt.systemPrompt.includes('same narrowly bounded current-turn language-preference clarification exception')&&recoveryPrompt.systemPrompt.includes('complete review of the fresh candidate'),'ordinary recovery respects the same exception without waiving fresh review');

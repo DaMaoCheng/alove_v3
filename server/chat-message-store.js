@@ -228,6 +228,12 @@ export async function getNextMessageOrder(db, sessionId) {
   return Number(rows[0]?.next_order || 10);
 }
 
+function publicFeedbackAction(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const { feedbackInstructionOrigin, ...publicValue } = value;
+  return publicValue;
+}
+
 export async function insertMessage(db, { sessionId, guestSessionId = "", characterId, senderType, senderLabel, contentType, text, product = null, productRequestState = null, productCandidateState = null, replyRecoveryState = null, voice = null, displayOrder, deliveryStatus = "sent", sourceType, sourceRef }) {
   const messageId = createId("msg");
   const storedProduct = contentType === "product" ? toClientProduct(product)
@@ -262,8 +268,8 @@ export async function insertMessage(db, { sessionId, guestSessionId = "", charac
     senderLabel,
     contentType,
     text,
-    product: contentType === "text" ? stripProductCandidatePayload(stripReplyRecoveryPayload(stripProductRequestPayload(storedProduct))) : storedProduct,
-    feedbackAction: contentType === "feedback_action" ? storedProduct : null,
+    product: contentType === "text" ? stripProductCandidatePayload(stripReplyRecoveryPayload(stripProductRequestPayload(storedProduct))) : contentType === "feedback_action" ? publicFeedbackAction(storedProduct) : storedProduct,
+    feedbackAction: contentType === "feedback_action" ? publicFeedbackAction(storedProduct) : null,
     orderAction: contentType === "order_action" ? storedProduct : null,
     attachment: contentType === "attachment" ? storedProduct : null,
     displayOrder,
@@ -280,7 +286,7 @@ export function mapMessageRow(row) {
     ? normalizeChatAttachmentForClient(parsedProduct)
     : row.content_type === "product"
       ? toClientProduct(parsedProduct)
-      : row.content_type === "text" ? stripProductCandidatePayload(stripReplyRecoveryPayload(stripProductRequestPayload(parsedProduct))) : parsedProduct;
+      : row.content_type === "text" ? stripProductCandidatePayload(stripReplyRecoveryPayload(stripProductRequestPayload(parsedProduct))) : row.content_type === "feedback_action" ? publicFeedbackAction(parsedProduct) : parsedProduct;
   return {
     id: row.id,
     sessionId: row.session_id,
@@ -290,7 +296,7 @@ export function mapMessageRow(row) {
     contentType: row.content_type,
     text: row.text_content || "",
     product,
-    feedbackAction: row.content_type === "feedback_action" ? parsedProduct : null,
+    feedbackAction: row.content_type === "feedback_action" ? product : null,
     orderAction: row.content_type === "order_action" ? parsedProduct : null,
     attachment: row.content_type === "attachment" ? product : null,
     image: row.content_type === "image_generation"

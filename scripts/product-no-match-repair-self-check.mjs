@@ -75,7 +75,7 @@ for (const [name, change] of [
 }
 for (const extra of [{ groundedRepairAttempted: true }, { languageRepairAttempted: true },
   { reviewStatus: 'timeout' }, { reviewResult: { ...verdict, evidenceSupported: undefined } },
-  { reviewResult: { ...verdict, confidence: .79 } }]) assert(!eligibility({ ...base, ...extra }));
+  { reviewResult: { ...verdict, confidence: .539 } }]) assert(!eligibility({ ...base, ...extra }));
 // The same finite USER context reaches correction and BOTH complete reviews.
 const reviewPacket = JSON.parse(buildReplyReviewMessages({ ...result.reviews[1], evidenceRequired: true }).findLast(x => x.role === 'user').content);
 assert.deepEqual(reviewPacket.evidence.noMatchContext, contextFor(base));

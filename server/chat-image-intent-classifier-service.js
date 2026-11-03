@@ -195,7 +195,18 @@ function normalizeClassifierResult(parsed = {}, { text = "", verifyCharacterTarg
     && actorEvidence.length >= 2
     && [followupContext.requestText, ...(followupContext.priorRequestTexts || [])]
       .some(request => normalizeText(request).toLowerCase().includes(actorEvidence.toLowerCase())));
-  const groundedTarget = (groundedActor || groundedFollowupActor) && groundedAction && visualAction && parsed.requestKind === "character_image" && parsed.imageSubject === "character" && groundedEvidence;
+  // A user can restate an outfit without repeating the character subject. Only
+  // the immediately preceding user text and a separately selected continuation
+  // may supply that subject; no prior assistant or image output is evidence.
+  const appearance = parsed.appearanceContext;
+  const priorUserRequest = pendingAppearance?.userText || followupContext?.requestText || '';
+  const priorActor = Boolean(priorUserRequest && intentType === 'try_on'
+    && appearance?.previousSubject === 'character' && appearance?.previousOutfit === 'clothed' && appearance?.relation === 'continue'
+    && ['generic', 'catalogue_product', 'user_upload'].includes(appearance?.target)
+    && actorEvidence.length >= 2 && normalizeText(priorUserRequest).toLowerCase().includes(actorEvidence.toLowerCase())
+    && normalizeText(appearance.previousEvidence).toLowerCase() === normalizeText(priorUserRequest).toLowerCase()
+    && normalizeText(appearance.currentEvidence).toLowerCase() === normalizeText(text).toLowerCase());
+  const groundedTarget = (groundedActor || groundedFollowupActor || priorActor) && groundedAction && visualAction && parsed.requestKind === "character_image" && parsed.imageSubject === "character" && groundedEvidence;
   const unsupported = intentType === "disallowed" && (!verifyCharacterTarget || (visualAction && parsed.requestKind === "unsupported_image" && groundedEvidence));
   const hasIntent = validConfidence && parsed.hasIntent === true
     && (unsupported || (roleIntent && ((!verifyCharacterTarget && !followupContext) || groundedTarget)));

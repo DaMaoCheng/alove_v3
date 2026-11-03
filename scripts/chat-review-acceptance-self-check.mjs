@@ -3,6 +3,12 @@ process.env.AIOVE_PROVIDER_LOG_WRITE_ENABLED='false';
 const {enforceReplyBoundary,assessReplyBoundary}=await import('../server/chat-reply-boundary-service.js');
 const {requestAiJsonWithProviderFallback}=await import('../server/ai-json-provider-service.js');
 const {buildReplyReviewLogEvent}=await import('../server/ai-reply-log-service.js');
+const {evaluateReplyReview}=await import('../server/chat-reply-review-decision.js');
+const thresholdPass={reviewStatus:'valid',allowed:true,boundarySupported:true,businessFactsSupported:true};
+for(const [confidence,expected] of [[.53,false],[.54,true],[.72,true],[1,true],[1.01,false],[NaN,false]])
+ assert.equal(evaluateReplyReview({...thresholdPass,confidence},['business_facts'],{requireBoundary:true}).accepted,expected);
+for(const change of [{allowed:false},{boundarySupported:false},{boundarySupported:undefined},{businessFactsSupported:false},{businessFactsSupported:undefined}])
+ assert.equal(evaluateReplyReview({...thresholdPass,...change,confidence:.72},['business_facts'],{requireBoundary:true}).accepted,false,'lower confidence gate never overrides explicit or missing contract');
 globalThis.fetch=async()=>{throw Error('External network forbidden')};
 let count=0;const failures=[];
 async function check(name,fn){try{await fn();count++;}catch(e){failures.push({name,error:e.message})}}

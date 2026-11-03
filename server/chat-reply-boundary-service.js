@@ -7,10 +7,12 @@ import { independentJsonProviderChain, applyReviewRequestProfile } from './ai-in
 import { buildBusinessClaimContext, validateBusinessClaimAudit, isGeneralCommerceExplanation, GENERAL_COMMERCE_EXPLANATION_CONTRACT } from './business-claim-audit-service.js';
 import { buildFeedbackSubmissionFallback } from './chat-feedback-submission-service.js';
 import { recoverReviewedLanguageReply } from "./chat-reply-language-recovery-service.js";
+import { buildRepairFeedback } from "./chat-reply-repair-feedback-service.js";
+import { hasUserSuppliedInternalNotation, inspectReplyTechnicalGuard } from "./chat-reply-technical-guard.js";
 import { isClosedProductClarification, isConversationReplyRecoveryEligible, productClarificationContext, isProductClarificationRecoveryEligible } from "./chat-reply-purpose-service.js";
 import { buildTrustedCharacterIdentity } from "./chat-prompt-utils.js";
 import { isImageReplyRecoveryEligible, refreshImageReplyRecoveryContext } from "./chat-image-reply-recovery-service.js";
-import { hasChildSizingCorrectionContext, hasMatchedCatalogueCaptionContext, isGroundedCommerceRepairEligible, repairGroundedCommerceReply } from "./chat-grounded-reply-repair-service.js";
+import { complaintPromptUserReports, hasChildSizingCorrectionContext, hasMatchedCatalogueCaptionContext, hasUnansweredOwnedComplaint, isGroundedCommerceRepairEligible, repairGroundedCommerceReply } from "./chat-grounded-reply-repair-service.js";
 import { evaluateReplyReview, approveReplyRemainder, verifiedReplyRemainder } from "./chat-reply-review-decision.js";
 import { buildReplyReviewMessages, buildReplyReviewFormat } from "./chat-reply-review-contracts.js";
 import { buildProductSizingFallback } from "./product-sizing-copy.js";
@@ -26,12 +28,12 @@ import { isStorefrontGuidanceCharacter, resolveOrderActionPromptState } from "./
 import { hasCheckoutIssue, buildCheckoutSupportPrompt, buildCheckoutReviewContext } from "./checkout-support-guidance.js";
 import { buildCheckoutNextStepCopy } from "./checkout-support-copy.js";
 import { buildSupportGuidanceUnavailableCopy } from "./support-guidance-copy.js";
-import { getGuestBenefitReviewContext, approveGuestBenefitContext, buildGuestBenefitFallback } from "./guest-benefit-guidance-service.js";
+import { getGuestBenefitReviewContext, approveGuestBenefitContext, buildGuestBenefitFailureFallback } from "./guest-benefit-guidance-service.js";
 import { hasUnauthorizedDiscountPolicyClaim } from "./discount-policy-explanation-service.js";
 import { toImageStatusReviewContext, getChatImageStatusFallbackCopy, isFulfilledImageOnlyRequest, withChatImageReplySnapshot, cleanCurrentImageReplyMarkup } from "./chat-image-status-context-service.js";
 import { guardLanguageQualityReply, buildLanguageQualityFallbackReply } from "./chat-reply-language-quality.js";
 import { factualReviewRequired, toFactualReviewContext, buildFactualUnavailableCopy, containsFactualUnavailableCopy } from "./chat-factual-policy.js";
-import { activeReviewContracts, reviewOutcomeStatus, reviewErrorStatus, reviewFieldProtocolFailure, REVIEW_CONTRACTS, REPLY_REPAIR_TIMEOUT_MS, GROUNDED_COMMERCE_REPAIR_TIMEOUT_MS, languageReviewConfident } from "./chat-reply-review-outcome.js";
+import { activeReviewContracts, resolveReplyReviewStages, reviewOutcomeStatus, reviewErrorStatus, reviewFieldProtocolFailure, REVIEW_CONTRACTS, REPLY_REPAIR_TIMEOUT_MS, GROUNDED_COMMERCE_REPAIR_TIMEOUT_MS, languageReviewConfident } from "./chat-reply-review-outcome.js";
 import { assessIndependentLanguageQuality, languageReviewerConfig } from "./chat-language-quality-service.js";
 import { hasPendingProductRequest, getProductRequestItemText } from "./product-request-scope-service.js";
 import { buildProductRequestScopeCopy, productScopeResultLabel, buildProductScopeUnverifiedResultCopy, buildProductClarificationFallbackReply } from "./product-request-scope-copy.js";
@@ -149,7 +151,7 @@ export function needsSupportGuidanceReview(searchIntent = {}, character = {}) {
 
 export function needsBusinessFactsReview(searchIntent = {}, character = {}) {
   return isStorefrontGuidanceCharacter(character) && searchIntent.answerRequired === true
-    && (isGeneralCommerceExplanation(searchIntent) || searchIntent.knowledgeScope === "business"
+    && (searchIntent.siteTrustOnly === true || isGeneralCommerceExplanation(searchIntent) || searchIntent.knowledgeScope === "business"
       && (["store_policy", "product_question", "product_search"].includes(searchIntent.commerceRoute)
         || searchIntent.commerceRoute === "chat" && searchIntent.customerServiceKnowledgeRequest === true
         || searchIntent.commerceRoute === "unclear" && searchIntent.customerServiceKnowledgeRequest === true));
@@ -199,7 +201,11 @@ export async function enforceReplyBoundary(options = {}) {
   const originalText = String(replyResult.text || "").trim();
   const factualLimitationReviewRequired = containsFactualUnavailableCopy(originalText)
     || containsFactualUnavailableCopy(replyResult.speechText || originalText);
-  const contracts = activeReviewContracts({ languageQualityRequired: qualityRequired, factualRequired, evidenceRequired,
+  const technicalComplaintReview = independentLanguageQualityRequired && languageRepairAttempted
+    && options.groundedRepairAttempted === true && languageRepairDiagnostics?.repairKind === 'grounded'
+    && !productContext && !replyResult.discountOfferReply && !replyResult.verifiedDiscountOffers?.length
+    && !hasUserSuppliedInternalNotation(userText) && hasUnansweredOwnedComplaint(options);
+  const contracts = activeReviewContracts({ languageQualityRequired: qualityRequired && !technicalComplaintReview, factualRequired, evidenceRequired,
     guidanceRequired, businessFactsRequired, productScopeRequired, candidateConfirmationRequired, imageStatusContext, guestBenefitContext: guestBenefitReview, factualLimitationReviewRequired });
   const dedicatedLanguageReview = independentLanguageQualityRequired && qualityRequired;
   const primaryContracts = dedicatedLanguageReview ? contracts.filter((name) => name !== "language") : contracts;
@@ -213,7 +219,7 @@ export async function enforceReplyBoundary(options = {}) {
     : stripTtsControlTags(originalText);
   let accepted = transportFallback && !guestBenefitReview && !imageStatusRequired && !productScopeRequired;
   let result = null, retained = "", retainedEvidenceApproved = false, languageAssessment = null, primaryAllowsRepair = false, primaryReviewAccepted = false, primaryReviewUnavailable = false;
-  let deferredLanguageForGroundedRepair = false;
+  let deferredLanguageForGroundedRepair = false, primaryReviewResult = null;
   let languageDiagnostics = languageRepairDiagnostics || { repairState: "not_attempted" };
   try {
     if (!accepted && !transportFallback) {
@@ -222,7 +228,7 @@ export async function enforceReplyBoundary(options = {}) {
       // No model approval is asserted when there is no non-language contract.
       result = dedicatedLanguageReview && !primaryReviewRequired ? { allowed: true, confidence: 1 }
         : primaryBudget <= 0 ? { allowed: false, confidence: 0, reviewStatus: "timeout" }
-        : await assess({ text, speechText: stripTtsControlTags(replyResult.speechText || text), userText, recentUserMessages: recentMessages.filter(row => (row.senderType || row.sender_type) === "user").slice(-4).map(row => String(row.text || row.text_content || "").slice(0, 1200)), language, boundary: searchIntent.replyBoundary,
+        : await assess({ text, speechText: stripTtsControlTags(replyResult.speechText || text), userText, complaintUserReports: complaintPromptUserReports(options), recentUserMessages: recentMessages.filter(row => (row.senderType || row.sender_type) === "user").slice(-4).map(row => String(row.text || row.text_content || "").slice(0, 1200)), language, boundary: searchIntent.replyBoundary,
         languageQualityRequired: dedicatedLanguageReview ? false : qualityRequired, independentLanguageReview: dedicatedLanguageReview, languageClarificationEligible, boundaryReviewRequired: primaryReviewRequired, factualLimitationReviewRequired, logContext, timeoutMs: primaryBudget,
         catalogueOwner: { character: { id: character.id, category_id: character.category_id, site_id: character.site_id, siteId: character.siteId },
           trustedSite: options.trustedSite ? { id: options.trustedSite.id, identity_mascot_character_id: options.trustedSite.identity_mascot_character_id } : null },
@@ -269,6 +275,7 @@ export async function enforceReplyBoundary(options = {}) {
         primaryReviewAccepted = false;
         languageClarification = null;
       }
+      primaryReviewResult = { ...result };
       primaryAllowsRepair = result?.boundarySupported !== false && (dedicatedLanguageReview ? result?.allowed === true
         : result?.allowed === true || result?.languageQualitySupported === false && (!boundaryReviewRequired || result?.boundarySupported === true));
       if (dedicatedLanguageReview && primaryStatus === "valid") {
@@ -280,10 +287,14 @@ export async function enforceReplyBoundary(options = {}) {
         // Only discard the language work on a rejected pure-business draft when
         // its existing single correction can actually be attempted. No language
         // approval is synthesized; the new candidate still runs every contract.
-        deferredLanguageForGroundedRepair = businessFactsRequired && !productContext && !chatImageContext
+        const pureVerifiedBusiness = businessFactsRequired && !productContext && !chatImageContext
           && knowledgeContext?.strategy === 'business_verified_reference'
           && Array.isArray(knowledgeContext.items) && knowledgeContext.items.length > 0
-          && !guestBenefitContext && !orderActionCandidate && !feedbackActionCandidate && factualContext?.required !== true
+          && !guestBenefitContext && !orderActionCandidate && !feedbackActionCandidate;
+        const ownedUnansweredComplaint = hasUnansweredOwnedComplaint({ ...options, searchIntent, productContext, knowledgeContext,
+          character, orderActionCandidate, feedbackActionCandidate, chatImageContext, guestBenefitContext, factualContext });
+        deferredLanguageForGroundedRepair = (pureVerifiedBusiness || ownedUnansweredComplaint)
+          && factualContext?.required !== true
           && factualContext?.searched !== true && !factualContext?.items?.length
           && !languageClarificationEligible && !recoveryLanguagePurpose && !languageClarificationPurpose
           && primaryVerdict.confident && !primaryVerdict.accepted
@@ -296,7 +307,14 @@ export async function enforceReplyBoundary(options = {}) {
           && isGroundedCommerceRepairEligible({ ...options, replyResult, searchIntent, productContext, knowledgeContext,
             character, reviewResult: result, reviewStatus: primaryStatus, failedContracts: primaryVerdict.failedContracts,
             retained: '', languageRepairAttempted });
-        if (deferredLanguageForGroundedRepair) {
+        if (technicalComplaintReview) {
+          const technical = inspectReplyTechnicalGuard(replyResult);
+          languageDiagnostics = { ...languageDiagnostics, primaryReviewStatus: primaryStatus,
+            languageReviewStatus: 'not_run', reviewMode: 'technical_only', technicalGuardPassed: technical.ok,
+            technicalGuardReason: technical.reason, languageSeverity: undefined, languageIssueTypes: [] };
+          if (!technical.ok) result = { ...result, allowed: false, boundarySupported: false,
+            retainedText: '', retainedTextAllowed: false };
+        } else if (deferredLanguageForGroundedRepair) {
           languageDiagnostics = { ...languageDiagnostics, primaryReviewStatus: primaryStatus,
             languageReviewStatus: 'not_run', languageSeverity: undefined, languageIssueTypes: [] };
         } else {
@@ -337,6 +355,17 @@ export async function enforceReplyBoundary(options = {}) {
   const verdict = evaluateReplyReview(result, deferredLanguageForGroundedRepair ? primaryContracts : contracts);
   const reviewStatus = result === null ? "not_run" : verdict.reviewStatus;
   const { failedContracts, factualRejected, languageRejected } = verdict;
+  const protectedRepairScope = Boolean(chatImageContext || productContext?.candidateContext || productContext?.sizingProduct
+    || productContext?.products?.length || productContext?.searchOutcome === 'no_match' || searchIntent.commerceRoute === 'product_search'
+    || searchIntent.needsLiveProductData === true || searchIntent.shouldLoadProductContext === true);
+  const reviewStages = resolveReplyReviewStages({ primaryResult: primaryReviewResult, combinedResult: result,
+    languageStatus: languageDiagnostics.languageReviewStatus || 'not_run', primaryContracts,
+    contracts: deferredLanguageForGroundedRepair ? primaryContracts : contracts });
+  const repairReviewResult = reviewStages.repairResult;
+  const repairReviewStatus = reviewStages.repairStatus;
+  const repairFailedContracts = reviewStages.repairFailures;
+  const rawRepairFeedback = buildRepairFeedback({ replyResult, reviewStatus: repairReviewStatus, failedContracts: repairFailedContracts, reviewResult: repairReviewResult, languageAssessment, includeOriginal: !protectedRepairScope });
+  const repairFeedback = protectedRepairScope ? { ...rawRepairFeedback, issues: [] } : rawRepairFeedback;
   // Text-only ordinary conversation may get one fresh candidate. Active business,
   // action and public-fact requests remain outside this recovery contract.
   const conversationRecovery = isConversationReplyRecoveryEligible({ ...options, allowClosedClarification: false, replyResult, searchIntent, productContext, knowledgeContext,
@@ -349,7 +378,8 @@ export async function enforceReplyBoundary(options = {}) {
     failedContracts, contracts, languageAssessment, languageRepairAttempted, retained });
   const recoveryPurpose = productClarificationRecovery ? 'product_clarification' : conversationRecovery || languageClarificationPurpose ? 'conversation' : clarificationRecovery ? 'clarification' : '';
   const purposeRecoveryContext = recoveryPurpose ? withLanguageClarificationRecovery(
-    { kind: "purpose", purpose: recoveryPurpose, failedContracts: languageClarificationPurpose && !failedContracts.length ? ["language"] : failedContracts }, languageClarificationPurpose) : null;
+    { kind: "purpose", purpose: recoveryPurpose, failedContracts: languageClarificationPurpose && !failedContracts.length ? ["language"] : failedContracts,
+      repairFeedback: recoveryPurpose === 'product_clarification' ? { ...repairFeedback, previousReply: undefined, issues: [] } : repairFeedback }, languageClarificationPurpose) : null;
   const purposeRecoveryAttempted = Boolean(recoveryPurpose) || ['conversation', 'clarification', 'product_clarification'].includes(languageRepairDiagnostics?.repairPurpose);
   // Preserve the category of an already server-owned quality failure. Mixed
   // business/tool/image scopes keep their original, more specific fallback.
@@ -366,7 +396,7 @@ export async function enforceReplyBoundary(options = {}) {
   const languageFailure = Boolean(languageAssessment && (languageRejected || languageAssessment.reviewStatus !== "valid")
     || primaryReviewAccepted && !reviewValid);
   const groundedRepairInput = { ...options, replyResult, searchIntent, productContext, knowledgeContext, character,
-    reviewResult: result, reviewStatus, failedContracts, retained, languageRepairAttempted };
+    reviewResult: repairReviewResult, reviewStatus: repairReviewStatus, failedContracts: repairFailedContracts, retained, languageRepairAttempted };
   // Already matched catalogue cards require their actual evidence during a
   // language rewrite. Choose the same single grounded correction instead of
   // first spending that correction on an ordinary unconstrained regeneration.
@@ -385,15 +415,19 @@ export async function enforceReplyBoundary(options = {}) {
       initialLanguageProtocolFailure: languageAssessment?.protocolFailure };
     const recovery = await recoverReviewedLanguageReply({ replyResult, assessment: languageAssessment,
       languageDiagnostics: initialDiagnostics, language, userText, logContext,
-      repairLanguageReply: async () => {
-        const fresh = await regenerateReply(replyResult, purposeRecoveryContext);
+      repairLanguageReply: async ({ recordDiagnostic }) => {
+        const fresh = await regenerateReply(replyResult, purposeRecoveryContext || { kind: 'review', repairFeedback });
+        if (conversationRecovery && fresh && !hasUserSuppliedInternalNotation(userText) && !inspectReplyTechnicalGuard(fresh).ok) {
+          recordDiagnostic('local_quality_block');
+          return null;
+        }
         return fresh?.sourceType === "ai" && String(fresh.text || "").trim() && !isAiTransportFallback(fresh)
           ? fresh : null;
       }, recordReview, primaryReviewTimeoutMs: reviewTimeoutMs,
       reviewCandidate: (candidate, reviewOptions) => enforceReplyBoundary({ ...options, replyResult: candidate, ...reviewOptions,
         ...(languageClarificationRecoveryProof(purposeRecoveryContext, userText) ? { languageClarificationRecovery: purposeRecoveryContext } : {}) }),
     });
-    if (recovery.recovered) return recovery.reply;
+    if (recovery.terminal) return recovery.reply;
     languageDiagnostics = { ...recovery.diagnostics, repairFailureCode: recovery.diagnostics.repairFailureCode || "no_candidate" };
   } else if (!accepted) {
     languageDiagnostics = { ...languageDiagnostics, repairSkipReason: languageRepairAttempted ? "already_attempted"
@@ -420,33 +454,49 @@ export async function enforceReplyBoundary(options = {}) {
         repairTimeoutMs: REPLY_REPAIR_TIMEOUT_MS, primaryReviewTimeoutMs: reviewTimeoutMs, recordReview,
         repairLanguageReply: async ({ recordDiagnostic }) => {
           let candidate = null;
-          try { candidate = await regenerateReply(replyResult, { kind: "image", chatImageContext: freshImageContext, failedContracts }); }
+          try { candidate = await regenerateReply(replyResult, { kind: "image", chatImageContext: freshImageContext, failedContracts,
+            repairFeedback: { ...repairFeedback, previousReply: undefined, issues: [] } }); }
           catch (error) { recordDiagnostic(error?.code === "AI_REPLY_TIMEOUT" ? "provider_timeout" : "provider_error"); }
           if (!await refreshRecoveryImage(freshImageContext)) { recordDiagnostic("image_state_changed"); return null; }
           return candidate?.sourceType === "ai" && String(candidate.text || "").trim() && !isAiTransportFallback(candidate) ? candidate : null;
         },
         reviewCandidate: (candidate, reviewOptions) => enforceReplyBoundary({ ...options, replyResult: candidate, chatImageContext, ...reviewOptions }),
       });
-      if (recovery.recovered) return recovery.reply;
+      if (recovery.terminal) return recovery.reply;
       languageDiagnostics = { ...recovery.diagnostics, repairFailureCode: recovery.diagnostics.repairFailureCode || "no_candidate" };
     } else languageDiagnostics.repairFailureCode = "image_state_changed";
   }
   const groundedRepairEligible = !regenerationEligible && !imageRecoveryEligible && !accepted
     && (catalogueCaptionRepair || isGroundedCommerceRepairEligible(groundedRepairInput));
+  const complaintRepair = searchIntent.unresolvedUserComplaint === true && !accepted && !languageRepairAttempted
+    ? { state: groundedRepairEligible ? 'attempted' : 'skipped', reason: groundedRepairEligible ? 'eligible' : regenerationEligible || imageRecoveryEligible ? 'other_recovery' : reviewStatus !== 'valid' ? 'review_unavailable' : knowledgeContext?.selectionFailure || knowledgeContext?.ok !== true ? 'knowledge_unavailable' : orderActionCandidate || chatImageContext || guestBenefitContext || productContext?.products?.length || productContext?.candidateContext || searchIntent.shouldLoadProductContext ? 'active_action' : 'ineligible' } : null;
   if (groundedRepairEligible) {
     const productCorrection = Boolean(productContext?.candidateContext || hasMatchedCatalogueCaptionContext(groundedRepairInput)
       || toAlternativeReviewContext(productContext));
-    if (groundedRepairEligible) languageDiagnostics = { ...languageDiagnostics, repairKind: "grounded",
+    languageDiagnostics = { ...languageDiagnostics, repairKind: "grounded",
       initialFailedContracts: failedContracts, repairSkipReason: undefined };
+    const complaintCorrection = hasUnansweredOwnedComplaint(groundedRepairInput);
     const recovery = await recoverReviewedLanguageReply({ replyResult, assessment: languageAssessment, languageDiagnostics,
-      language, userText, logContext, repairScope: productCorrection ? 'grounded_commerce' : '',
-      repairTimeoutMs: productCorrection ? GROUNDED_COMMERCE_REPAIR_TIMEOUT_MS : REPLY_REPAIR_TIMEOUT_MS, repairLanguageReply: input => (options.repairGroundedReply || repairGroundedCommerceReply)({ ...options, ...input,
-          searchIntent, productContext, knowledgeContext, character, reviewResult: result, reviewStatus, failedContracts, retained }), recordReview, primaryReviewTimeoutMs: reviewTimeoutMs,
+      language, userText, logContext, repairScope: productCorrection ? 'grounded_commerce' : complaintCorrection ? 'grounded_complaint' : '',
+      repairTimeoutMs: productCorrection || complaintCorrection ? GROUNDED_COMMERCE_REPAIR_TIMEOUT_MS : REPLY_REPAIR_TIMEOUT_MS, repairLanguageReply: async input => {
+        // Reuse the initial generation provider, parser and full context for
+        // complaint text. Catalogue corrections retain their evidence protocol.
+        if (complaintCorrection && !options.repairGroundedReply) {
+          if (typeof regenerateReply !== 'function') { input.recordDiagnostic('unavailable'); return null; }
+          const fresh = await regenerateReply(replyResult, { kind: 'review', repairFeedback,
+            timeoutMs: input.timeoutMs, recordDiagnostic: input.recordDiagnostic });
+          return fresh?.sourceType === 'ai' && String(fresh.text || '').trim() && !isAiTransportFallback(fresh) ? fresh : null;
+        }
+        return (options.repairGroundedReply || repairGroundedCommerceReply)({ ...options, ...input,
+          searchIntent, productContext, knowledgeContext, character, reviewResult: repairReviewResult, reviewStatus: repairReviewStatus, failedContracts: repairFailedContracts, retained, repairFeedback });
+      },
+      recordReview: complaintRepair ? event => recordReview({ ...event, complaintRepair: { state: event.guardApplied ? 'rejected' : 'accepted', reason: 'reviewed' } }) : recordReview, primaryReviewTimeoutMs: reviewTimeoutMs,
       reviewCandidate: (candidate, reviewOptions) => enforceReplyBoundary({ ...options, replyResult: candidate, ...reviewOptions,
-        ...(groundedRepairEligible ? { groundedRepairAttempted: true } : {}) }),
+        groundedRepairAttempted: true }),
     });
-    if (recovery.recovered) return recovery.reply;
+    if (recovery.terminal) return recovery.reply;
     languageDiagnostics = recovery.diagnostics;
+    if (complaintRepair) { complaintRepair.state = 'failed'; complaintRepair.reason = 'recovery_failed'; }
   }
   const finish = async (output, guardApplied = false, productClarification = false) => {
     output = withChatImageReplySnapshot(output, chatImageContext, { natural: !guardApplied && accepted === true });
@@ -456,7 +506,7 @@ export async function enforceReplyBoundary(options = {}) {
       : !reviewValid ? "review" : languageRejected ? "language" : "boundary";
     // Logging is diagnostic only; it cannot change a reply or cause a retry.
     try { await recordReview({ logContext, reviewStatus, failedContracts, guardApplied, fallbackKind: kind,
-      languageDiagnostics: independentLanguageQualityRequired ? languageDiagnostics : undefined, missingFields: result?.missingFields,
+      languageDiagnostics: independentLanguageQualityRequired ? languageDiagnostics : undefined, complaintRepair, missingFields: result?.missingFields,
       reviewProtocol: languageDiagnostics.reviewProtocol,
       candidateHasFactualTemplate: factualLimitationReviewRequired,
       outputHasFactualTemplate: containsFactualUnavailableCopy(output.text), outputChars: String(output.text || "").length }); } catch {}
@@ -494,11 +544,23 @@ export async function enforceReplyBoundary(options = {}) {
     ? buildProductClarificationFallbackReply(code) : '';
   const submittedFeedbackCopy = !accepted
     ? buildFeedbackSubmissionFallback({ ...options, searchIntent, knowledgeContext, character, userText, languageCode: code }) : '';
-  const fallback = submittedFeedbackCopy || closedProductCopy || (evidenceRequired ? buildEvidenceFallback(searchIntent, productContext, { languageCode: code, userText })
+  // Only a current, already-authorized feedback candidate permits this neutral
+  // acknowledgement. The feedback action itself is still resolved separately.
+  const feedbackUncertaintyCopy = !accepted && !retained && reviewValid && !languageRejected
+    && Array.isArray(failedContracts) && failedContracts.length > 0
+    && failedContracts.every(name => ['confidence', 'guidance', 'business_facts'].includes(name))
+    && searchIntent.unresolvedUserComplaint === true && feedbackActionCandidate?.kind === 'feedback' && searchIntent.replyBoundary?.contactAllowed === true
+    && options.trustedSite?.id && character?.id && knowledgeContext?.businessOwner?.siteId === options.trustedSite.id
+    && knowledgeContext?.businessOwner?.characterId === character.id
+    && !orderActionCandidate && !chatImageContext && !guestBenefitContext && !evidenceRequired && !productScopeRequired
+    && !productContext?.products?.length && !productContext?.candidateContext && !factualFallbackRequired
+    ? [{ en: 'I’m sorry you’re dealing with this.', es: 'Siento que estés pasando por esto.', zh: '很抱歉让你遇到这样的问题。' }[code]
+      || ACKNOWLEDGEMENTS[code] || ACKNOWLEDGEMENTS.en, buildSupportGuidanceUnavailableCopy(code)].filter(Boolean).join(' ') : '';
+  const fallback = submittedFeedbackCopy || closedProductCopy || feedbackUncertaintyCopy || (evidenceRequired ? buildEvidenceFallback(searchIntent, productContext, { languageCode: code, userText })
     : hasChildSizingCorrectionContext(options) ? buildLanguageQualityFallbackReply(code)
     : sizingRequired || sizingConversationContext ? buildProductSizingFallback(productContext?.sizingProduct, code)
     : checkoutContext ? buildCheckoutNextStepCopy(searchIntent.checkoutIssue, code)
-    : guestBenefitReview ? buildGuestBenefitFallback(guestBenefitContext)
+    : guestBenefitReview ? buildGuestBenefitFailureFallback(guestBenefitContext)
     : orderGuidanceRequired ? [getChatOrderEntryCopy(code, orderActionState),
       searchIntent.orderAndPolicy === true && !retained ? buildSupportGuidanceUnavailableCopy(code) : ''].filter(Boolean).join('\n\n')
     : imageCopy || scopeCopy || expressionFailureCopy || (guidanceRequired || businessFactsRequired ? buildSupportGuidanceUnavailableCopy(code) : "")
@@ -517,7 +579,7 @@ export async function enforceReplyBoundary(options = {}) {
     evidenceRequired, evidenceSupported: retained ? result?.retainedEvidenceSupported : result?.evidenceSupported,
     imageStatusRequired, imageStatusSupported: retained ? result?.retainedImageStatusSupported : result?.imageStatusSupported, transportFallback,
   });
-  if (guestBenefitReview && !approvedBenefit) safeText = [buildGuestBenefitFallback(guestBenefitContext), imageCopy, scopeCopy].filter(Boolean).join("\n\n");
+  if (guestBenefitReview && !approvedBenefit) safeText = [buildGuestBenefitFailureFallback(guestBenefitContext), imageCopy, scopeCopy].filter(Boolean).join("\n\n");
   if (!accepted && !transportFallback && factualFallbackRequired && !languageRejected && !retainedEvidenceApproved
     && !safeText.includes(buildFactualUnavailableCopy(code))) safeText += `\n\n${buildFactualUnavailableCopy(code)}`;
   return finish({ ...replyResult, text: safeText, displayText: safeText, speechText: safeText,
@@ -532,7 +594,7 @@ export async function enforceReplyBoundary(options = {}) {
 // One bounded assessment combines reply boundaries, missing live product facts and scoped support guidance.
 // Production chat opts into language quality; scoped guards share its call.
 // The assessment cannot rewrite text or grant permissions.
-export async function assessReplyBoundary({ text = "", speechText = "", userText = "", recentUserMessages = [], language = "en", boundary = {}, languageQualityRequired = false, boundaryReviewRequired = true, independentLanguageReview = false, languageClarificationEligible = false, evidenceRequired = false, businessFactsRequired = false, productScopeRequired = false, candidateConfirmationRequired = false, productScopeContext = null, factualRequired = false, factualContext = null, guidanceRequired = false, sizingRequired = false, sizingConversationContext = null, childProductSizingContext = null, discountPolicyExplanation = false, feedbackActionAvailable = false, orderActionState = null, imageStatusContext = null, guestBenefitContext = null, identityContext = null, catalogueOwner = null, characterId = "", siteId = "", clarificationRequired = false, checkoutContext = null, productContext = null, knowledgeContext = null, searchIntent = null, verifiedDiscountOffers = [], factualLimitationReviewRequired = false, logContext = {}, fetchImpl = fetch, config = null, recordLog = recordProviderCallLog, timeoutMs = SERVER_CONFIG.aiReply.chatTimeouts.review } = {}) {
+export async function assessReplyBoundary({ text = "", speechText = "", userText = "", recentUserMessages = [], complaintUserReports = null, language = "en", boundary = {}, languageQualityRequired = false, boundaryReviewRequired = true, independentLanguageReview = false, languageClarificationEligible = false, evidenceRequired = false, businessFactsRequired = false, productScopeRequired = false, candidateConfirmationRequired = false, productScopeContext = null, factualRequired = false, factualContext = null, guidanceRequired = false, sizingRequired = false, sizingConversationContext = null, childProductSizingContext = null, discountPolicyExplanation = false, feedbackActionAvailable = false, orderActionState = null, imageStatusContext = null, guestBenefitContext = null, identityContext = null, catalogueOwner = null, characterId = "", siteId = "", clarificationRequired = false, checkoutContext = null, productContext = null, knowledgeContext = null, searchIntent = null, verifiedDiscountOffers = [], factualLimitationReviewRequired = false, logContext = {}, fetchImpl = fetch, config = null, recordLog = recordProviderCallLog, timeoutMs = SERVER_CONFIG.aiReply.chatTimeouts.review } = {}) {
   productScopeContext = productScopeRequired ? boundedScopeContext(productScopeContext) : null;
   languageQualityRequired = languageQualityRequired && !independentLanguageReview;
   factualRequired = factualReviewRequired(factualContext);
@@ -547,7 +609,7 @@ export async function assessReplyBoundary({ text = "", speechText = "", userText
   const requiredFields = ["allowed", "confidence", ...contracts.map(name => REVIEW_CONTRACTS[name].field),
     ...(independentLanguageReview ? ["boundarySupported"] : []), ...(checkoutContext?.classificationUnavailable ? ["checkoutProblem"] : [])];
   try {
-    const reviewOptions = { text, speechText, userText, recentUserMessages, language, boundary, languageQualityRequired, boundaryReviewRequired, independentLanguageReview, languageClarificationEligible, evidenceRequired, businessFactsRequired, productScopeRequired, candidateConfirmationRequired, productScopeContext, factualRequired, factualContext, factualLimitationReviewRequired, guidanceRequired, sizingRequired, sizingConversationContext, childProductSizingContext, discountPolicyExplanation, feedbackActionAvailable, orderActionState, imageStatusContext, guestBenefitContext, identityContext, catalogueOwner, characterId, siteId, clarificationRequired, checkoutContext, productContext, knowledgeContext, searchIntent, verifiedDiscountOffers };
+    const reviewOptions = { text, speechText, userText, recentUserMessages, complaintUserReports, language, boundary, languageQualityRequired, boundaryReviewRequired, independentLanguageReview, languageClarificationEligible, evidenceRequired, businessFactsRequired, productScopeRequired, candidateConfirmationRequired, productScopeContext, factualRequired, factualContext, factualLimitationReviewRequired, guidanceRequired, sizingRequired, sizingConversationContext, childProductSizingContext, discountPolicyExplanation, feedbackActionAvailable, orderActionState, imageStatusContext, guestBenefitContext, identityContext, catalogueOwner, characterId, siteId, clarificationRequired, checkoutContext, productContext, knowledgeContext, searchIntent, verifiedDiscountOffers };
     const plannedClaimContext = buildBusinessClaimContext(reviewOptions);
     const plannedAlternativeContext = toAlternativeReviewContext(productContext);
     const plannedNameDifference = toNameCandidateDifferenceContext(productContext);
@@ -567,12 +629,22 @@ export async function assessReplyBoundary({ text = "", speechText = "", userText
       const alternativeAudit = plannedAlternativeContext ? validateProductAlternativeAudit(raw?.alternativeAudit, alternativeAuditOptions) : null;
       const reason = fieldFailure || (audit?.valid === false ? audit.reason : '') || (alternativeAudit?.valid === false ? 'invalid_fields' : '');
       if (reason && protocolFailures.length < 3) protocolFailures.push(reason);
-      return { valid: !reason, reason: 'shape' };
+      let correctionCode = '';
+      if (reason === 'claim_consistency' && Array.isArray(raw?.businessClaimAudit)) {
+        const entries = raw.businessClaimAudit;
+        if (entries.some(e => e?.factual === true && e?.supported === true && Array.isArray(e.referenceIds) && !e.referenceIds.length)) correctionCode = 'factual_no_reference';
+        else if (entries.some(e => e?.factual === false && (e.sourceAllowsException === true || Array.isArray(e.referenceIds) && e.referenceIds.length))) correctionCode = 'nonfactual_reference';
+      }
+      return { valid: !reason, reason: 'shape', correctionCode };
     };
     let result;
     try {
       result = await requestAiJsonWithProviderFallback(buildReplyReviewMessages(reviewOptions), { config: assessmentConfig, fetchImpl, timeoutMs,
       perProviderTimeout: true, providerTimeoutMs: timeoutMs, validateParsed,
+      protocolCorrectionMessages: {
+        factual_no_reference: 'Previous reviewer output had a protocol contradiction: a supported factual unit had no reference IDs. Independently review the complete response and all original evidence again. For each factual supported unit cite actual supporting reference IDs; if evidence is insufficient mark it unsupported. Do not invent references or alter a verdict solely to satisfy structure.',
+        nonfactual_reference: 'Previous reviewer output had a protocol contradiction: a nonfactual unit had reference IDs or sourceAllowsException=true. Independently review the complete response and all original evidence again. A truly nonfactual unit has no reference IDs and sourceAllowsException=false; factual claims require proper evidence. Do not discard an actual factual claim to satisfy structure.',
+      },
       responseFormat: buildReplyReviewFormat(reviewOptions), sourceRef: "reply-boundary-policy", recordProviderCallFn: (event) => {
         if (event.error?.code === 'AI_JSON_PARSE_ERROR' && protocolFailures.length < 3) protocolFailures.push('invalid_json');
         return recordLog({ ...event, requestId: logContext.requestId || "", sessionId: logContext.sessionId || "",
@@ -589,6 +661,12 @@ export async function assessReplyBoundary({ text = "", speechText = "", userText
     // terminal. Apply its semantic vote without a second classification path.
     const reviewStatus = 'valid';
     const claimAudit = validateBusinessClaimAudit(result?.businessClaimAudit, plannedClaimContext);
+    const repairIssues = plannedClaimContext && claimAudit.valid && !claimAudit.accepted
+      ? result.businessClaimAudit.flatMap(entry => {
+        const unit = plannedClaimContext.units.find(item => item.id === entry.unitId);
+        const kind = !entry.supported ? 'unsupported_fact' : entry.sourceAllowsException && !entry.replyPreservesException ? 'missing_condition' : '';
+        return kind && unit?.text && unit.text.length <= 1000 ? [{ kind, span: unit.text }] : [];
+      }).slice(0, 4) : [];
     if (plannedAlternativeContext && !validateProductAlternativeAudit(result?.alternativeAudit, alternativeAuditOptions).accepted) result = { ...result, allowed: false, evidenceSupported: false,
       retainedText: '', retainedTextAllowed: false, retainedEvidenceSupported: false };
     if (plannedNameIdentity && !validateNameIdentityAudit(result?.nameIdentityAudit, stripTtsControlTags(text), stripTtsControlTags(speechText || text))) result = { ...result, allowed: false, evidenceSupported: false,
@@ -599,7 +677,14 @@ export async function assessReplyBoundary({ text = "", speechText = "", userText
       retainedText: '', retainedTextAllowed: false, retainedBusinessFactsSupported: false };
     const bool = (key) => typeof result?.[key] === "boolean" ? result[key] : undefined;
     const supportFields = [...new Set(Object.values(REVIEW_CONTRACTS).flatMap(contract => [contract.field, contract.retainedField]))];
-    return { reviewStatus, missingFields, protocolFailures, ...(languageClarificationEligible ? { languageClarification: result?.languageClarification } : {}), checkoutProblem: bool("checkoutProblem"), ...Object.fromEntries(supportFields.map(field => [field, bool(field)])),
+    const semanticFailure = result?.boundarySupported === false || contracts.some(name => result?.[REVIEW_CONTRACTS[name]?.field] === false)
+      || result?.allowed === false && languageReviewConfident(result?.confidence);
+    const reviewSpan = result?.reviewIssueSpan, reviewReason = result?.reviewIssueReason;
+    if (semanticFailure && typeof reviewSpan === 'string' && reviewSpan.trim() && reviewSpan.length <= 300
+      && (text.includes(reviewSpan) || (speechText || text).includes(reviewSpan))
+      && typeof reviewReason === 'string' && reviewReason.trim() && reviewReason.length <= 240)
+      repairIssues.push({ kind: 'review_reason', span: reviewSpan, reason: reviewReason.trim() });
+    return { reviewStatus, missingFields, protocolFailures, ...(repairIssues.length ? { repairIssues } : {}), ...(languageClarificationEligible ? { languageClarification: result?.languageClarification } : {}), checkoutProblem: bool("checkoutProblem"), ...Object.fromEntries(supportFields.map(field => [field, bool(field)])),
       boundarySupported: bool("boundarySupported"), retainedBoundarySupported: bool("retainedBoundarySupported"),
       allowed: result?.allowed === true && (!checkoutContext?.classificationUnavailable || result?.checkoutProblem === false),
       imageStatusRelevant: result?.imageStatusRelevant === true, imageReferenceMatched: result?.imageReferenceMatched === true,

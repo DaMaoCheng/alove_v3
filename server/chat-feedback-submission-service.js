@@ -2,6 +2,7 @@ import { isStorefrontGuidanceCharacter } from './chat-global-reply-policy.js';
 
 const savedSubmissionEvents = new WeakSet();
 const FEEDBACK_CONTEXT_MAX_AGE_DAYS = 30;
+export const OFFERED_FEEDBACK_FOLLOWUP_MAX_LENGTH = 2000;
 const feedbackEntry = row => (row?.contentType || row?.content_type) === 'feedback_action'
   && ['character', 'assistant'].includes(row?.senderType || row?.sender_type);
 // Only this loader can mint saved-submission events. A serialized model/user
@@ -13,11 +14,12 @@ export function feedbackProtocolContext(rows = []) {
 }
 
 export function normalizeSupportFollowup(value, { userText = '', recentMessages = [], confidence } = {}) {
-  if (!value || !['submitted_followup', 'new_issue'].includes(value.relation)
+  if (!value || !['submitted_followup', 'offered_issue_followup', 'new_issue'].includes(value.relation)
     || !Number.isFinite(confidence) || confidence < 0 || confidence > 1
-    || typeof value.evidence !== 'string' || !value.evidence.trim() || value.evidence.length > 240
+    || typeof value.evidence !== 'string' || !value.evidence.trim() || value.evidence.length > (value.relation === 'offered_issue_followup' ? OFFERED_FEEDBACK_FOLLOWUP_MAX_LENGTH : 240)
     || !userText.includes(value.evidence.trim()) || !feedbackProtocolContext(recentMessages)) return null;
-  if (value.relation === 'submitted_followup' && value.evidence.trim() !== userText.trim()) return null;
+  if (['submitted_followup', 'offered_issue_followup'].includes(value.relation) && value.evidence.trim() !== userText.trim()) return null;
+  if (value.relation === 'offered_issue_followup' && !feedbackProtocolContext(recentMessages)?.entryOffered) return null;
   return { relation: value.relation, evidence: value.evidence.trim() };
 }
 
@@ -31,7 +33,7 @@ export async function loadFeedbackConversationHistory(db, { sessionId = '', char
   const ownerId = guestSessionId || userId;
   const ownerTable = guestSessionId ? 'guest_sessions' : 'users';
   const [actions] = await db.execute(
-    `SELECT cm.id, cm.character_id, cm.display_order, cm.sent_at
+    `SELECT cm.id, cm.character_id, cm.display_order, cm.sent_at, cm.product_payload_json
      FROM chat_messages cm JOIN chat_sessions cs ON cs.id = cm.session_id
      JOIN ${ownerTable} feedback_owner ON feedback_owner.id = cs.${ownerColumn}
      WHERE cm.session_id = ? AND cs.${ownerColumn} = ? AND feedback_owner.site_id = ? AND cm.character_id = ?
@@ -39,8 +41,13 @@ export async function loadFeedbackConversationHistory(db, { sessionId = '', char
        AND cm.display_order < ? ORDER BY cm.display_order DESC LIMIT 4`,
     [sessionId, ownerId, siteId, character.id, Number(beforeDisplayOrder)]
   );
-  const entries = actions.map(row => ({ id: row.id, characterId: row.character_id, displayOrder: Number(row.display_order),
-    sentAt: row.sent_at, senderType: 'character', contentType: 'feedback_action', text: '' })).reverse();
+  const entries = actions.map(row => {
+    let payload = row.product_payload_json;
+    if (typeof payload === 'string') { try { payload = JSON.parse(payload); } catch { payload = null; } }
+    const origin = typeof payload?.feedbackInstructionOrigin === 'string' ? payload.feedbackInstructionOrigin : '';
+    return { id: row.id, characterId: row.character_id, displayOrder: Number(row.display_order),
+      sentAt: row.sent_at, senderType: 'character', contentType: 'feedback_action', text: '', ...(origin ? { feedbackInstructionOrigin: origin } : {}) };
+  }).reverse();
   const since = entries[0]?.sentAt;
   if (since && !Number.isFinite(new Date(since).getTime())) return { entries };
   const [records] = await db.execute(

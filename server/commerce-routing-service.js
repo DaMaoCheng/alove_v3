@@ -1,3 +1,4 @@
+import { SITE_TRUST_SAFETY_CONTRACT } from "./site-trust-safety-policy.js";
 import { nameCandidateIdentityContext } from './product-name-candidate-service.js';
 import { resolveDisplayedProductReferences } from './product-displayed-reference-service.js';
 import { applyProductRequestScope, readProductRequestState, normalizeProductRequest, hasPendingProductRequest } from "./product-request-scope-service.js";
@@ -234,6 +235,25 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
     && ['chat', 'store_policy'].includes(decision.route) && decision.answerRequired === true
     && decision.declaredLiveProductData === false && !decision.referencedProductId && !(decision.referencedProductIds || []).length
     && !assistance.businessInquiry && !assistance.humanHandoff && !assistance.promotionInquiry && !assistance.checkoutIssue;
+  // A complaint is semantic JEV output backed by an exact span of the current USER turn
+  // and its query sourced only from this user or prior USER turns. It grants no
+  // contact, product or order permission by itself.
+  const complaintQuery = typeof decision.knowledgeQuery === 'string' ? decision.knowledgeQuery.trim() : '';
+  const complaintEvidence = normalizeCommerceKnowledgeRequest(decision.knowledgeRequest, { userText, recentMessages })?.kind === 'unresolved_complaint'
+    && jevDecision?.ok === true && jevDecision.orderIntent === 'none'
+    && !['new_image', 'try_on', 'order_lookup', 'product_request'].includes(jevDecision.primaryIntent)
+    && ['chat', 'store_policy'].includes(decision.route) && decision.answerRequired === true
+    && complaintQuery && [userText, ...recentMessages.filter(row => (row.senderType || row.sender_type) === 'user').map(row => row.text || row.text_content || '')]
+      .some(text => String(text).trim().slice(0, 240).trim() === complaintQuery)
+    && !decision.referencedProductId && !(decision.referencedProductIds || []).length && !assistance.checkoutIssue;
+  // A whole-turn trust question may support a safe uncertainty reply, never
+  // assertions about store legitimacy, payment protection, or product quality.
+  const siteTrustOnly = normalizeCommerceKnowledgeRequest(decision.knowledgeRequest, { userText, recentMessages })?.kind === 'site_trust_only'
+    && jevDecision?.ok === true && jevDecision.orderIntent === 'none'
+    && !['new_image', 'try_on', 'order_lookup', 'product_request'].includes(jevDecision.primaryIntent)
+    && ['chat', 'store_policy'].includes(decision.route) && decision.answerRequired === true
+    && decision.declaredLiveProductData === false && !decision.referencedProductId && !(decision.referencedProductIds || []).length
+    && !assistance.businessInquiry && !assistance.humanHandoff && !assistance.promotionInquiry && !assistance.checkoutIssue;
   const answerRequired = Boolean(assistance.businessInquiry || assistance.humanHandoff || assistance.promotionInquiry || assistance.checkoutIssue) || decision.answerRequired === true || ["store_policy", "product_question"].includes(decision.route);
   const knowledgeScope = conceptAndPolicy || assistance.businessInquiry || assistance.humanHandoff || assistance.promotionInquiry || assistance.checkoutIssue || decision.knowledgeScope === "business" || ["product_search", "product_question", "store_policy"].includes(decision.route) ? "business" : "general";
   const catalogueOnly = decision.boundaryVerified === true
@@ -304,6 +324,8 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
     knowledgeScope,
     knowledgeQuery: typeof decision.knowledgeQuery === "string" ? decision.knowledgeQuery.trim().slice(0, 240) : "",
     answerRequired,
+    unresolvedUserComplaint: Boolean(complaintEvidence),
+    siteTrustOnly: Boolean(siteTrustOnly),
     replyBoundary,
     boundaryRequired: !replyBoundary.salesAllowed || !replyBoundary.contactAllowed,
     // Bounded current-user evidence for coordinating merchandise and image
@@ -455,12 +477,16 @@ export function applyCommerceQuestionPromptPolicy(promptContext = {}, searchInte
   }
   if (!searchIntent.answerRequired && !["product_question", "store_policy"].includes(searchIntent.commerceRoute) && !tentativeSizing && !childProductSizingContext && searchIntent.businessKnowledgeRequired !== false) return promptContext;
   const content = [
+    searchIntent.siteTrustOnly === true ? "The USER asks whether the current store is legitimate or safe to buy from. Distinguish the accessible AI chat platform and character from the associated store or merchant: this chat being accessible or the AI role existing cannot establish the store identity, registration, legitimacy, payment security, fulfilment, reviews or fraud risk. Answer the actual store-trust question. Use only current verified store-specific evidence for such claims; otherwise acknowledge uncertainty and offer general independent checks without asserting those checks have passed. Do not guarantee safety or infer fraud. " + SITE_TRUST_SAFETY_CONTRACT : "",
     childProductSizingContext ? `${CHILD_PRODUCT_SIZING_CONTRACT}\n${JSON.stringify({ childProductSizingContext })}` : "",
     searchIntent.childSizingUpdateOnly ? "This turn only supplies requested USER sizing information. Acknowledge it without a new search, stock claim, chart measurements or new question. Retain the original merchandise requirements; no alternative has been accepted merely by supplying a size." : searchIntent.businessKnowledgeRequired === false ? "This is solely a catalogue lookup, not an independent store-policy question. Acknowledge the USER's requirements as their request, never as verified attributes or availability. Use only the actual supplied search outcome and catalogue evidence; no knowledge search was requested." : "",
     !searchIntent.childSizingUpdateOnly && searchIntent.businessKnowledgeRequired === false && (searchIntent.primarySearchBlocked || !searchIntent.shouldLoadProductContext)
       ? "The server has not executed a catalogue search for this turn. Do not claim to have searched, found, shown or delivered anything, and do not say there are no matching products or that requested options are available. Ask a useful concise clarification of the user's target while retaining all stated requirements, if the current clarification budget permits. No stock, policy or action claim is supported by the request alone." : "",
     "Answer the user's current product or store question in their active conversation language, using the existing character's tone.",
+    searchIntent.unresolvedUserComplaint === true ? "Do not turn a past problem report into an unsolicited diagnostic workflow. Respond to the actual current request; ask for a missing detail only when needed to answer it. If the user requests advice, explanation or troubleshooting directly or in context, answer that independent request normally." : "",
+    "For a customer complaint, acknowledge the concern with calm, respectful language even when the user is abusive. Do not quote, echo, play along with, or address the user using their insult or profanity. Do not be defensive or sarcastic, claim that your response is better than the customer’s previous support, or assert that nobody previously helped them unless independently evidenced. Acknowledge the concern rather than arguing about your own usefulness. Focus on the underlying unresolved issue, what is known and what remains unverified; do not invent a fix or blame. If an actual server-provided support action or verified support contact is available and the user has not declined contact, indicate that the team can review the issue without claiming submission, transfer or guaranteed response. Otherwise do not invent contact details, a button or navigation. Respect any refusal of contact and a completed submission.",
     "Use only trusted catalogue facts and retrieved knowledge for store/product claims. A product name, brand mention, logo or photograph alone does not prove authenticity, official licensing or manufacturer origin.",
+    "For any user-reported promotion or discount, distinguish the user’s report from verified current campaign rules. A user saying an offer appeared in an email does not verify that the email is from this store, that the campaign exists or is active, or that the user qualifies. Refer to the email only as the user’s report; do not affirm the promotion exists even to validate the user’s feelings. Do not infer any qualifying products, quantities, lowest-priced item, code, exclusions, stacking or the reason a user’s discount failed from generic patterns. Explain campaign rules when current verified campaign evidence supports them; explain a specific failure cause only when both campaign and relevant cart evidence support it. If the evidence needed for a specific cause is missing, do not suggest even possible categories of causes, conditions or factors for this user’s failed discount, including qualified or generic-sounding claims about what promotions tend to depend on. Simply state that the campaign terms and the cause cannot be verified and direct the user to an available support channel; do not imply that a form was submitted or promise a response. A user who solely asks for a general definition, without a specific disputed promotion or failed application, may still receive a conditional general explanation that does not claim current store policy.",
     "If a required fact is absent, state what cannot be confirmed and use relevant store policy if available; do not invent a guarantee or suggest an unrelated replacement.",
     "Answer every question in the current turn fully and concisely. A product card or its short caption must never replace or truncate the answer, including when the user also asks to shop. Continue existing order lookup/account binding rules when the question requires order access.",
     (searchIntent.commerceTopic === "sizing" && searchIntent.knowledgeScope !== "general" || tentativeSizing) ? SIZING_CONVERSATION_CONTRACT : "",

@@ -125,7 +125,7 @@ for (const [kind, base] of [['policy', policy], ['candidate', candidate]]) {
     const unavailable = await run(base, { repairResult });
     check(unavailable.repairs.length === 1 && unavailable.reviews.length === 1 && unavailable.output.text !== unavailable.replacement, `${kind}: ${repairResult} repair keeps the original fallback without another review`);
   }
-  for (const firstVerdict of [{ ...initialNo(kind), confidence: .6 }, { allowed: false, confidence: .99 },
+  for (const firstVerdict of [{ ...initialNo(kind), confidence: .539 }, { allowed: false, confidence: .99 },
     { ...initialNo(kind), reviewStatus: 'timeout' }, () => { throw Object.assign(new Error('review timeout'), { code: 'AI_REPLY_TIMEOUT' }); }]) {
     const excluded = await run(base, { firstVerdict });
     check(excluded.repairs.length === 0, `${kind}: uncertain, missing or timeout review cannot invoke repair`);
@@ -213,7 +213,7 @@ for (const [label, repairTimeoutMs, expected] of [['default', undefined, 15000],
   const recovery = await recoverReviewedLanguageReply({ replyResult: original, language: 'es', userText: policy.userText,
     ...(repairTimeoutMs === undefined ? {} : { repairTimeoutMs }), recordReview: async () => {},
     repairLanguageReply: async input => { timeout = input.timeoutMs; return { ...original, text: policyText, speechText: policyText }; },
-    reviewCandidate: async (reply, options) => { check(options.reviewTimeoutMs === 60000 && !Object.hasOwn(options, 'languageRecoveryDeadline'), `${label}: re-review gets an independent primary budget without an absolute recovery deadline`); return reply; },
+    reviewCandidate: async (reply, options) => { check(options.reviewTimeoutMs === 60000 && !Object.hasOwn(options, 'languageRecoveryDeadline'), `${label}: re-review gets an independent primary budget without an absolute recovery deadline`); await options.recordReview({ guardApplied: false }); return reply; },
   });
   check(timeout === expected && recovery.recovered, `${label}: engine validates and clamps the allocation with the configured independent correction ceiling`);
 }

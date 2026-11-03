@@ -49,6 +49,13 @@ const PROCESSING_UNAVAILABLE_COPY = Object.freeze({
   et: "Mul ei õnnestunud praegu su päringut töödelda. Palun proovi hiljem uuesti.",
 });
 
+export function getProcessingUnavailableCopy(language = "en") {
+  const rawLanguage = String(language || "").trim();
+  const code = (normalizeCharacterLanguage(rawLanguage)
+    || normalizeCharacterLanguage(rawLanguage.split(/[-_]/, 1)[0]))?.code || "en";
+  return PROCESSING_UNAVAILABLE_COPY[code] || PROCESSING_UNAVAILABLE_COPY.en;
+}
+
 // A processing failure is neither a catalogue no-match nor missing user details.
 // Only server-validated classification failures can produce this fixed status.
 export function buildCommerceClassificationFailureReply(searchIntent = {}, {
@@ -62,10 +69,7 @@ export function buildCommerceClassificationFailureReply(searchIntent = {}, {
   // Timeout uses the existing translated server-timeout copy: a catalogue query
   // has not necessarily happened. Other failures use a neutral processing status.
   if (failure !== "timeout") {
-    const rawLanguage = String(language || "").trim();
-    const code = (normalizeCharacterLanguage(rawLanguage)
-      || normalizeCharacterLanguage(rawLanguage.split(/[-_]/, 1)[0]))?.code || "en";
-    const text = PROCESSING_UNAVAILABLE_COPY[code] || PROCESSING_UNAVAILABLE_COPY.en;
+    const text = getProcessingUnavailableCopy(language);
     reply.text = reply.displayText = reply.speechText = text;
   }
   return { ...reply, productScopeVerified: false, candidateEvidenceVerified: false,

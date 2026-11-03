@@ -1,0 +1,15 @@
+import assert from 'node:assert/strict';
+import { resolveReplyReviewStages } from '../server/chat-reply-review-outcome.js';
+const rejected = { allowed:false, confidence:.9, boundarySupported:true, businessFactsSupported:false, repairIssues:[{kind:'review_reason',reason:'unsupported promise'}] };
+const combined = {...rejected, reviewStatus:'invalid_fields',languageQualitySupported:false};
+const options={primaryResult:rejected,combinedResult:combined,languageStatus:'invalid_fields',primaryContracts:['business_facts'],contracts:['business_facts','language']};
+const stages=resolveReplyReviewStages(options);
+assert.equal(stages.primaryStatus,'valid');assert.equal(stages.combinedStatus,'invalid_fields');
+assert.equal(stages.repairResult,rejected);assert.deepEqual(stages.repairFailures,['business_facts']);
+assert.equal(stages.repairResult.repairIssues[0].reason,'unsupported promise');
+const accepted={...rejected,allowed:true,businessFactsSupported:true};
+assert.equal(resolveReplyReviewStages({...options,primaryResult:accepted}).repairResult,combined);
+assert.equal(resolveReplyReviewStages({...options,languageStatus:'valid'}).repairResult,combined);
+assert.equal(resolveReplyReviewStages({...options,primaryResult:{reviewStatus:'timeout'}}).repairResult,combined);
+assert.equal(rejected.reviewStatus,undefined,'stage resolution never mutates original verdict');
+console.log('review stages: independent primary/language outcomes, retained rejection, unavailable is not approval');

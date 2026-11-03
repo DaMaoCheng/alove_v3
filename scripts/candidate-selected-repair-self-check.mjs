@@ -103,7 +103,7 @@ for(const patch of [
  {searchIntent:{...intent,productRequestState:{...scope,status:'pending',selectedIndex:null}}},
 ])assert.equal(isGroundedCommerceRepairEligible({...uncertain,...patch}),false,'protocol failure, lost proof, pending scope and another repair cannot use uncertainty as permission');
 const {enforceReplyBoundary}=await import('../server/chat-reply-boundary-service.js');
-for(const finalConfidence of [.98,.6]) {
+for(const finalConfidence of [.98,.6,.5]) {
  let corrections=0,wholeReviews=0;
  const texts=[];
  const pass={allowed:true,confidence:finalConfidence,boundarySupported:true,evidenceSupported:true,businessFactsSupported:true,
@@ -122,7 +122,7 @@ for(const finalConfidence of [.98,.6]) {
  assert.equal(corrections,1,'uncertainty permits exactly one new text, never repeated approval attempts');
  assert.equal(wholeReviews,2,'the fresh candidate receives the whole original review');
  assert.notEqual(texts[0],texts[1],'never review the rejected original again');
- if(finalConfidence>=.8)assert.equal(result.text,'The collar remains unverified. Is this the item you mean?');
- else assert.equal(result.sourceRef,'reply-boundary-guard','fresh low-confidence assessment still fails the unchanged final .8 gate');
+ if(finalConfidence>=.54)assert.equal(result.text,'The collar remains unverified. Is this the item you mean?');
+ else assert.equal(result.sourceRef,'reply-boundary-guard','fresh assessment below the shared .54 gate remains blocked');
 }
-console.log('uncertain selected source permits one regeneration and full unchanged-threshold re-review');
+console.log('uncertain selected source permits one regeneration and full shared-threshold re-review');

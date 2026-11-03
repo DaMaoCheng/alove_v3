@@ -1,15 +1,13 @@
 export const LANGUAGE_REVIEW_PROTOCOL_FAILURES = new Set(["field_types", "missing_fields", "supported_type", "confidence", "issue_count", "retained_type", "issue_type", "issue_field", "issue_severity", "issue_span", "span_mismatch"]);
-// Language certainty is independent of business/permission review confidence.
+// Confidence gate is shared; explicit business, language and permission
+// verdicts still have to pass independently.
 export const LANGUAGE_REVIEW_MIN_CONFIDENCE = 0.54;
 export function languageReviewConfident(score) {
   return Number.isFinite(score) && score >= LANGUAGE_REVIEW_MIN_CONFIDENCE && score <= 1;
 }
-// Legacy language-only review shares the same threshold. Any boundary or
-// non-language contract keeps the existing business confidence requirement.
+// A lower score threshold does not approve any failed or missing contract.
 export function replyReviewConfident(result, contracts = []) {
-  if (contracts.length === 1 && contracts[0] === "language" && result?.boundarySupported === undefined)
-    return languageReviewConfident(result?.confidence);
-  return Number.isFinite(result?.confidence) && result.confidence >= .8 && result.confidence <= 1;
+  return languageReviewConfident(result?.confidence);
 }
 // Each review stage/provider owns this budget; transport fallbacks do not
 // split one shrinking deadline. A correction remains strictly single-shot.
@@ -21,7 +19,7 @@ export const GROUNDED_COMMERCE_REPAIR_TIMEOUT_MS = 30000;
 // A caller must explicitly opt into the commerce correction scope. Generic
 // language/image recovery retains its original ceiling.
 export function resolveReplyRepairBudget(timeoutMs, scope = '') {
-  const ceiling = scope === 'grounded_commerce' ? GROUNDED_COMMERCE_REPAIR_TIMEOUT_MS : REPLY_REPAIR_TIMEOUT_MS;
+  const ceiling = ['grounded_commerce', 'grounded_complaint'].includes(scope) ? GROUNDED_COMMERCE_REPAIR_TIMEOUT_MS : REPLY_REPAIR_TIMEOUT_MS;
   return Number.isFinite(timeoutMs) && timeoutMs > 0 ? Math.min(ceiling, timeoutMs) : ceiling;
 }
 
@@ -91,4 +89,20 @@ export function failedReviewContracts(result, contracts = []) {
 
 export function activeReviewContracts(options = {}) {
   return Object.entries(REVIEW_CONTRACTS).filter(([, contract]) => Boolean(options[contract.option])).map(([name]) => name);
+}
+
+// Preserve independent evidence for recovery without granting approval. A failed
+// language call cannot invalidate a completed primary verdict; only the caller's
+// existing recovery eligibility may act on that verdict. Display still uses the
+// complete combined result and every active contract.
+export function resolveReplyReviewStages({ primaryResult = null, combinedResult = null, languageStatus = 'not_run', primaryContracts = [], contracts = [] } = {}) {
+  const primaryStatus = primaryResult ? reviewOutcomeStatus(primaryResult, primaryContracts) : 'not_run';
+  const primaryFailures = primaryStatus === 'valid' ? failedReviewContracts(primaryResult, primaryContracts) : [];
+  const preservePrimaryRejection = primaryStatus === 'valid' && primaryFailures.length > 0 && languageStatus !== 'valid';
+  const repairResult = preservePrimaryRejection ? primaryResult : combinedResult;
+  const repairContracts = preservePrimaryRejection ? primaryContracts : contracts;
+  return { primaryStatus, languageStatus,
+    combinedStatus: combinedResult ? reviewOutcomeStatus(combinedResult, contracts) : 'not_run',
+    repairResult, repairStatus: repairResult ? reviewOutcomeStatus(repairResult, repairContracts) : 'not_run',
+    repairFailures: failedReviewContracts(repairResult, repairContracts) };
 }

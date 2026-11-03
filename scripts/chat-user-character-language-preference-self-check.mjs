@@ -39,6 +39,15 @@ try {
   };
   const guestSession = { id: "mock_guest_language_session", preferred_language: "Spanish" };
   const guestCharacter = { id: "mock_guest_character", profile_json: '{"language":"Spanish"}', persona_prompt: "Existing persona." };
+  const currentEnglish = normalizeJevResponse({ answers: { route: { choice: 'daily_chat', confidence: .8 }, input_language: { choice: 'en', confidence: .8 } } });
+  const autoEnglish = await applySessionLanguagePreference(guestDb, { character: guestCharacter, session: guestSession, userText: 'Is this website real?', jevDecision: currentEnglish });
+  assert.equal(autoEnglish.languageCode, 'en');
+  assert.equal(autoEnglish.scope, 'turn');
+  assert.equal(guestUpdates.length, 0, 'automatic language must not change saved preference');
+  const explicitFrench = await applySessionLanguagePreference(guestDb, { character: guestCharacter, session: guestSession, userText: 'Reply in French', jevDecision: { ...currentEnglish, languageDecision: { targetCode: 'fr', scope: 'turn', confidence: .8 } } });
+  assert.equal(explicitFrench.languageCode, 'fr', 'explicit turn language takes priority');
+  const unclear = await applySessionLanguagePreference(guestDb, { character: guestCharacter, session: guestSession, userText: 'Hi', jevDecision: { ...currentEnglish, inputLanguage: null } });
+  assert.equal(unclear.languageCode, 'es', 'ambiguous input retains configured language');
   const guestStandalone = await applySessionLanguagePreference(guestDb, {
     character: guestCharacter, session: guestSession, userText: "English please.",
   });

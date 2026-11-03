@@ -104,7 +104,7 @@ const exhausted = await enforceReplyBoundary({ replyResult: { text: "Ask again?"
 check(exhausted.text === buildProductRequestScopeCopy(exhaustedIntent) && !/[?？]/.test(exhausted.text), "exhausted scope cannot ask a third question");
 const selectedError = buildUnconfirmedProductStateReply({ searchIntent: { ...selected, searchState: "source_error" }, searchOutcome: "source_error", sourceErrorCode: "timeout" });
 check(selectedError.includes("original second item") && !selectedError.includes("original first item"), "source errors are attributed only to the selected item");
-for (const confidence of ["0.99", 1.1, NaN, .7]) {
+for (const confidence of ["0.99", 1.1, NaN, .539]) {
   const result = await enforceReplyBoundary({ replyResult: { text: "Unsafe item assertion." }, searchIntent: intent, assess: async () => ({ ...yes, confidence }) });
   check(result.text === expected, "scope review requires numeric in-range confidence");
 }

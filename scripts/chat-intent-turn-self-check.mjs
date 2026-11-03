@@ -143,6 +143,13 @@ assert(languageQuestionStart > 0 && languageQuestionEnd > languageQuestionStart)
 const languageQuestions = baselineSource.slice(languageQuestionStart, languageQuestionEnd);
 assert(languageQuestions.includes('reply_language_scope: {'));
 baselineSource = baselineSource.replace(languageQuestions, '');
+const inputStart = baselineSource.indexOf('    input_language: {\n');
+const inputEnd = baselineSource.indexOf('    wants_character_image: {\n', inputStart);
+assert.ok(inputStart >= 0 && inputEnd > inputStart, 'separately tested input-language question must exist');
+baselineSource = baselineSource.slice(0, inputStart) + baselineSource.slice(inputEnd);
+assert.equal(baselineSource.split('    inputLanguage: normalizeInputLanguage(answers.input_language),\n').length - 1, 1);
+baselineSource = baselineSource.replace('    inputLanguage: normalizeInputLanguage(answers.input_language),\n', '');
+
 assert.equal(baselineSource.split('    languageDecision: normalizeReplyLanguageDecision(answers),\n').length - 1, 1);
 baselineSource = baselineSource.replace('    languageDecision: normalizeReplyLanguageDecision(answers),\n', '');
 // Preserve the exact approved rule source while allowing the separately tested

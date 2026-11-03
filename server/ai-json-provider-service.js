@@ -29,6 +29,7 @@ export async function requestAiJsonWithProviderFallback(messages, {
   perProviderTimeout = false,
   providerTimeoutMs = null,
   validateParsed = null,
+  protocolCorrectionMessages = null,
   logContext = {},
 } = {}) {
   const providers = configuredProviders(config);
@@ -59,6 +60,8 @@ export async function requestAiJsonWithProviderFallback(messages, {
   };
   let lastError = null;
   let text;
+  let nextProtocolCorrection = "";
+  let protocolCorrectionUsed = false;
   for (const [index, modelConfig] of providers.entries()) {
     const remainingMs = perProviderTimeout ? budgetMs : deadline - nowFn();
     if (remainingMs < 1) break;
@@ -78,7 +81,9 @@ export async function requestAiJsonWithProviderFallback(messages, {
         ? { type: "json_schema", ...responseFormat.json_schema } : responseFormat } } : null;
     const startedAt = Date.now();
     try {
-      text = await requestOpenAiText(promptContext, {
+      const attemptContext = nextProtocolCorrection ? { ...promptContext, messages: [...promptContext.messages, { role: "system", content: nextProtocolCorrection }] } : promptContext;
+      nextProtocolCorrection = "";
+      text = await requestOpenAiText(attemptContext, {
         modelConfig: formatExtras ? { ...modelConfig, requestBodyExtras: { ...modelConfig.requestBodyExtras, ...formatExtras } } : modelConfig,
         fetchImpl, jsonOutput: !responseFormat, sourceRef, recordProviderCallFn: recordCall,
         timeoutMs: Math.min(attemptBudget, providerTimeout > 0 ? providerTimeout : attemptBudget),
@@ -106,6 +111,10 @@ export async function requestAiJsonWithProviderFallback(messages, {
     if (parsed !== undefined && validateParsed) {
       const verdict = validateParsed(parsed);
       if (verdict?.valid === true) return parsed;
+      if (!protocolCorrectionUsed && index + 1 < providers.length && typeof verdict?.correctionCode === "string" && Object.hasOwn(protocolCorrectionMessages || {}, verdict.correctionCode)) {
+        nextProtocolCorrection = protocolCorrectionMessages[verdict.correctionCode];
+        protocolCorrectionUsed = true;
+      }
       const reason = ["shape", "evidence"].includes(verdict?.reason) ? verdict.reason : "shape";
       lastError = rememberFailure(modelConfig, Object.assign(new Error(`AI JSON protocol rejected: ${reason}`),
         { code: "AI_JSON_INVALID_OUTPUT", aiJsonProtocolKind: reason }), `protocol_${reason}`);

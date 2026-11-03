@@ -1,4 +1,5 @@
 import { normalizeCharacterLanguage } from "../shared/language-library.js";
+import { buildSupportGuidanceUnavailableCopy } from './support-guidance-copy.js';
 
 const contexts = new WeakSet();
 const reviewedBodies = new WeakMap();
@@ -57,7 +58,8 @@ export function buildGuestBenefitContext({ searchIntent = {}, userText = "", lan
     || !evidence || evidence.length > 500 || !String(userText).includes(evidence)) return null;
   const code = normalizeCharacterLanguage(languageCode)?.code
     || normalizeCharacterLanguage(String(languageCode).split(/[-_]/)[0])?.code || "en";
-  const context = Object.freeze({ isGuest: true, issuanceAllowed: false, evidence, languageCode: code });
+  const context = Object.freeze({ isGuest: true, issuanceAllowed: false, evidence, languageCode: code,
+    unresolvedComplaint: searchIntent.unresolvedUserComplaint === true });
   contexts.add(context);
   return context;
 }
@@ -88,16 +90,29 @@ export function buildGuestBenefitFallback(context) {
   return contexts.has(context) ? COPY[context.languageCode] || "" : "";
 }
 
+// This is a controlled uncertainty statement, not proof of an offer, its terms,
+// eligibility or a change to the guest's account.
+export function buildGuestBenefitFailureFallback(context) {
+  const base = buildGuestBenefitFallback(context);
+  if (!base || context.unresolvedComplaint !== true) return base;
+  const explicit = { en: "I can't confirm the promotion or why it was not applied here.",
+    es: "No puedo confirmar la promoción ni por qué no se ha aplicado aquí.",
+    zh: "这里无法确认该优惠活动或未生效的原因。" }[context.languageCode]
+    || buildSupportGuidanceUnavailableCopy(context.languageCode);
+  return [explicit, base].filter(Boolean).join('\n\n');
+}
+
 export function isControlledGuestBenefitCopy(context, text) {
   const copy = buildGuestBenefitFallback(context);
-  return Boolean(copy) && String(text || "").trim() === copy;
+  const body = String(text || "").trim();
+  return Boolean(copy) && (body === copy || body === buildGuestBenefitFailureFallback(context));
 }
 
 export function appendGuestBenefitGuide(text, context) {
   const body = String(text || "").trim();
   const copy = buildGuestBenefitFallback(context);
   if (!copy) return body;
-  if (isControlledGuestBenefitCopy(context, body)) return copy;
+  if (isControlledGuestBenefitCopy(context, body)) return body;
   if (!isGuestBenefitReplyReviewed(context, body)) return copy;
   return body.includes(copy) ? body : `${body}\n\n${copy}`;
 }

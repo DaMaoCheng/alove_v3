@@ -10,6 +10,7 @@ import { getDbPool } from "./db-core.js";
 import { resolveChatImageStatusContext, refreshChatImageStatusContext, withChatImageReplySnapshot } from "./chat-image-status-context-service.js";
 import { buildImageReplyRecoveryPrompt } from "./chat-image-reply-recovery-service.js";
 import { buildReplyPurposeRecoveryPrompt } from "./chat-reply-purpose-service.js";
+import { appendRepairFeedback } from "./chat-reply-repair-feedback-service.js";
 import { prepareChatIntentTurn } from "./chat-intent-turn-service.js";
 import { shouldSkipOrderLookupForCheckout } from "./checkout-support-guidance.js";
 import { isStorefrontGuidanceCharacter } from "./chat-global-reply-policy.js";
@@ -101,6 +102,8 @@ export async function buildCharacterReplyGenerationForDb(db, {
     query: userText,
     logContext,
     knowledgeQuery: commerceSearchIntent.knowledgeQuery,
+    recheckLowConfidence: commerceSearchIntent.pureStorePolicy === true && commerceSearchIntent.unresolvedUserComplaint !== true
+      && commerceSearchIntent.commerceRoute === 'store_policy' && commerceSearchIntent.shouldLoadProductContext === false && commerceSearchIntent.cardAllowed !== true,
     knowledgeScope: resolveCommerceKnowledgeScope(commerceSearchIntent, { classificationFailed: Boolean(classificationFailureReply) }),
     siteId: commerceSite?.id || "",
     character: promptCharacter,
@@ -129,6 +132,8 @@ export async function buildCharacterReplyGenerationForDb(db, {
     knowledgeContext,
     orderActionCandidate: orderAction,
     userText,
+    feedbackHistory,
+    recentMessages,
     searchIntent: commerceSearchIntent,
   });
   let discountOffersContext = null;
@@ -210,7 +215,7 @@ export async function buildCharacterReplyGenerationForDb(db, {
   let replyResult = prepareGeneratedReply(generatedReplyResult);
   // Read through the pool: the reply transaction may still hold an older RR snapshot.
   chatImageContext = await refreshChatImageStatusContext(getDbPool(), chatImageContext);
-  replyResult = classificationFailureReply || await enforceReplyBoundary({ requireIdentityReview: true, independentLanguageQualityRequired: true, languageQualityRequired: true, factualContext, chatImageContext, replyResult, searchIntent: commerceSearchIntent, productContext, knowledgeContext, character: promptCharacter, trustedSite: commerceSite, feedbackActionCandidate, orderActionCandidate: orderAction, userText, recentMessages,
+  replyResult = classificationFailureReply || await enforceReplyBoundary({ requireIdentityReview: true, independentLanguageQualityRequired: true, languageQualityRequired: true, factualContext, chatImageContext, replyResult, promptContext, searchIntent: commerceSearchIntent, productContext, knowledgeContext, character: promptCharacter, trustedSite: commerceSite, feedbackActionCandidate, orderActionCandidate: orderAction, userText, recentMessages,
     language: logContext?.languageCode || promptCharacter?.profile?.language || "en",
     logContext: { requestId: logContext.requestId, sessionId: session.id, characterId, userId },
     refreshImageStatus: context => refreshChatImageStatusContext(getDbPool(), context),
@@ -220,7 +225,7 @@ export async function buildCharacterReplyGenerationForDb(db, {
       if (!recoveryPrompt) return null;
       return prepareGeneratedReply(await generateChatReply({
         deferIdentityToBoundaryReview: true,
-        promptContext: recoveryPrompt, userText, feedbackActionCandidate, logContext, regeneration: true, regenerationProvider: previousReply, regenerationUseAlternateProvider: recovery?.kind === "purpose",
+        promptContext: appendRepairFeedback(recoveryPrompt, recovery?.repairFeedback), userText, feedbackActionCandidate, logContext, regeneration: true, regenerationTimeoutMs: recovery?.timeoutMs, regenerationRecordDiagnostic: recovery?.recordDiagnostic, regenerationProvider: previousReply, regenerationUseAlternateProvider: recovery?.kind === "purpose",
       }));
     } });
   if (classificationFailureReply) replyResult = withChatImageReplySnapshot(replyResult, chatImageContext);

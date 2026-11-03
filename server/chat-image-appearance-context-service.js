@@ -3,7 +3,7 @@ export function pendingAppearanceUserContext(context = null) {
   const recent = Array.isArray(context?.recentConversation) ? context.recentConversation.slice(-6) : [];
   for (let i = recent.length - 1; i >= 0; i--) {
     const item = recent[i];
-    if (['image_generation', 'mascot_library_image', 'product', 'attachment'].includes(item?.kind)) return null;
+    if (['image_generation', 'mascot_library_image', 'mascot_greeting_image', 'product', 'attachment'].includes(item?.kind)) return null;
     if (item?.role === 'user' && item.kind === 'text') {
       const userText = String(item.text || '').trim().slice(0, 600);
       return userText ? { userText } : null;

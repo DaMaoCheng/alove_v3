@@ -173,8 +173,8 @@ export function isConversationReplyRecoveryEligible({ replyResult = {}, searchIn
   const languageProtocolValid = !reviewFieldProtocolFailure({ allowed: languageAssessment?.languageQualitySupported,
     confidence: languageAssessment?.confidence, languageQualitySupported: languageAssessment?.languageQualitySupported }, ['language']);
   return Boolean(reviewStatus === 'valid' && primaryProtocolValid
-    && contracts.length > 0 && contracts.every(name => ['language', 'factual'].includes(name))
-    && failedContracts.length > 0 && failedContracts.every(name => ['language', 'factual', 'boundary', 'confidence'].includes(name))
+    && contracts.length > 0 && contracts.every(name => ['language', 'factual', 'factual_limitation'].includes(name))
+    && failedContracts.length > 0 && failedContracts.every(name => ['language', 'factual', 'factual_limitation', 'boundary', 'confidence'].includes(name))
     && languageAssessment?.reviewStatus === 'valid' && languageProtocolValid
     && factualContext?.required === false && factualContext?.status === 'not_required'
     && Number.isFinite(Date.parse(factualContext.asOfUtc)) && factualContext.searched !== true && !factualContext.items?.length
@@ -187,7 +187,7 @@ export function isConversationReplyRecoveryEligible({ replyResult = {}, searchIn
     && !['pending', 'selected'].includes(searchIntent.productRequestState?.status)
     && (!searchIntent.productCandidateState || searchIntent.productCandidateState.status === 'cleared')
     && !productContext?.products?.length && !productContext?.candidateContext && !productContext?.sizingProduct
-    && (!knowledgeContext?.items?.length || searchIntent.knowledgeScope === 'general'
+    && knowledgeContext?.source !== 'brave_web' && (!knowledgeContext?.items?.length || searchIntent.knowledgeScope === 'general'
       && knowledgeContext.customerServiceIntent !== true && knowledgeContext.source !== 'brave_web')
     && !orderActionCandidate && !feedbackActionCandidate && !chatImageContext
     && !guestBenefitContext && !checkoutContext && !languageRepairAttempted && !groundedRepairAttempted && !retained
@@ -199,7 +199,7 @@ export function isConversationReplyRecoveryEligible({ replyResult = {}, searchIn
 export function buildReplyPurposeRecoveryPrompt(promptContext, recovery = {}) {
   if (!promptContext || typeof promptContext.systemPrompt !== 'string' || recovery.kind !== 'purpose'
     || !['conversation', 'clarification', 'product_clarification'].includes(recovery.purpose) || !Array.isArray(recovery.failedContracts)
-    || !recovery.failedContracts.length || recovery.failedContracts.some(name => !['language', 'factual', 'boundary', 'confidence', ...(recovery.purpose === 'product_clarification' ? ['product_scope'] : [])].includes(name))) return null;
+    || !recovery.failedContracts.length || recovery.failedContracts.some(name => !['language', 'factual', 'boundary', 'confidence', ...(recovery.purpose === 'product_clarification' ? ['product_scope'] : ['factual_limitation'])].includes(name))) return null;
   const languagePurpose = recovery.purpose === 'conversation' && languageClarificationRecoveryProof(recovery);
   const languagePurposeContract = languagePurpose
     ? `Generate this one fresh candidate in ${languagePurpose.targetCode}: only a question asking which language the current user prefers, optionally with a short acknowledgment. The question is required and the acknowledgment is optional. The current user has a verified personal current-language communication barrier, not a shopping or topic request. Do not add any other answer, catalogue invitation or permanent-switch claim. This is a current-turn generation purpose only: it grants no stored preference, action or approval, and both complete outputs must pass the original independent reviews anew.` : '';

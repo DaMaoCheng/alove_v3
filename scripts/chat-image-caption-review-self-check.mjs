@@ -10,7 +10,7 @@ for (const key of ['languageSupported', 'noRepeatedBusinessAnswer', 'noInternalL
 }
 for (const bad of [null, {}, { ...good, confidence: null }, { ...good, confidence: 1.1 }, { ...good, noInternalLeak: 'true' }])
   assert.equal(normalizeImageCaptionReview(bad).allowed, false);
-assert.equal(replyReviewConfident({ confidence: .6, boundarySupported: true }, ['image_status']), false, 'ordinary image review keeps .8');
+assert.equal(replyReviewConfident({ confidence: .6, boundarySupported: true }, ['image_status']), true, 'reply reviews use the shared .54 gate');
 let calls = 0;
 const review = await assessImageTerminalCaption({ replyResult: { text: "That's me in the Liverpool shirt you asked for!", aiModel: 'generator' },
   userText: 'How long is shipping? Send a photo in the Liverpool shirt.', language: 'en',

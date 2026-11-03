@@ -2,10 +2,29 @@ import assert from 'node:assert/strict';
 import { loadFeedbackConversationHistory, isSubmittedFeedbackFollowup, normalizeSupportFollowup, attachFeedbackSubmissionContext, applyFeedbackSubmissionPrompt } from '../server/chat-feedback-submission-service.js';
 import { normalizeCommerceAssistance } from '../server/product-intent-classifier-service.js';
 import { resolveChatFeedbackActionCandidate, appendFeedbackFollowupCopy } from '../server/chat-feedback-action-service.js';
+import { insertMessage, mapMessageRow } from '../server/chat-message-store.js';
+import { buildCommerceDecisionLogEvent } from '../server/ai-reply-log-service.js';
+const relationLog = JSON.parse(buildCommerceDecisionLogEvent({ searchIntent: { supportFollowup: { relation: 'offered_issue_followup', evidence: 'private user text' } } }).errorMessage);
+assert.equal(relationLog.supportFollowup, 'offered_issue_followup');
+assert(!JSON.stringify(relationLog).includes('private user text'), 'diagnostics never log user evidence');
+const internalAction = { kind: 'feedback', label: 'Click here', feedbackInstructionOrigin: 'msg_origin' };
+let storedPayload;
+const inserted = await insertMessage({ execute: async (_sql, values) => { storedPayload = JSON.parse(values[9]); } }, {
+  sessionId: 'session_fixture', characterId: 'mascot_fixture', senderType: 'character', senderLabel: 'Guide', contentType: 'feedback_action',
+  text: '', product: internalAction, displayOrder: 20, sourceType: 'ai', sourceRef: 'fixture' });
+assert.equal(storedPayload.feedbackInstructionOrigin, 'msg_origin', 'DB retains origin for the next turn');
+assert.equal(inserted.feedbackAction.feedbackInstructionOrigin, undefined, 'new message does not expose internal origin');
+assert.equal(inserted.product.feedbackInstructionOrigin, undefined);
+const remapped = mapMessageRow({ content_type: 'feedback_action', product_payload_json: JSON.stringify(storedPayload) });
+assert.equal(remapped.feedbackAction.feedbackInstructionOrigin, undefined, 'history API does not expose internal origin');
+assert.equal(remapped.product.feedbackInstructionOrigin, undefined);
+assert.equal(remapped.feedbackAction.label, 'Click here');
 const character={id:'mascot_fixture',category_id:'mascot',profile:{language:'Spanish'}};
 const text='Ya he rellenado el formulario';
 const entry={id:'msg_entry',characterId:character.id,senderType:'character',contentType:'feedback_action',displayOrder:20,sentAt:new Date('2026-10-26T01:00:00Z')};
 const current={commerceRoute:'store_policy',commerceTopic:'support',commerceConfidence:.99,replyBoundary:{contactAllowed:true,salesAllowed:false},supportFollowup:{relation:'submitted_followup',evidence:text}};
+assert.equal(normalizeSupportFollowup({relation:'offered_issue_followup',evidence:text},{userText:text,recentMessages:[entry],confidence:.9})?.relation,'offered_issue_followup');
+assert.equal(normalizeSupportFollowup({relation:'offered_issue_followup',evidence:text},{userText:text,recentMessages:[],confidence:.9}),null);
 let calls=[];const db={execute:async(sql,args)=>{calls.push({sql,args});assert(!sql.includes('cs.site_id'), 'chat_sessions has no site_id column');if(args.includes('site_other')||args.includes('guest_other'))return [[]];if(sql.includes('FROM chat_messages'))return [[{id:entry.id,character_id:character.id,display_order:20,sent_at:entry.sentAt}]];if(sql.includes('FROM user_feedback'))return [[{feedback_status:'new',created_at:new Date('2026-10-26T01:01:00Z')}]];throw Error('Unexpected SQL');}};
 const history=await loadFeedbackConversationHistory(db,{sessionId:'chat_owned',character,siteId:'site_owned',guestSessionId:'guest_owned',beforeDisplayOrder:40});
 assert.equal(history.feedbackSubmission.verified,true);
@@ -76,3 +95,37 @@ for(const ageCase of ['before_session','over_30_days']){
  const oldDb={execute:async sql=>{if(sql.includes('FROM chat_messages'))return [[]];assert(sql.includes('uf.created_at >= cs.created_at'));assert(sql.includes('DATE_SUB(NOW(3), INTERVAL 30 DAY)'));const admitted=ages.feedbackCreated>=ages.sessionCreated&&ages.now-ages.feedbackCreated<=30*86400000;return [admitted?[{feedback_status:'new',created_at:ages.feedbackCreated}]:[]];}};
  assert.equal(await loadFeedbackConversationHistory(oldDb,{sessionId:'chat_owned',character,siteId:'site_owned',guestSessionId:'guest_owned',beforeDisplayOrder:40}),null,ageCase+' receipt is not recent current-conversation evidence');
 }
+
+const pendingText='Sigo molesto por lo mismo';
+const pendingIntent={commerceRoute:'store_policy',unresolvedUserComplaint:true,replyBoundary:{contactAllowed:true},supportFollowup:{relation:'offered_issue_followup',evidence:pendingText}};
+const first=resolveChatFeedbackActionCandidate({character,knowledgeContext:{customerServiceIntent:true,items:[]},searchIntent:pendingIntent,userText:pendingText});
+const suffix=appendFeedbackFollowupCopy('',{character,languageCode:'es',feedbackAction:first});
+const previous=[{id:'text_first',senderType:'character',contentType:'text',characterId:character.id,displayOrder:15,text:`Entiendo.\n\n${suffix}`}];
+const make=(overrides={})=>resolveChatFeedbackActionCandidate({character,knowledgeContext:{customerServiceIntent:true,items:[]},searchIntent:pendingIntent,userText:pendingText,feedbackHistory:{entries:[entry]},recentMessages:previous,...overrides});
+const action=make();assert.equal(action.kind,'feedback');
+assert.equal(appendFeedbackFollowupCopy('Te entiendo.',{character,languageCode:'es',feedbackAction:action}),'Te entiendo.');
+assert.equal(action.feedbackInstructionOrigin,'text_first');
+const laterEntry={...entry,id:'entry_later',displayOrder:30,feedbackInstructionOrigin:action.feedbackInstructionOrigin};
+const laterText={id:'text_second',senderType:'character',contentType:'text',characterId:character.id,displayOrder:25,text:'Te entiendo.'};
+const secondContinuation=make({feedbackHistory:{entries:[entry,laterEntry]},recentMessages:[...previous,laterText]});
+assert.equal(appendFeedbackFollowupCopy('Sigo escuchándote.',{character,languageCode:'es',feedbackAction:secondContinuation}),'Sigo escuchándote.','multiple continuations reuse proven original instructions');
+assert.equal(secondContinuation.feedbackInstructionOrigin,'text_first');
+const missingOrigin=make({feedbackHistory:{entries:[laterEntry]},recentMessages:[laterText]});
+assert.notEqual(appendFeedbackFollowupCopy('Te entiendo.',{character,languageCode:'es',feedbackAction:missingOrigin}),'Te entiendo.','missing original message fails closed');
+const foreignOrigin=make({feedbackHistory:{entries:[laterEntry]},recentMessages:[{...previous[0],characterId:'other'},laterText]});
+assert.notEqual(appendFeedbackFollowupCopy('Te entiendo.',{character,languageCode:'es',feedbackAction:foreignOrigin}),'Te entiendo.','another character cannot lend instructions');
+assert.notEqual(appendFeedbackFollowupCopy('I hear you.',{character,languageCode:'en',feedbackAction:action}),'I hear you.','changed response language requires the new-language instructions');
+for(const overrides of [{feedbackHistory:null},{recentMessages:[]},{recentMessages:[{...previous[0],displayOrder:14}]},{searchIntent:{...pendingIntent,supportFollowup:{relation:'new_issue',evidence:pendingText}}},{searchIntent:{...pendingIntent,needsLiveProductData:true}},{userText:pendingText+' another issue'}]) {
+ const a=make(overrides);assert.notEqual(appendFeedbackFollowupCopy('Te entiendo.',{character,languageCode:'es',feedbackAction:a}),'Te entiendo.');
+}
+console.log('offered issue continuation: same turn evidence, owned action adjacency and language boundaries passed');
+const longOffered='a'.repeat(298), tooLongOffered='a'.repeat(2001);
+assert.equal(normalizeSupportFollowup({relation:'offered_issue_followup',evidence:longOffered},{userText:longOffered,recentMessages:[entry],confidence:.9})?.evidence,longOffered,'long whole current message is preserved');
+assert.equal(normalizeSupportFollowup({relation:'offered_issue_followup',evidence:tooLongOffered},{userText:tooLongOffered,recentMessages:[entry],confidence:.9}),null,'over-bound input is rejected');
+assert.equal(normalizeSupportFollowup({relation:'offered_issue_followup',evidence:longOffered.slice(0,100)},{userText:longOffered,recentMessages:[entry],confidence:.9}),null,'partial quote cannot impersonate the whole turn');
+const {resolveJevCommerceDecision}=await import('../server/jev-commerce-decision-service.js');
+const fakeJev=async ({questions})=>({ok:true,answers:Object.fromEntries(Object.entries(questions).map(([key,q])=>[key,{choice:key==='route'?'store_policy':key==='support_followup'?'offered_issue_followup':Object.keys(q.criteria)[0],confidence:.9}]))});
+const longDecision=await resolveJevCommerceDecision(longOffered,{recentMessages:[entry],characterId:character.id,evaluate:fakeJev});
+assert.equal(longDecision.value?.supportFollowup?.evidence,longOffered,'JEV adapter keeps a long whole message as evidence');
+const oversizedDecision=await resolveJevCommerceDecision(tooLongOffered,{recentMessages:[entry],characterId:character.id,evaluate:fakeJev});
+assert.equal(oversizedDecision.value?.supportFollowup,undefined,'JEV adapter rejects over-bound evidence');

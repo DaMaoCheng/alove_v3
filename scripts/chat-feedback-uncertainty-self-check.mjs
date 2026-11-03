@@ -1,0 +1,20 @@
+import assert from 'node:assert/strict';
+const { enforceReplyBoundary } = await import('../server/chat-reply-boundary-service.js');
+const base = { replyResult:{text:'draft',sourceType:'ai'}, searchIntent:{commerceRoute:'store_policy',knowledgeScope:'business',answerRequired:true,unresolvedUserComplaint:true,replyBoundary:{contactAllowed:true,salesAllowed:false}},character:{id:'role',categoryId:'mascot'},trustedSite:{id:'site'},knowledgeContext:{businessOwner:{siteId:'site',characterId:'role'},items:[]},feedbackActionCandidate:{kind:'feedback',label:'form'},language:'es',assess:async()=>({reviewStatus:'valid',allowed:true,confidence:.4,boundarySupported:true,businessFactsSupported:true}) };
+const pass=await enforceReplyBoundary(base);assert.match(pass.text,/Siento que estés pasando por esto/);assert.doesNotMatch(pass.text,/draft/);
+for (const changes of [{searchIntent:{...base.searchIntent,unresolvedUserComplaint:false}},{feedbackActionCandidate:null},{searchIntent:{...base.searchIntent,replyBoundary:{contactAllowed:false,salesAllowed:false}}},{trustedSite:{id:'other'}},{orderActionCandidate:{kind:'ttmall_order_lookup',siteSlug:'shop',status:'login_required'}},{chatImageContext:{taskCreated:true}},{productContext:{products:[{id:'1'}]}}]) {const r=await enforceReplyBoundary({...base,...changes});assert.doesNotMatch(r.text,/Siento que estés pasando por esto/);}
+console.log('feedback uncertainty fallback: authorized owner only, preserved refusal, order, image and product boundaries');
+const multiFailure=await enforceReplyBoundary({...base,assess:async()=>({reviewStatus:'valid',allowed:false,confidence:.4,boundarySupported:true,guidanceSupported:false,businessFactsSupported:false})});
+assert.match(multiFailure.text,/Siento que estés pasando por esto/);
+const {resolveChatFeedbackActionCandidate}=await import('../server/chat-feedback-action-service.js');
+const complaintIntent={...base.searchIntent,commerceRoute:'chat',unresolvedUserComplaint:true,commerceTopic:'support'};
+const ctx={customerServiceIntent:true,items:[],strategy:'business_no_verified_answer'};
+assert.ok(resolveChatFeedbackActionCandidate({character:base.character,knowledgeContext:ctx,searchIntent:complaintIntent}));
+assert.equal(resolveChatFeedbackActionCandidate({character:base.character,knowledgeContext:ctx,searchIntent:{...complaintIntent,unresolvedUserComplaint:false}}),null);
+assert.equal(resolveChatFeedbackActionCandidate({character:base.character,knowledgeContext:ctx,searchIntent:{...complaintIntent,replyBoundary:{contactAllowed:false}}}),null);
+console.log('unresolved JEV complaint enables existing feedback candidate and safe multi-contract fallback; non-complaints and refusal excluded');
+const sizingIntent={...complaintIntent,commerceRoute:'store_policy',commerceTopic:'sizing',cardAllowed:false,shouldLoadProductContext:false};
+const sizingKnowledge={...ctx,businessOwner:{siteId:'site',characterId:'role'}};
+assert.ok(resolveChatFeedbackActionCandidate({character:base.character,knowledgeContext:sizingKnowledge,searchIntent:sizingIntent}));
+for(const change of [{searchIntent:{...sizingIntent,unresolvedUserComplaint:false}},{knowledgeContext:{...sizingKnowledge,businessOwner:{siteId:'site',characterId:'foreign'}}},{productContext:{products:[{id:'p'}]}},{productContext:{sizingProduct:{id:'p'}}},{orderActionCandidate:{kind:'ttmall_order_lookup',siteSlug:'shop',status:'login_required'}},{searchIntent:{...sizingIntent,replyBoundary:{contactAllowed:false}}}])assert.equal(resolveChatFeedbackActionCandidate({character:base.character,knowledgeContext:sizingKnowledge,searchIntent:sizingIntent,...change}),null);
+console.log('sizing complaint allows support only for owned empty-policy context; merchandise, order and refusal remain excluded');

@@ -3,17 +3,17 @@ import { upsertPersonaLanguageSetting } from "../server/chat-language-preference
 import { buildChatReplyPrompt } from "../server/chat-prompt-service.js";
 
 const personaPrompt = upsertPersonaLanguageSetting("Warm football fan.", "English");
-assert.doesNotMatch(personaPrompt, /default|默认/i, "persona language guidance should not use mechanical default wording");
+assert.match(personaPrompt, /configured default when unclear/i, "unclear input retains the configured language fallback");
 assert.match(personaPrompt, /English/, "persona language guidance should still include the selected language");
 assert.match(
   personaPrompt,
-  /Do not change output language just because the user's message is written in another language/i,
-  "persona language guidance should prevent automatic output-language changes from user input language"
+  /Follow the validated current user language when available/i,
+  "persona language guidance should follow validated current-turn input language"
 );
 assert.match(
   personaPrompt,
-  /only when the user explicitly asks you to reply, speak, or write in a specific language/i,
-  "persona language guidance should allow switching only for explicit language requests"
+  /Explicit user language requests take priority/i,
+  "persona language guidance should prioritize explicit language requests"
 );
 
 const prompt = buildChatReplyPrompt({
@@ -27,10 +27,10 @@ const prompt = buildChatReplyPrompt({
   userText: "你好，你好，你好。",
 });
 
-assert.doesNotMatch(
+assert.match(
   prompt.systemPrompt,
-  /default|默认/i,
-  "runtime chat prompt should not include mechanical default language wording"
+  /configured default when unclear/i,
+  "runtime chat prompt keeps fallback for unclear input"
 );
 assert.match(
   prompt.systemPrompt,
@@ -39,13 +39,13 @@ assert.match(
 );
 assert.match(
   prompt.systemPrompt,
-  /Do not change output language just because the user's message is written in another language/i,
-  "runtime chat prompt should prevent automatic output-language changes from user input language"
+  /Follow the validated current user language when available/i,
+  "runtime chat prompt should follow validated current-turn input language"
 );
 assert.match(
   prompt.systemPrompt,
-  /only when the user explicitly asks you to reply, speak, or write in a specific language/i,
-  "runtime chat prompt should allow switching only for explicit language requests"
+  /Explicit user language requests take priority/i,
+  "runtime chat prompt should prioritize explicit language requests"
 );
 assert.equal(
   prompt.messages.at(-1)?.content,
@@ -53,4 +53,6 @@ assert.equal(
   "runtime chat prompt should keep the current user input in the standard message list"
 );
 
+assert.doesNotMatch(prompt.systemPrompt, /Do not change output language just because/i, 'old language lock must not coexist with current-turn selection');
+assert.match(prompt.systemPrompt, /Keep speech in the same active language selected for this turn's text/i, 'voice follows the same resolved text language');
 console.log("chat language copy self-check passed");

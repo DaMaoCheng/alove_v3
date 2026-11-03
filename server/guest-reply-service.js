@@ -20,6 +20,7 @@ import { buildChatReplyPrompt } from "./chat-prompt-service.js";
 import { generateChatReply } from "./ai-reply-service.js";
 import { buildImageReplyRecoveryPrompt } from "./chat-image-reply-recovery-service.js";
 import { buildReplyPurposeRecoveryPrompt } from "./chat-reply-purpose-service.js";
+import { appendRepairFeedback } from "./chat-reply-repair-feedback-service.js";
 import { isAiTransportFallback } from "./ai-reply-fallback-service.js";
 import { applyCommerceQuestionPromptPolicy, resolveCommerceSearchIntent, resolveCommerceKnowledgeScope } from "./commerce-routing-service.js";
 import { recordCommerceDecisionLog } from "./ai-reply-log-service.js";
@@ -197,6 +198,8 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
     query: prepared.text,
     logContext: { requestId: prepared.message.id, sessionId: prepared.guest.chat_session_id, characterId: promptCharacter.id },
     knowledgeQuery: productRecommendation.searchIntent?.knowledgeQuery,
+    recheckLowConfidence: productRecommendation.searchIntent?.pureStorePolicy === true && productRecommendation.searchIntent?.unresolvedUserComplaint !== true
+      && productRecommendation.searchIntent?.commerceRoute === 'store_policy' && productRecommendation.searchIntent?.shouldLoadProductContext === false && productRecommendation.searchIntent?.cardAllowed !== true,
     knowledgeScope: resolveCommerceKnowledgeScope(productRecommendation.searchIntent, { classificationFailed: Boolean(classificationFailureReply) }),
     character: promptCharacter,
     siteId: prepared.guest.site_id,
@@ -225,6 +228,8 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
     knowledgeContext,
     orderActionCandidate: orderAction,
     userText: prepared.text,
+    feedbackHistory,
+    recentMessages,
     searchIntent: productRecommendation.searchIntent,
   });
   const skipProductClarification = Boolean(
@@ -323,7 +328,7 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
     return scopedReply;
   };
   const scopedReply = prepareGeneratedReply(reply);
-  reply = classificationFailureReply || await enforceReplyBoundary({ requireIdentityReview: true, independentLanguageQualityRequired: true, languageQualityRequired: true, factualContext, guestBenefitContext, chatImageContext, replyResult: scopedReply, searchIntent: productRecommendation.searchIntent, productContext, knowledgeContext, character: promptCharacter, trustedSite: { id: prepared.guest.site_id, slug: prepared.guest.site_slug, name: prepared.guest.site_name, identity_mascot_character_id: prepared.guest.site_mascot_character_id }, feedbackActionCandidate, orderActionCandidate: orderAction, userText: prepared.text, recentMessages, language: languagePreference.languageCode || "en",
+  reply = classificationFailureReply || await enforceReplyBoundary({ requireIdentityReview: true, independentLanguageQualityRequired: true, languageQualityRequired: true, factualContext, guestBenefitContext, chatImageContext, replyResult: scopedReply, promptContext: guestPromptContext, searchIntent: productRecommendation.searchIntent, productContext, knowledgeContext, character: promptCharacter, trustedSite: { id: prepared.guest.site_id, slug: prepared.guest.site_slug, name: prepared.guest.site_name, identity_mascot_character_id: prepared.guest.site_mascot_character_id }, feedbackActionCandidate, orderActionCandidate: orderAction, userText: prepared.text, recentMessages, language: languagePreference.languageCode || "en",
     logContext: { requestId: prepared.message.id, sessionId: prepared.guest.chat_session_id, characterId: promptCharacter.id },
     refreshImageStatus: context => refreshChatImageStatusContext(getDbPool(), context),
     regenerateReply: async (previousReply, recovery = null) => {
@@ -332,7 +337,7 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
       if (!recoveryPrompt) return null;
       return prepareGeneratedReply(await generateChatReply({
         deferIdentityToBoundaryReview: true,
-        promptContext: recoveryPrompt, userText: prepared.text, logContext: generationLogContext, regeneration: true, regenerationProvider: previousReply, regenerationUseAlternateProvider: recovery?.kind === "purpose",
+        promptContext: appendRepairFeedback(recoveryPrompt, recovery?.repairFeedback), userText: prepared.text, logContext: generationLogContext, regeneration: true, regenerationTimeoutMs: recovery?.timeoutMs, regenerationRecordDiagnostic: recovery?.recordDiagnostic, regenerationProvider: previousReply, regenerationUseAlternateProvider: recovery?.kind === "purpose",
       }));
     } });
   if (classificationFailureReply) reply = withChatImageReplySnapshot(reply, chatImageContext);

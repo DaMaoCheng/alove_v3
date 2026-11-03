@@ -2,12 +2,13 @@ import { SUPPORTED_CHARACTER_LANGUAGES, normalizeCharacterLanguage } from "../sh
 import { normalizeSiteLanguage } from "../shared/site-language.js";
 
 const LANGUAGE_SETTING_PREFIX = "Language guidance: Use ";
-const LANGUAGE_SETTING_SUFFIX = " as the configured output language. Do not change output language just because the user's message is written in another language. Change the configured language only when the user explicitly asks you to reply, speak, or write in a specific language. A current-turn language-preference question may follow the narrowly bounded exception in the global reply policy after complete review; it never changes this configured language.";
+const LANGUAGE_SETTING_SUFFIX = " as the output language for this turn. Follow the validated current user language when available, and use the configured default when unclear. Explicit user language requests take priority.";
 
 const LANGUAGE_SETTING_LINE_PATTERN = /^Language (?:setting: You are good at multilingual communication\. By default, communicate with the user in .+\.|guidance: Use .+(?: unless the user clearly asks for another language\.|\. Do not mirror the user's language; switch only when the user clearly asks for another language\.| as the configured output language\. Do not change output language just because the user's message is written in another language\. Change language only when the user explicitly asks you to reply, speak, or write in a specific language\.))$/gim;
 
 // Match the exact current canonical suffix as well as the historical lines
 // above, so repeated preference application never stacks language guidance.
+const LEGACY_LANGUAGE_SETTING_LINE_PATTERN = /^Language guidance: Use .+ as the configured output language\. Do not change output language just because the user's message is written in another language\. Change the configured language only when the user explicitly asks you to reply, speak, or write in a specific language\. A current-turn language-preference question may follow the narrowly bounded exception in the global reply policy after complete review; it never changes this configured language\.$/gim;
 const CURRENT_LANGUAGE_SETTING_LINE_PATTERN = new RegExp(`^Language guidance: Use .+${LANGUAGE_SETTING_SUFFIX.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "gim");
 
 export async function applySessionLanguagePreference(db, { character, session, userId = "", userText = "", jevDecision = null, resolveOnly = false }) {
@@ -33,7 +34,8 @@ export async function applySessionLanguagePreference(db, { character, session, u
     parseJsonObject(character?.profile_json || character?.profile).defaultLanguageLabel ||
     parseJsonObject(character?.profile_json || character?.profile).language
   );
-  const selected = requested || sessionPreference || activationPreference || characterPreference;
+  const inputLanguage = !resolveOnly && jevDecision?.ok === true ? normalizePreference(jevDecision.inputLanguage) : null;
+  const selected = requested || inputLanguage || sessionPreference || activationPreference || characterPreference;
 
   if (!selected) {
     return {
@@ -56,7 +58,7 @@ export async function applySessionLanguagePreference(db, { character, session, u
     }
   }
 
-  const nextScope = selected.scope || (sessionPreference ? "session" : activationPreference ? "activation" : "character");
+  const nextScope = selected.scope || (inputLanguage && selected === inputLanguage ? "turn" : sessionPreference ? "session" : activationPreference ? "activation" : "character");
   return {
     character: buildCharacterWithLanguage(character, selected),
     language: selected.label,
@@ -130,7 +132,7 @@ function findStandaloneLanguageSelection(source = "") {
 export function upsertPersonaLanguageSetting(personaPrompt = "", language = "") {
   const normalizedLanguage = normalizePreference(language);
   const label = normalizedLanguage?.label || safeString(language);
-  const basePrompt = safeString(personaPrompt).replace(LANGUAGE_SETTING_LINE_PATTERN, "").replace(CURRENT_LANGUAGE_SETTING_LINE_PATTERN, "").trim();
+  const basePrompt = safeString(personaPrompt).replace(LANGUAGE_SETTING_LINE_PATTERN, "").replace(CURRENT_LANGUAGE_SETTING_LINE_PATTERN, "").replace(LEGACY_LANGUAGE_SETTING_LINE_PATTERN, "").trim();
   const languageLine = label ? `${LANGUAGE_SETTING_PREFIX}${label}${LANGUAGE_SETTING_SUFFIX}` : "";
   return [basePrompt, languageLine].filter(Boolean).join("\n\n");
 }

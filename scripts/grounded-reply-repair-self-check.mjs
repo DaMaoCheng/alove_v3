@@ -13,10 +13,11 @@ const base = { replyResult: { ...original, partialAnswerRetained: false, replyRe
 let checks = 0;
 const check = (value, label) => { assert(value, label); checks++; };
 check(isGroundedCommerceRepairEligible(base), 'concrete policy correction preserves a no-sales/no-contact boundary');
+check(isGroundedCommerceRepairEligible({ ...base, reviewResult: { ...base.reviewResult, confidence: .6 } }), 'an explicit rejection above the common threshold can still trigger a new reply');
 check(isGroundedCommerceRepairEligible({ ...base, reviewResult: { ...base.reviewResult, boundarySupported: false }, failedContracts: ['boundary', 'business_facts'] }), 'an initial forbidden navigation can yield new policy wording, never approval of the rejected original');
 check(isGroundedCommerceRepairEligible({ ...base, reviewResult: { ...base.reviewResult, retainedText: 'Unapproved paragraph.', retainedLanguageQualitySupported: false } }), 'an unapproved proposed remainder cannot prevent correction of new text');
 check(isGroundedCommerceRepairEligible({ ...base, searchIntent: { ...base.searchIntent, teamConstraintUnverified: true, shouldLoadProductContext: false, needsLiveProductData: false, cardAllowed: false } }), 'an inactive merchandise evidence marker cannot block verified pure policy wording');
-for (const patch of [{ reviewStatus: 'timeout' }, { reviewResult: { ...base.reviewResult, confidence: .79 } }, { reviewResult: { ...base.reviewResult, confidence: '0.99' } },
+for (const patch of [{ reviewStatus: 'timeout' }, { reviewResult: { ...base.reviewResult, confidence: .53 } }, { reviewResult: { ...base.reviewResult, confidence: '0.99' } },
   { reviewResult: { ...base.reviewResult, boundarySupported: undefined } }, { groundedRepairAttempted: true }, { languageRepairAttempted: true }, { retained: 'Approved paragraph' },
   { orderActionCandidate: {} }, { guestBenefitContext: {} }, { chatImageContext: {} }, { character: {} }, { failedContracts: [] },
   { replyResult: { ...base.replyResult, sourceRef: 'quality-guard' } }, { replyResult: { ...base.replyResult, sourceRef: 'ai-request-fallback' } },
@@ -91,6 +92,18 @@ for (const patch of [
   { searchIntent: { ...confirmationIntent, promotionInquiry: { kind: 'benefit_request' } } },
 ]) check(!isGroundedCommerceRepairEligible({ ...confirmationOptions, ...patch }), 'A forged, stale, changed or action-granting confirmation cannot obtain text correction');
 const config = { apiKey: 'fixture', model: 'fixture', apiMode: 'chat_completions', timeoutMs: 9000 };
+let detailedPacket;
+await repairGroundedCommerceReply({ ...base, config, userText: 'What is the shipping policy?',
+  repairFeedback: { reviewStatus: 'rejected', failedContracts: ['business_facts'], previousReply: base.replyResult.text,
+    issues: [{ kind: 'unsupported_fact', span: base.replyResult.text }] },
+  requestText: async prompt => { detailedPacket = JSON.parse(prompt.messages[0].content); return JSON.stringify({ displayText: 'The delivery destination is unverified.' }); } });
+check(detailedPacket.proposedResponse === base.replyResult.text && detailedPacket.reviewFeedback.issues[0].span === base.replyResult.text,
+  'grounded correction receives both original and validated specific review fragment');
+let isolatedPacket;
+await repairGroundedCommerceReply({ ...candidate, replyResult: { ...original, partialAnswerRetained: false, replyRecoveryState: undefined }, config,
+  userText: 'Show the candidate.', repairFeedback: { reviewStatus: 'rejected', failedContracts: ['evidence'], previousReply: 'PRIVATE_REJECTED', issues: [{ kind: 'unsupported_fact', span: 'PRIVATE_REJECTED' }] },
+  requestText: async prompt => { isolatedPacket = JSON.parse(prompt.messages[0].content); return JSON.stringify({ displayText: 'A possible candidate; is this it?' }); } });
+check(!JSON.stringify(isolatedPacket).includes('PRIVATE_REJECTED'), 'protected candidate correction does not receive rejected-text fragments');
 let confirmationCalls = 0;
 const confirmedCorrection = await repairGroundedCommerceReply({ ...confirmationOptions, config, language: 'en', requestText: async (prompt) => {
   confirmationCalls++;
@@ -439,3 +452,92 @@ for (const changed of [
  { searchIntent: { ...mixedConceptPolicy.searchIntent, needsLiveProductData: true } },
 ]) assert.equal(isGroundedCommerceRepairEligible({ ...mixedConceptPolicy, ...changed }), false);
 console.log('mixed concept and policy correction: ownership, independent action and factual boundaries passed');
+
+const unansweredPolicy = { ...purePolicy, knowledgeContext: { ...purePolicy.knowledgeContext, strategy: 'business_no_verified_answer', items: [] } };
+assert.equal(isGroundedCommerceRepairEligible(unansweredPolicy), true, 'owned pure policy without evidence permits one honest limitation and full review');
+for (const changed of [
+  { trustedSite: { id: 'other' } }, { groundedRepairAttempted: true }, { orderActionCandidate: orderPolicy.orderActionCandidate },
+  { knowledgeContext: { ...unansweredPolicy.knowledgeContext, strategy: 'business_selection_unavailable', selectionFailure: { kind: 'timeout' } } },
+  { searchIntent: { ...unansweredPolicy.searchIntent, pureStorePolicy: false } },
+  { searchIntent: { ...unansweredPolicy.searchIntent, promotionInquiry: { evidence: 'offer' } } },
+  { searchIntent: { ...unansweredPolicy.searchIntent, shouldLoadProductContext: true } },
+  { chatImageContext: { taskCreated: true } },
+]) assert.equal(isGroundedCommerceRepairEligible({ ...unansweredPolicy, ...changed }), false, 'unowned or action-bearing requests cannot use the no-evidence policy correction');
+let unansweredPrompt;
+await repairGroundedCommerceReply({ ...unansweredPolicy, config, requestText: async prompt => { unansweredPrompt = prompt; return JSON.stringify({ displayText: 'I cannot confirm delivery there.' }); } });
+assert.ok(JSON.stringify(unansweredPrompt).includes('No verified store policy or destination evidence was found'), 'the correction must receive an explicit no-invented-policy contract');
+console.log('Unanswered policy: one owned, evidence-free limitation and action isolation passed');
+
+assert.equal(isGroundedCommerceRepairEligible({ ...unansweredPolicy, searchIntent: { ...unansweredPolicy.searchIntent, replyBoundary: { contactAllowed: true } }, feedbackActionCandidate: { kind: 'feedback' } }), true, 'existing authorized feedback can remain alongside an honest policy limitation');
+assert.equal(isGroundedCommerceRepairEligible({ ...unansweredPolicy, searchIntent: { ...unansweredPolicy.searchIntent, replyBoundary: { contactAllowed: false } }, feedbackActionCandidate: { kind: 'feedback' } }), false, 'denied contact never authorizes the feedback path');
+
+const trustOnly = { ...unansweredPolicy, searchIntent: { ...unansweredPolicy.searchIntent, commerceRoute: 'chat', knowledgeScope: 'general', pureStorePolicy: false, siteTrustOnly: true, customerServiceKnowledgeRequest: false }, knowledgeContext: { ok: true, strategy: 'general_no_relevant_section', items: [] }, userText: 'Is this website safe to buy from?' };
+assert.equal(isGroundedCommerceRepairEligible(trustOnly), true, 'verified site-trust purpose may use a bounded no-evidence correction');
+for (const changed of [
+ { searchIntent: { ...trustOnly.searchIntent, siteTrustOnly: false } },
+ { trustedSite: null }, { groundedRepairAttempted: true }, { orderActionCandidate: orderPolicy.orderActionCandidate },
+ { knowledgeContext: { ...trustOnly.knowledgeContext, items: [{ id: 'unsupported' }] } },
+ { knowledgeContext: { ...trustOnly.knowledgeContext, strategy: 'general_selection_unavailable', selectionFailure: { kind: 'timeout' } } },
+ { searchIntent: { ...trustOnly.searchIntent, shouldLoadProductContext: true } },
+ { searchIntent: { ...trustOnly.searchIntent, promotionInquiry: { evidence: 'offer' } } },
+ { chatImageContext: { taskCreated: true } }, { factualContext: { required: true } },
+]) assert.equal(isGroundedCommerceRepairEligible({ ...trustOnly, ...changed }), false, 'trust correction cannot be used by unrelated or unowned actions');
+let trustPrompt;
+await repairGroundedCommerceReply({ ...trustOnly, config, requestText: async prompt => { trustPrompt = prompt; return JSON.stringify({ displayText: 'I cannot independently verify this store.' }); } });
+assert.ok(JSON.stringify(trustPrompt).includes('No verified evidence establishes this website or store is genuine'), 'trust correction explicitly forbids unsupported safety claims');
+console.log('Unanswered site trust: bounded limitation and safety exclusions passed');
+
+const complaintOnly = { ...unansweredPolicy, userText: 'The gift shirt in 3XL was too small. Is the gift still available?', searchIntent: { ...unansweredPolicy.searchIntent, unresolvedUserComplaint: true, pureStorePolicy: false, commerceTopic: 'sizing', promotionInquiry: { kind: 'policy', evidence: 'gift' }, discountExplanationRequired: true } };
+assert.equal(isGroundedCommerceRepairEligible(complaintOnly), true, 'owned unresolved complaint with no policy facts can receive one complete fresh review');
+const chatComplaint = { ...complaintOnly, searchIntent: { ...complaintOnly.searchIntent, commerceRoute: 'chat', commerceTopic: 'support', promotionInquiry: null, discountExplanationRequired: false } };
+let legacyComplaintCalls = 0;
+assert.equal(await repairGroundedCommerceReply({ ...chatComplaint, config,
+  requestText: async () => { legacyComplaintCalls++; return '{}'; } }), null);
+assert.equal(legacyComplaintCalls, 0, 'complaints cannot enter the legacy standalone generator');
+assert.equal(isGroundedCommerceRepairEligible(chatComplaint), true, 'JEV confirmed chat complaint may be repaired');
+assert.equal(isGroundedCommerceRepairEligible({ ...chatComplaint, searchIntent: { ...chatComplaint.searchIntent, replyBoundary: { contactAllowed: false } } }), true, 'declining contact does not prevent a neutral acknowledgement');
+assert.equal(isGroundedCommerceRepairEligible({ ...chatComplaint, searchIntent: { ...chatComplaint.searchIntent, replyBoundary: { contactAllowed: false } }, feedbackActionCandidate: { kind: 'feedback' } }), false, 'denied contact cannot authorize feedback');
+for (const change of [{ orderActionCandidate: orderPolicy.orderActionCandidate }, { chatImageContext: { taskCreated: true } }, { searchIntent: { ...chatComplaint.searchIntent, shouldLoadProductContext: true } }, { searchIntent: { ...chatComplaint.searchIntent, commerceRoute: 'order_lookup' } }]) assert.equal(isGroundedCommerceRepairEligible({ ...chatComplaint, ...change }), false, 'chat complaint repair cannot capture mixed actions or other routes');
+assert.equal(isGroundedCommerceRepairEligible({ ...complaintOnly, feedbackActionCandidate: { kind: 'feedback' }, searchIntent: { ...complaintOnly.searchIntent, replyBoundary: { contactAllowed: true } } }), true, 'already authorized feedback remains independent');
+for (const changed of [
+ { trustedSite: { id: 'foreign' } }, { groundedRepairAttempted: true }, { orderActionCandidate: orderPolicy.orderActionCandidate },
+ { knowledgeContext: { ...complaintOnly.knowledgeContext, items: [{ id: 'unsupported' }] } },
+ { searchIntent: { ...complaintOnly.searchIntent, unresolvedUserComplaint: false } },
+ { searchIntent: { ...complaintOnly.searchIntent, promotionInquiry: { kind: 'benefit_request' } } },
+ { searchIntent: { ...complaintOnly.searchIntent, shouldLoadProductContext: true } },
+ { searchIntent: { ...complaintOnly.searchIntent, replyBoundary: { contactAllowed: false } }, feedbackActionCandidate: { kind: 'feedback' } },
+ { chatImageContext: { taskCreated: true } }, { factualContext: { required: true } },
+]) assert.equal(isGroundedCommerceRepairEligible({ ...complaintOnly, ...changed }), false, 'unowned complaint, action, request for benefit or denied contact cannot use correction');
+console.log('Unanswered complaint eligibility retained; standalone generation removed');
+
+const complaintEmptyDirectory = { ...complaintOnly, knowledgeContext: { ...complaintOnly.knowledgeContext, strategy: 'business_no_relevant_section', selectionDiagnostics: { stage: 'directory', outcome: 'empty', counts: { selected: 0 } } } };
+assert.equal(isGroundedCommerceRepairEligible(complaintEmptyDirectory), true, 'successfully empty owned directory allows an honest bounded complaint correction');
+for (const diagnostics of [undefined, { stage: 'directory', outcome: 'empty', counts: { selected: 1 } }, { stage: 'evidence', outcome: 'empty', counts: { selected: 0 } }, { stage: 'directory', outcome: 'error', counts: { selected: 0 } }]) assert.equal(isGroundedCommerceRepairEligible({ ...complaintEmptyDirectory, knowledgeContext: { ...complaintEmptyDirectory.knowledgeContext, selectionDiagnostics: diagnostics } }), false, 'a missing, contradictory or failed directory result cannot act as success');
+assert.equal(isGroundedCommerceRepairEligible({ ...complaintEmptyDirectory, knowledgeContext: { ...complaintEmptyDirectory.knowledgeContext, selectionFailure: { kind: 'timeout' } } }), false, 'timeout is never a successful empty directory');
+console.log('Verified empty complaint directory and failure isolation passed');
+assert.equal(resolveReplyRepairBudget(60000, 'grounded_complaint'),30000);
+for (const [input, expected] of [
+ [{...complaintOnly, repairScope:'grounded_complaint'}, undefined],
+ [{...chatComplaint, repairScope:'grounded_complaint'}, undefined],
+ [{...unansweredPolicy, repairScope:'grounded_complaint'}, 15000],
+ [{...chatComplaint, repairScope:'grounded_complaint',trustedSite:{id:'foreign'}}, undefined],
+ [{...chatComplaint, repairScope:'grounded_complaint',orderActionCandidate:orderPolicy.orderActionCandidate},undefined],
+]) {
+ let actual;
+ await repairGroundedCommerceReply({...input, timeoutMs:60000, config:{...config,timeoutMs:120000},requestText:async (_p,r)=>{actual=r.timeoutMs;return JSON.stringify({displayText:'I am sorry about the issue.'});}});
+ assert.equal(actual,expected,'complaint budget requires scoped, authorized repair context');
+}
+console.log('legacy generator excludes complaints; policy correction retains its original budget');
+
+// Audit uses the same role-separated initial generation snapshot.
+const originalComplaintContext = { systemPrompt: 'Original role rules.', messages: [
+  { role: 'user', content: 'I ordered 3XL.' }, { role: 'assistant', content: 'Not evidence.' },
+  ...Array.from({ length: 18 }, (_, i) => ({ role: 'user', content: `Follow-up ${i}` })),
+  { role: 'user', content: 'Correction: it was 2XL.' },
+] };
+const { complaintPromptUserReports } = await import('../server/chat-grounded-reply-repair-service.js');
+const reportsSnapshot = complaintPromptUserReports({ ...chatComplaint, promptContext: originalComplaintContext });
+assert.deepEqual(reportsSnapshot, originalComplaintContext.messages.filter(m => m.role === 'user').map(m => m.content));
+assert.equal(reportsSnapshot.filter(t => t.includes('Correction: it was 2XL')).length, 1);
+assert.equal(complaintPromptUserReports({ ...chatComplaint, chatImageContext: {}, promptContext: originalComplaintContext }), null);
+assert.equal(complaintPromptUserReports({ ...chatComplaint, promptContext: { messages: Array.from({ length: 52 }, () => ({role:'user',content:'x'})) } }), null);

@@ -1,3 +1,4 @@
+import { getProcessingUnavailableCopy } from "./commerce-classification-failure-service.js";
 import { getChatImageStatusCopy, getChatImageUnverifiedStatusCopy, getChatImageHistoricalReadyCopy } from "./chat-image-copy-service.js";
 
 const STATES = new Set(["queued", "generating", "ready", "failed"]);
@@ -149,7 +150,8 @@ export function buildChatImageStatusInstruction(context) {
 export function getChatImageStatusFallbackCopy(context, language = "en") {
   const fact = toImageStatusReviewContext(context);
   if (context?.taskCreated && !fact?.currentTurn) return getChatImageUnverifiedStatusCopy(language);
-  if (["quota_exhausted", "disallowed_request", "classification_unavailable"].includes(fact?.currentRequest?.reason)
+  if (fact?.currentRequest?.reason === "classification_unavailable") return getProcessingUnavailableCopy(language);
+  if (["quota_exhausted", "disallowed_request"].includes(fact?.currentRequest?.reason)
     || fact?.currentRequest?.reason === "active_generation" && !["queued", "generating"].includes(fact?.status)) return getChatImageUnverifiedStatusCopy(language);
   if (fact?.status === "ready") return fact.currentTurn ? getChatImageStatusCopy({ language, status: "ready" }) : getChatImageHistoricalReadyCopy(language);
   if (["queued", "generating"].includes(fact?.status)) return getChatImageStatusCopy({ language, status: "queued" });

@@ -235,8 +235,8 @@ for(const [patch,expectedModel]of [[{identityContext:buildTrustedCharacterIdenti
 }
 console.log('Independent identity reviewer selection and explicit/default caller isolation passed');
 
-// Captured valid .7 primary rejection: confidence + boundary, language .97.
-const lowConfidence={...eligible,reviewResult:{...passed,allowed:false,boundarySupported:false,confidence:.7},failedContracts:['confidence','boundary'],
+// Below the shared .54 gate: confidence + boundary, language .97.
+const lowConfidence={...eligible,reviewResult:{...passed,allowed:false,boundarySupported:false,confidence:.5},failedContracts:['confidence','boundary'],
  languageAssessment:{reviewStatus:'valid',languageQualitySupported:true,confidence:.97,languageIssues:[]}};
 assert(isConversationReplyRecoveryEligible(lowConfidence),'a valid low-confidence rejection can request a fresh candidate without approving its text');
 assert(buildReplyPurposeRecoveryPrompt({systemPrompt:'Original',layers:[]},{kind:'purpose',purpose:'conversation',failedContracts:['confidence','boundary']}));
@@ -245,7 +245,7 @@ for(const finalAccepted of [true,false]) {
  const originalText='A rejected ordinary reply.',freshText='A fresh ordinary reply.';
  const output=await enforceReplyBoundary({...lowConfidence,replyResult:{sourceType:'ai',text:originalText,speechText:originalText},requireIdentityReview:true,
   languageQualityRequired:true,independentLanguageQualityRequired:true,
-  assess:async()=>++primary===1?lowConfidence.reviewResult:{...passed,confidence:finalAccepted?.99:.7},
+  assess:async()=>++primary===1?lowConfidence.reviewResult:{...passed,confidence:finalAccepted?.99:.5},
   assessLanguageQuality:async()=>lowConfidence.languageAssessment,
   regenerateReply:async(_previous,recovery)=>{regenerated++;assert(recovery.failedContracts.includes('confidence'));return{sourceType:'ai',text:freshText,speechText:freshText};},recordReview:async()=>{}});
  assert.equal(regenerated,1);assert.equal(primary,2);assert.notEqual(output.text,originalText);assert.equal(output.text===freshText,finalAccepted);
@@ -259,6 +259,45 @@ for(const base of [lowConfidence,{...lowConfidence,searchIntent:closedConversati
   {contracts:['factual','business_facts']},{languageRepairAttempted:true}])assert(!isConversationReplyRecoveryEligible({...base,...patch}));
 }
 console.log('Valid low-confidence conversation recovery, unchanged final thresholds and malformed/mixed exclusions passed');
+for(const leak of ['<context>internal</context>Hola', 'Hola ```js\nsecret\n```']) {
+ let reviews=0;
+ const output=await enforceReplyBoundary({...lowConfidence,replyResult:{sourceType:'ai',text:'Original',speechText:'Original'},requireIdentityReview:true,
+  languageQualityRequired:true,independentLanguageQualityRequired:true,
+  assess:async()=>{reviews++;return reviews===1?lowConfidence.reviewResult:passed;},assessLanguageQuality:async()=>lowConfidence.languageAssessment,
+  regenerateReply:async()=>({sourceType:'ai',text:leak,speechText:leak}),recordReview:async()=>{}});
+ assert.notEqual(output.text,leak,'fresh ordinary-chat reply with internal format must not be published');
+ assert.equal(reviews,1,'known technical leakage is stopped before a fresh model review');
+}
+{
+ let reviews=0; const original='Original';
+ const output=await enforceReplyBoundary({...lowConfidence,userText:'请解释 <context> 标签',replyResult:{sourceType:'ai',text:original,speechText:original},requireIdentityReview:true,
+  languageQualityRequired:true,independentLanguageQualityRequired:true,
+  assess:async()=>{reviews++;return reviews===1?lowConfidence.reviewResult:{...passed,allowed:false,boundarySupported:false};},
+  assessLanguageQuality:async()=>lowConfidence.languageAssessment,
+  regenerateReply:async()=>({sourceType:'ai',text:'<context>secret</context>',speechText:'<context>secret</context>'}),recordReview:async()=>{}});
+ assert.equal(reviews,2,'user-supplied notation retains the original full review');
+ assert.notEqual(output.text,'<context>secret</context>','a failed full review cannot release the candidate');
+}
+const unwantedLimitation = {...lowConfidence, contracts:['factual','factual_limitation'], failedContracts:['confidence','factual_limitation'],
+ reviewResult:{...lowConfidence.reviewResult,factualLimitationRelevant:false}};
+assert(isConversationReplyRecoveryEligible(unwantedLimitation), 'an irrelevant verification fallback in ordinary conversation may request one fresh reply');
+assert(buildReplyPurposeRecoveryPrompt({systemPrompt:'Original',layers:[]},{kind:'purpose',purpose:'conversation',failedContracts:['confidence','factual_limitation']}));
+assert.equal(buildReplyPurposeRecoveryPrompt({systemPrompt:'Original',layers:[]},{kind:'purpose',purpose:'product_clarification',failedContracts:['factual_limitation']}),null);
+for(const patch of [{factualContext:{...clock,required:true}}, {knowledgeContext:{source:'brave_web',items:[]}}, {orderActionCandidate:{}},
+ {chatImageContext:{}}, {feedbackActionCandidate:{}}, {guestBenefitContext:{}}, {checkoutContext:{}}, {factualContext:{...clock,searched:true}}, {productContext:{products:[{id:'p'}]}}, {languageRepairAttempted:true},
+ {reviewResult:{...unwantedLimitation.reviewResult,factualLimitationRelevant:undefined}}])
+ assert(!isConversationReplyRecoveryEligible({...unwantedLimitation,...patch}));
+for (const finalAccepted of [true,false]) {
+ let reviews=0,rewrites=0;
+ const original='I can’t verify that fact right now, so I won’t guess.';
+ const fresh='I am here with you. What is on your mind?';
+ const result=await enforceReplyBoundary({...unwantedLimitation,replyResult:{sourceType:'ai',text:original,speechText:original},
+  requireIdentityReview:true,languageQualityRequired:true,independentLanguageQualityRequired:true,
+  assess:async()=>++reviews===1?unwantedLimitation.reviewResult:{...passed,confidence:finalAccepted?.99:.5,factualLimitationRelevant:true},
+  assessLanguageQuality:async()=>unwantedLimitation.languageAssessment,
+  regenerateReply:async()=>{rewrites++;return {sourceType:'ai',text:fresh,speechText:fresh}},recordReview:async()=>{}});
+ assert.equal(rewrites,1);assert.equal(reviews,2);assert.equal(result.text===fresh,finalAccepted,'fresh candidate requires its own complete review');
+}
 for(const repairedLanguagePass of [true,false]) {
  let primary=0,language=0,regenerated=0;
  const text='A newly generated answer.';

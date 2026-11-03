@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { SUPPORTED_CHARACTER_LANGUAGES } from "../shared/language-library.js";
-import { buildGuestBenefitContext, getGuestBenefitReviewContext, approveGuestBenefitContext, isGuestBenefitReplyReviewed, buildGuestBenefitFallback, appendGuestBenefitGuide } from "../server/guest-benefit-guidance-service.js";
+import { buildGuestBenefitContext, getGuestBenefitReviewContext, approveGuestBenefitContext, isGuestBenefitReplyReviewed, buildGuestBenefitFallback, buildGuestBenefitFailureFallback, isControlledGuestBenefitCopy, appendGuestBenefitGuide } from "../server/guest-benefit-guidance-service.js";
 import { normalizeGuestReplyText, sanitizeGuestReplyText, applyGuestPromptPolicy } from "../server/guest-chat-output-policy.js";
 import { resolveChatFeedbackActionCandidate, resolveChatFeedbackAction } from "../server/chat-feedback-action-service.js";
 import { getChatImageStatusFallbackCopy } from "../server/chat-image-status-context-service.js";
@@ -12,6 +12,13 @@ const userText = "I already registered and want a coupon for my first purchase. 
 const searchIntent = { commerceConfidence: .95, answerRequired: true, commerceRoute: "store_policy", commerceTopic: "price", knowledgeScope: "business", promotionInquiry: { kind: "benefit_request", evidence: "want a coupon" }, replyBoundary: { salesAllowed: true, contactAllowed: true } };
 const body = "The verified delivery terms are listed above. I cannot confirm coupon eligibility here.";
 const context = buildGuestBenefitContext({ searchIntent, userText, isGuest: true, languageCode: "en" });
+const mixedComplaint = buildGuestBenefitContext({ searchIntent: { ...searchIntent, unresolvedUserComplaint: true }, userText, isGuest: true, languageCode: 'es' });
+const safeFailure = buildGuestBenefitFailureFallback(mixedComplaint);
+check(safeFailure.includes('No puedo confirmar la promoción') && safeFailure.includes('inicia sesión'), 'mixed complaint fallback preserves promotion uncertainty and non-issuing login capability');
+check(isControlledGuestBenefitCopy(mixedComplaint, safeFailure), 'only exact server-owned fallback is trusted');
+check(appendGuestBenefitGuide(safeFailure, mixedComplaint) === safeFailure, 'safe mixed fallback is not erased or duplicated');
+check(buildGuestBenefitFailureFallback(context) === buildGuestBenefitFallback(context), 'ordinary benefit flow remains unchanged');
+check(!isControlledGuestBenefitCopy(mixedComplaint, safeFailure + ' Eligible.'), 'unreviewed claim cannot become trusted');
 check(Boolean(context) && getGuestBenefitReviewContext(context).issuanceAllowed === false, "current guest evidence creates a non-issuing permission context");
 check(sanitizeGuestReplyText(body, { userText, productSearchIntent: searchIntent, guestBenefitContext: context }) !== body, "unreviewed context alone does not unlock coupon vocabulary");
 check(approveGuestBenefitContext(context, { text: body, allowed: true, confidence: .9, guidanceSupported: true }), "one successful joint review approves only its exact body");

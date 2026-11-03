@@ -19,6 +19,20 @@ test(ok,true,true);test(ok.map(x=>({...x,replyPreservesException:false})),true,f
 assert.equal(buildBusinessClaimContext({...options,businessFactsRequired:false}),null);count++;
 const fetchImpl=raw=>async()=>new Response(JSON.stringify({choices:[{message:{content:JSON.stringify({allowed:true,confidence:1,boundarySupported:true,businessFactsSupported:true,...raw})}}]}));
 const r=await assessReplyBoundary({...options,fetchImpl:fetchImpl({businessClaimAudit:ok.map(x=>({...x,replyPreservesException:false}))})});assert.equal(r.allowed,false);assert.equal(r.businessFactsSupported,false);count++;
+assert.deepEqual(r.repairIssues, [{ kind: 'missing_condition', span: 'Coverage applies.' }], 'validated failing unit is retained for correction');
+const explained = await assessReplyBoundary({ ...options, fetchImpl: fetchImpl({ allowed: false, businessFactsSupported: false,
+  businessClaimAudit: ok.map(x => ({ ...x, supported: false, referenceIds: [] })), reviewIssueSpan: 'Coverage applies.', reviewIssueReason: 'The policy only says coverage may apply.' }) });
+assert(explained.repairIssues.some(issue => issue.kind === 'review_reason' && issue.span === 'Coverage applies.' && issue.reason === 'The policy only says coverage may apply.'));
+const malformedExplanation = await assessReplyBoundary({ ...options, fetchImpl: fetchImpl({ allowed: false, businessFactsSupported: false,
+  businessClaimAudit: ok.map(x => ({ ...x, supported: false, referenceIds: [] })), reviewIssueSpan: 'not in response', reviewIssueReason: 'invented' }) });
+assert.equal(malformedExplanation.reviewStatus, 'valid');
+assert(!malformedExplanation.repairIssues.some(issue => issue.kind === 'review_reason'), 'invented quote is discarded without changing rejection');
+const boundaryOnlyReason = await assessReplyBoundary({ ...options, fetchImpl: fetchImpl({ allowed: false, confidence: .9,
+  businessClaimAudit: ok, reviewIssueSpan: 'Coverage applies.', reviewIssueReason: 'The answer overstates the policy.' }) });
+assert(boundaryOnlyReason.repairIssues.some(issue => issue.kind === 'review_reason'), 'whole-response rejection with a concrete span keeps its reason');
+const scoreOnly = await assessReplyBoundary({ ...options, fetchImpl: fetchImpl({ allowed: false, confidence: .4,
+  businessClaimAudit: ok, reviewIssueSpan: 'Coverage applies.', reviewIssueReason: 'Made-up reason.' }) });
+assert(!scoreOnly.repairIssues?.some(issue => issue.kind === 'review_reason'), 'score-only uncertainty does not manufacture a content defect');
 const missing=await assessReplyBoundary({...options,fetchImpl:fetchImpl({})});assert.notEqual(missing.reviewStatus,'valid');assert.equal(missing.allowed,false);count++;
 const decimal=buildBusinessClaimContext({...options,text:'Costs $15.99 unless a surcharge applies.',knowledgeContext:{items:[{id:'p',content:'Costs $15.99 unless a surcharge applies. See https://example.com/policy for terms.'}]}});
 assert.equal(decimal.references[0].text,'Costs $15.99 unless a surcharge applies.');assert(decimal.references[1].text.includes('https://example.com/policy'));count+=2;
@@ -162,3 +176,36 @@ for(const [text,supported] of [['Your package has cleared customs in the U.S.',f
  assert.equal(calls,1);assert.equal(result.reviewStatus,'valid');assert.equal(result.allowed,supported);
 }
 console.log('large unrelated general-reference regression passed: general keeps whole factual review; actual business/mixed policy audit remains bounded and fail closed');
+
+for (const state of ['skipped','failed','accepted','rejected']) {
+ const reason = state === 'skipped' ? 'ineligible' : state === 'failed' ? 'recovery_failed' : 'reviewed';
+ const evt=buildReplyReviewLogEvent({reviewStatus:'valid',failedContracts:['confidence','business_facts','guidance','boundary','language'],guardApplied:true,complaintRepair:{state,reason}, languageDiagnostics:{repairKind:'grounded',repairState:'rejected',languageIssueTypes:['grammar','coherence','spelling'],initialLanguageIssueTypes:['grammar','coherence'],initialFailedContracts:['confidence','business_facts','guidance','boundary','language']},reviewProtocol:{initial:['claim_consistency','claim_references'],corrected:['claim_consistency','claim_references']}});
+ assert(evt.errorMessage.length<=500);assert.deepEqual(JSON.parse(evt.errorMessage).complaintRepair,{state,reason});
+}
+assert.equal(JSON.parse(buildReplyReviewLogEvent({complaintRepair:{state:'private text',reason:'private text'}}).errorMessage).complaintRepair,undefined);
+console.log('complaint repair diagnostic finite values and log bounds passed');
+const complaintAuditOptions = { businessFactsRequired: true, text: 'You reported the size was small.', speechText: 'You reported the size was small.',
+  complaintUserReports: ['My 3XL was too small.', ...Array.from({ length: 22 }, (_, i) => `follow-up ${i}`), 'x'.repeat(1800) + ' tail fact', 'I meant 2XL.'],
+  userText: 'I meant 2XL.', recentUserMessages: ['My 3XL was too small.', ...Array.from({ length: 5 }, (_, i) => `follow-up ${i}`)],
+  searchIntent: { commerceRoute: 'store_policy', knowledgeScope: 'business', unresolvedUserComplaint: true },
+  knowledgeContext: { ok: true, customerServiceIntent: true, items: [], businessOwner: { siteId: 'shop', characterId: 'mascot' } },
+  catalogueOwner: { trustedSite: { id: 'shop' }, character: { id: 'mascot' } } };
+const complaintAuditContext = buildBusinessClaimContext(complaintAuditOptions);
+assert(complaintAuditContext.references.some(r => r.kind === 'user_report' && r.text.includes('3XL')));
+assert.equal(complaintAuditContext.references.filter(r => r.kind === 'user_report').at(-1).text, 'I meant 2XL.');
+assert.equal(complaintAuditContext.references.filter(r => r.kind === 'user_report').length, 25);
+assert(complaintAuditContext.references.some(r => r.text.endsWith(' tail fact')));
+assert.equal(complaintAuditContext.bounded, true);
+const ordinaryAuditContext = buildBusinessClaimContext({ ...complaintAuditOptions, searchIntent: { ...complaintAuditOptions.searchIntent, unresolvedUserComplaint: false } });
+assert(!ordinaryAuditContext.references.some(r => r.kind === 'user_report' && r.text.includes('3XL')));
+for (const [bad,expected] of [
+ [ok.map(x=>({...x,referenceIds:[]})), 'supported factual unit had no reference IDs'],
+ [ok.map(x=>({...x,factual:false,referenceIds:[context.references[0].id]})), 'nonfactual unit had reference IDs'],
+]) {
+ const requests=[];const result=await assessReplyBoundary({...options,config:providers,fetchImpl:async (_url,req)=>{
+  requests.push(JSON.parse(req.body));const val=requests.length===1?{...good,businessClaimAudit:bad}:good;
+  return new Response(JSON.stringify({choices:[{message:{content:JSON.stringify(val)}}]}));}});
+ assert.equal(requests.length,2);assert.equal(result.reviewStatus,'valid');
+ assert(!JSON.stringify(requests[0]).includes(expected));assert(JSON.stringify(requests[1]).includes(expected));
+}
+console.log('protocol correction scoped to existing fallback provider and preserves complete review');

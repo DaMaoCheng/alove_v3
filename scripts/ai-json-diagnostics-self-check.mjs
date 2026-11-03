@@ -76,3 +76,18 @@ await requestAiJsonWithProviderFallback([{ role: 'user', content: 'fixture' }], 
   recordProviderCallFn: async row => { unsafeLog = row; }, fetchImpl: async () => new Response(JSON.stringify({ choices: [{ message: { content: '{}' } }] })) });
 assert.equal(unsafeLog.requestId, undefined); assert.equal(unsafeLog.sessionId, undefined); assert.equal(unsafeLog.userId, 'valid_id');
 console.log('Safe optional commerce timings, bounded diagnostics and invalid identifier rejection passed');
+for (const recheck of ['verified','filtered','unavailable']) {
+ const event=buildCommerceDecisionLogEvent({searchIntent:{commerceRoute:'store_policy',commerceTopic:'delivery',businessKnowledgeRequired:true},knowledgeContext:{strategy:'business_no_verified_answer',selectionDiagnostics:{stage:'evidence',outcome:'filtered',counts:{low_confidence:2},recheck},items:[]},factualContext:{required:false,status:'not_required',reason:'not_requested',items:[]}});
+ assert(event.errorMessage.length<=500);assert.equal(JSON.parse(event.errorMessage).knowledgeSelection.recheck,recheck);
+}
+const unsafeRecheck=buildCommerceDecisionLogEvent({knowledgeContext:{selectionDiagnostics:{stage:'evidence',outcome:'filtered',recheck:'secret'}}});
+assert(!unsafeRecheck.errorMessage.includes('secret'));
+console.log('knowledge bounded recheck diagnostics passed');
+const candidateLog = buildCommerceDecisionLogEvent({ searchIntent: { commerceRoute:'store_policy', commerceTopic:'delivery', businessKnowledgeRequired:true },
+  knowledgeContext: { strategy:'business_verified_reference', items:[{id:'selected_policy'}], selectionDiagnostics:{ stage:'evidence', outcome:'verified', counts:{accepted:1,low_confidence:1},
+    candidates:[{id:'selected_policy',initial:'accepted',selected:true,rechecked:false}, {id:'related_boundary',initial:'low_confidence',selected:false,rechecked:false}, {id:'private/query',initial:'PRIVATE_TEXT',selected:true,rechecked:false}] } },
+  factualContext:{ required:false,status:'not_required',reason:'not_requested',items:[] } });
+const candidateDetails=JSON.parse(candidateLog.errorMessage);
+assert.deepEqual(candidateDetails.knowledgeSelection.candidates,[['selected_policy','accepted',true,false],['related_boundary','low_confidence',false,false]]);
+assert.equal(candidateDetails.knowledgeSelection.candidatesTruncated,true,'filtered identifiers are reported as omitted');
+assert(candidateLog.errorMessage.length<=500);assert(!candidateLog.errorMessage.includes('PRIVATE_TEXT'));

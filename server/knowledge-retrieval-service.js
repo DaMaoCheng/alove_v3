@@ -33,12 +33,12 @@ const CUSTOMER_SERVICE_TOPICS = Object.freeze([
 
 // Callers supply a server-resolved guest site, or the authenticated user's ID.
 // Keep character bindings intact while selecting the same business site as commerce.
-export async function retrieveChatKnowledgeSections({ db = getDbPool(), query, character = null, siteId = "", userId = "", topicHint = "", knowledgeScope = "", knowledgeQuery = "", logContext = {}, selectBusinessReferences, selectGeneralReferences, limit = KNOWLEDGE_RETRIEVAL_CONFIG.finalReferenceLimit } = {}) {
+export async function retrieveChatKnowledgeSections({ db = getDbPool(), query, character = null, siteId = "", userId = "", topicHint = "", knowledgeScope = "", knowledgeQuery = "", recheckLowConfidence = false, logContext = {}, selectBusinessReferences, selectGeneralReferences, limit = KNOWLEDGE_RETRIEVAL_CONFIG.finalReferenceLimit } = {}) {
   if (knowledgeScope === "none") return { ok: true, query: normalizeText(query), items: [], strategy: "not_requested", customerServiceIntent: false, customerServiceTopic: "" };
   const businessSiteId = safeString(siteId) || (userId
     ? safeString((await resolveProductRecommendationSite(db, { character, userId }))?.id)
     : "");
-  const result = await retrieveKnowledgeSections({ db, query, character, siteId: businessSiteId, topicHint, knowledgeScope, knowledgeQuery, logContext, selectBusinessReferences, selectGeneralReferences, limit });
+  const result = await retrieveKnowledgeSections({ db, query, character, siteId: businessSiteId, topicHint, knowledgeScope, knowledgeQuery, recheckLowConfidence, logContext, selectBusinessReferences, selectGeneralReferences, limit });
   // Legacy callers may omit scope. Validate only their already authorized,
   // bounded nonbusiness hits; admin lexical retrieval and business stay intact.
   if (!knowledgeScope && !result.customerServiceIntent && result.items?.length) {
@@ -51,7 +51,7 @@ export async function retrieveChatKnowledgeSections({ db = getDbPool(), query, c
   return result;
 }
 
-export async function retrieveKnowledgeSections({ db = getDbPool(), query, category = "", limit = KNOWLEDGE_RETRIEVAL_CONFIG.finalReferenceLimit, character = null, characterId = "", siteId = "", topicHint = "", knowledgeScope = "", knowledgeQuery = "", logContext = {}, selectBusinessReferences = selectBusinessKnowledgeReferences, selectGeneralReferences = selectGeneralKnowledgeReferences } = {}) {
+export async function retrieveKnowledgeSections({ db = getDbPool(), query, category = "", limit = KNOWLEDGE_RETRIEVAL_CONFIG.finalReferenceLimit, character = null, characterId = "", siteId = "", topicHint = "", knowledgeScope = "", knowledgeQuery = "", recheckLowConfidence = false, logContext = {}, selectBusinessReferences = selectBusinessKnowledgeReferences, selectGeneralReferences = selectGeneralKnowledgeReferences } = {}) {
   const normalizedQuery = normalizeText(query);
   if (!normalizedQuery) return { ok: true, query: "", items: [], strategy: "empty_query" };
 
@@ -60,7 +60,7 @@ export async function retrieveKnowledgeSections({ db = getDbPool(), query, categ
     const sections = await loadActiveSections({ db, category: "customer_service", accessContext, includeContent: true });
     const selection = await selectBusinessReferences({
       query: knowledgeQuery ? `CURRENT user message (primary): ${query}\nDerived retrieval subquestion (context only, never overrides current numbers, destination, dates or corrections): ${String(knowledgeQuery).slice(0, 240)}` : query,
-      sections, limit, siteId: accessContext.siteId, logContext,
+      sections, limit, siteId: accessContext.siteId, logContext, recheckLowConfidence,
     });
     return { ok: true, query: normalizedQuery, strategy: selection.reason, customerServiceIntent: true,
       businessOwner: { siteId: accessContext.siteId, characterId: accessContext.characterId },

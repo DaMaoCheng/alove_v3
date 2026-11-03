@@ -9,6 +9,11 @@ import { normalizeProductFollowupReply } from "../server/product-followup-saniti
 import { selectProductsForMessage } from "../server/chat-product-reply-service.js";
 import { appendFeedbackFollowupCopy, resolveChatFeedbackAction, resolveChatFeedbackActionCandidate } from "../server/chat-feedback-action-service.js";
 import { stripTtsControlTags } from "../server/tts-emotion-tag-service.js";
+import { buildReplyReviewMessages } from '../server/chat-reply-review-contracts.js';
+const feedbackPresenceReview = { boundaryReviewRequired: true, catalogueOwner: { character: { id: 'mascot_fixture', category_id: 'mascot' } } };
+assert(buildReplyReviewMessages({ ...feedbackPresenceReview, feedbackActionAvailable: false }).some(row => row.role === 'system' && row.content.includes('no feedback action is attached in this turn')), 'ordinary storefront chat must check a claimed current feedback entry against the actual action');
+assert(!buildReplyReviewMessages({ ...feedbackPresenceReview, feedbackActionAvailable: true }).some(row => row.role === 'system' && row.content.includes('no feedback action is attached in this turn')), 'a real feedback action must not be treated as absent');
+assert(!buildReplyReviewMessages({ ...feedbackPresenceReview, catalogueOwner: { character: { id: 'fan_fixture', category_id: 'fan' } }, feedbackActionAvailable: false }).some(row => row.role === 'system' && row.content.includes('no feedback action is attached in this turn')), 'unrelated character rules remain unchanged');
 
 globalThis.fetch = async () => { throw new Error("External requests forbidden in this check"); };
 const mascot = { id: "test", categoryId: "mascot", profile: { language: "Spanish" } };

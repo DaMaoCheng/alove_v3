@@ -1,0 +1,37 @@
+import assert from 'node:assert/strict';
+import {resolveCommerceSearchIntent} from '../server/commerce-routing-service.js';
+const current='En el correo que me enviaron'; const prior='No se aplica la promoción y estoy molesto';
+const primary={ok:true,primaryIntent:'daily_chat',orderIntent:'none',productIntent:'none',productAction:0};
+const d={confident:true,boundaryVerified:true,route:'store_policy',topic:'price',confidence:.7,answerRequired:true,needsLiveProductData:false,knowledgeScope:'business',knowledgeQuery:prior,knowledgeRequest:{kind:'unresolved_complaint',evidence:current},replyBoundary:{salesAllowed:false,contactAllowed:true},productRequest:{relation:'none',action:'suspend',items:[]},productRequirement:{action:'none',evidence:'',updates:[]}};
+const { applyCommerceQuestionPromptPolicy } = await import('../server/commerce-routing-service.js');
+const promptForComplaint = applyCommerceQuestionPromptPolicy({ systemPrompt:'', layers:[] }, { commerceRoute:'store_policy', answerRequired:true, unresolvedUserComplaint:true });
+assert(promptForComplaint.systemPrompt.includes('Do not turn a past problem report into an unsolicited diagnostic workflow'));
+const promptForNormal = applyCommerceQuestionPromptPolicy({ systemPrompt:'', layers:[] }, { commerceRoute:'store_policy', answerRequired:true });
+assert(!promptForNormal.systemPrompt.includes('Do not turn a past problem report into an unsolicited diagnostic workflow'));
+async function run(decision=d, rows=[{senderType:'user',text:prior}], jevDecision=primary){return resolveCommerceSearchIntent({userText:current,recentMessages:rows,siteId:'s',characterId:'c',searchIntent:{},jevDecision,classifyCommerce:async()=>decision,enrichAllTurns:true});}
+assert.equal((await run()).unresolvedUserComplaint,true);
+assert.equal((await run({...d,knowledgeRequest:{...d.knowledgeRequest,evidence:'correo'}})).unresolvedUserComplaint,false);
+assert.equal((await run(d,[{senderType:'character',text:prior}])).unresolvedUserComplaint,false);
+assert.equal((await run({...d,knowledgeQuery:'invented'})).unresolvedUserComplaint,false);
+assert.equal((await run({...d,knowledgeRequest:null})).unresolvedUserComplaint,false);
+assert.equal((await run(d,[{senderType:'user',text:prior}],{...primary,orderIntent:'lookup'})).unresolvedUserComplaint,false);
+assert.equal((await run({...d,knowledgeRequest:{kind:'business_question',evidence:current}})).unresolvedUserComplaint,false);
+console.log('complaint intent evidence: user-origin, exact current evidence, no invented/assistant history or order permission');
+const longCurrent='En el correo '.repeat(24)+' la promoción no se aplica';
+const longDecision={...d,knowledgeQuery:longCurrent.slice(0,240),knowledgeRequest:{kind:'unresolved_complaint',evidence:'la promoción no se aplica'}};
+async function runLong(decision=longDecision, rows=[{senderType:'user',text:prior}]){return resolveCommerceSearchIntent({userText:longCurrent,recentMessages:rows,siteId:'s',characterId:'c',searchIntent:{},jevDecision:primary,classifyCommerce:async()=>decision,enrichAllTurns:true});}
+assert.equal((await runLong()).unresolvedUserComplaint,true,'long current user can provide exact user substring');
+assert.equal((await runLong({...longDecision,knowledgeRequest:{kind:'unresolved_complaint',evidence:'invented complaint'}})).unresolvedUserComplaint,false);
+assert.equal((await runLong({...longDecision,knowledgeRequest:{kind:'unresolved_complaint',evidence:'en'}})).unresolvedUserComplaint,false,'short arbitrary token rejected');
+assert.equal((await runLong({...longDecision,knowledgeQuery:'unrelated fake'})).unresolvedUserComplaint,false);
+assert.equal((await runLong({...longDecision,knowledgeQuery:prior},[{senderType:'character',text:prior}])).unresolvedUserComplaint,false,'assistant cannot supply prior complaint');
+console.log('long current user evidence requires exact current span and exact bounded current/prior user query');
+const {buildCommerceJevPacket}=await import('../server/jev-commerce-decision-service.js');
+const contactInstruction=buildCommerceJevPacket('I am angry because no one replied', {recentMessages:[{senderType:'user',text:prior}]}).questions.contact_allowed.instructions;
+assert.match(contactInstruction,/frustration, swearing/);
+assert.match(contactInstruction,/not by itself a refusal of contact/);
+assert.match(contactInstruction,/refuses or withdraws contact/);
+assert.match(contactInstruction,/Choose no when uncertain/);
+const refused=await run({...d,replyBoundary:{salesAllowed:false,contactAllowed:false}});
+assert.equal(refused.replyBoundary.contactAllowed,false,'explicit negative contact verdict must remain closed');
+console.log('anger is not itself contact refusal; explicit negative and uncertainty remain fail-closed');

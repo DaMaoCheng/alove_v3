@@ -11,8 +11,8 @@ export async function recoverReviewedLanguageReply({ replyResult, assessment, la
     repaired = await repairLanguageReply({ replyResult, assessment, language, userText, logContext,
       timeoutMs: resolveReplyRepairBudget(repairTimeoutMs, repairScope), repairScope,
       recordDiagnostic: code => { diagnostics.repairFailureCode = code; } });
-  } catch { diagnostics.repairFailureCode = "provider_error"; }
-  if (!repaired) return { recovered: false, diagnostics };
+  } catch { diagnostics.repairFailureCode ||= "provider_error"; }
+  if (!repaired) return { terminal: false, recovered: false, diagnostics };
   const primaryBudget = Number.isFinite(primaryReviewTimeoutMs) && primaryReviewTimeoutMs > 0
     ? Math.min(SERVER_CONFIG.aiReply.chatTimeouts.review, primaryReviewTimeoutMs) : SERVER_CONFIG.aiReply.chatTimeouts.review;
   let terminalEvent;
@@ -21,10 +21,13 @@ export async function recoverReviewedLanguageReply({ replyResult, assessment, la
     reviewTimeoutMs: primaryBudget,
     recordReview: async event => {
       terminalEvent = { ...event, languageDiagnostics: { ...diagnostics, ...event.languageDiagnostics,
-        repairState: event.guardApplied ? "rejected" : "accepted",
+        repairState: event.guardApplied === false ? "accepted" : event.guardApplied === true ? "rejected" : "failed",
         initialLanguageIssueTypes: languageDiagnostics.languageIssueTypes } };
     },
   });
   try { if (terminalEvent) await recordReview(terminalEvent); } catch {}
-  return { recovered: true, reply: output, diagnostics: terminalEvent?.languageDiagnostics || diagnostics };
+  // A guarded reply is a terminal result, not a successful recovery. Callers
+  // return every terminal result without spending another generation/action.
+  return { terminal: true, recovered: terminalEvent?.guardApplied === false,
+    reply: output, diagnostics: terminalEvent?.languageDiagnostics || diagnostics };
 }

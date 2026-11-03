@@ -110,6 +110,9 @@ export function buildCommerceDecisionLogEvent({ searchIntent = {}, knowledgeCont
         && ['protocol_shape', 'protocol_evidence', 'parse', 'timeout', 'provider', 'http_429'].includes(item?.kind))
       .map(({ provider, kind }) => ({ provider, kind })),
     generalTermExplanation: searchIntent.generalTermExplanation === true,
+    unresolvedUserComplaint: searchIntent.unresolvedUserComplaint === true,
+    ...(['submitted_followup', 'offered_issue_followup', 'new_issue'].includes(searchIntent.supportFollowup?.relation)
+      ? { supportFollowup: searchIntent.supportFollowup.relation } : {}),
     blockedBy: searchIntent.commerceClassificationUnavailable === true ? "classification"
       : searchIntent.primarySearchBlocked === true ? "primary_action"
       : searchIntent.teamConstraintUnverified === true ? "team_evidence"
@@ -147,7 +150,17 @@ export function buildCommerceDecisionLogEvent({ searchIntent = {}, knowledgeCont
       const value = selectionDiagnostics.counts?.[key];
       if (Number.isInteger(value) && value >= 0) counts[key] = Math.min(96, value);
     }
-    details.knowledgeSelection = { stage: selectionDiagnostics.stage, outcome: selectionDiagnostics.outcome, counts };
+    details.knowledgeSelection = { stage: selectionDiagnostics.stage, outcome: selectionDiagnostics.outcome, counts,
+      ...(['verified', 'filtered', 'unavailable'].includes(selectionDiagnostics.recheck) ? { recheck: selectionDiagnostics.recheck } : {}) };
+    const outcomes = new Set(['accepted', 'low_confidence', 'not_relevant', 'invalid_quote', 'shape', 'not_returned']);
+    const sourceCandidates = Array.isArray(selectionDiagnostics.candidates) ? selectionDiagnostics.candidates : [];
+    const candidates = sourceCandidates.slice(0, 8)
+      .filter(item => typeof item?.id === 'string' && item.id.length <= 64 && safeIdentifier(item.id) && outcomes.has(item.initial)
+        && typeof item.selected === 'boolean' && typeof item.rechecked === 'boolean')
+      // Tuple order: authorized passage ID, initial result, selected, rechecked.
+      .map(item => [item.id, item.initial, item.selected, item.rechecked]);
+    if (candidates.length) details.knowledgeSelection.candidates = candidates;
+    if (candidates.length < sourceCandidates.length) details.knowledgeSelection.candidatesTruncated = true;
   }
   if (factualContext && typeof factualContext === "object" && !Array.isArray(factualContext)) {
     const status = ["not_required", "disabled", "matched", "no_result", "error", "blocked"].includes(factualContext.status) ? factualContext.status : "error";
@@ -165,10 +178,22 @@ export function buildCommerceDecisionLogEvent({ searchIntent = {}, knowledgeCont
   for (const field of ["knowledgeIds", "classificationFailures", "scopeReason", "classificationFailure", "sourceErrorCode", "blockedBy", "confidence", "productCount", "cardAllowed"]) {
     if (JSON.stringify(details).length > 500) delete details[field];
   }
-  if (JSON.stringify(details).length > 500 && details.knowledgeSelection) delete details.knowledgeSelection.counts;
-  if (JSON.stringify(details).length > 500) delete details.knowledgeSelection;
   if (JSON.stringify(details).length > 500) delete details.timings;
   if (JSON.stringify(details).length > 500) delete details.knowledgeRequired;
+  for (const field of ['generalTermExplanation', 'unresolvedUserComplaint', 'live']) {
+    if (JSON.stringify(details).length > 500 && details[field] === false) delete details[field];
+  }
+  if (JSON.stringify(details).length > 500 && details.knowledgeSelection?.candidates?.length) delete details.knowledgeSelection.counts;
+  while (JSON.stringify(details).length > 500 && details.knowledgeSelection?.candidates?.length) {
+    details.knowledgeSelection.candidates.pop();
+    details.knowledgeSelection.candidatesTruncated = true;
+  }
+  if (!details.knowledgeSelection?.candidates?.length && details.knowledgeSelection) delete details.knowledgeSelection.candidates;
+  if (JSON.stringify(details).length > 500 && details.knowledgeSelection) delete details.knowledgeSelection.counts;
+  if (JSON.stringify(details).length > 500 && !details.knowledgeSelection?.recheck) delete details.knowledgeSelection;
+  if (JSON.stringify(details).length > 500) delete details.timings;
+  if (JSON.stringify(details).length > 500) delete details.knowledgeRequired;
+  if (JSON.stringify(details).length > 500 && details.knowledgeSelection?.recheck) details.knowledgeSelection = { recheck: details.knowledgeSelection.recheck };
   return { requestId: safeIdentifier(requestId), sessionId: safeIdentifier(sessionId), characterId: safeIdentifier(characterId), userId: safeIdentifier(userId),
     status: sourceErrorCode ? "error" : "success", provider: "commerce", sourceType: "commerce", sourceRef: "commerce-decision",
     degraded: Boolean(sourceErrorCode), degradationReason: sourceErrorCode,
@@ -218,12 +243,16 @@ export async function recordProviderCallLog(payload = {}) {
 }
 
 export function buildReplyReviewLogEvent({ logContext = {}, reviewStatus, failedContracts = [], guardApplied = false,
-  fallbackKind = "none", missingFields = [], candidateHasFactualTemplate = false, outputHasFactualTemplate = false, outputChars = 0, languageDiagnostics = null, reviewProtocol = null } = {}) {
+  fallbackKind = "none", missingFields = [], candidateHasFactualTemplate = false, outputHasFactualTemplate = false, outputChars = 0, languageDiagnostics = null, reviewProtocol = null, complaintRepair = null } = {}) {
   const status = REVIEW_STATUSES.has(reviewStatus) ? reviewStatus : "unavailable";
   const kind = fallbackKind === "none" || RECOVERY_KINDS.has(fallbackKind) ? fallbackKind : "review";
   const details = { reviewStatus: status, failedContracts: [...new Set(failedContracts.filter((name) => REVIEW_FAILURE_CODES.has(name)))],
     guardApplied: guardApplied === true, fallbackKind: kind, candidateHasFactualTemplate: candidateHasFactualTemplate === true,
     outputHasFactualTemplate: outputHasFactualTemplate === true };
+  if (complaintRepair && ['skipped', 'failed', 'accepted', 'rejected'].includes(complaintRepair.state)
+    && ['ineligible', 'other_recovery', 'review_unavailable', 'knowledge_unavailable', 'active_action', 'recovery_failed', 'reviewed'].includes(complaintRepair.reason)) {
+    details.complaintRepair = { state: complaintRepair.state, reason: complaintRepair.reason };
+  }
   const missing = [...new Set((Array.isArray(missingFields) ? missingFields : []).filter(field => REVIEW_OUTPUT_FIELDS.has(field)))].slice(0, 6);
   if (missing.length) details.missingFields = missing;
   const protocol = {};
@@ -233,18 +262,25 @@ export function buildReplyReviewLogEvent({ logContext = {}, reviewStatus, failed
   }
   if (Object.keys(protocol).length) details.protocol = protocol;
   if (languageDiagnostics && typeof languageDiagnostics === "object") {
+    const technicalOnly = languageDiagnostics.reviewMode === 'technical_only';
+    if (technicalOnly) {
+      details.reviewMode = 'technical_only';
+      details.technicalGuard = { passed: languageDiagnostics.technicalGuardPassed === true };
+      if (['empty', 'length', 'internal_format'].includes(languageDiagnostics.technicalGuardReason))
+        details.technicalGuard.reason = languageDiagnostics.technicalGuardReason;
+    }
     const issueTypes = new Set(["spelling", "morphology", "grammar", "punctuation", "coherence", "wrong_language", "unverifiable"]);
     const types = (items) => [...new Set((Array.isArray(items) ? items : []).filter((item) => issueTypes.has(item)))].slice(0, 4);
     details.languageReview = {
-      status: REVIEW_STATUSES.has(languageDiagnostics.languageReviewStatus) ? languageDiagnostics.languageReviewStatus : "not_run",
-      issues: types(languageDiagnostics.languageIssueTypes),
+      status: !technicalOnly && REVIEW_STATUSES.has(languageDiagnostics.languageReviewStatus) ? languageDiagnostics.languageReviewStatus : "not_run",
+      issues: technicalOnly ? [] : types(languageDiagnostics.languageIssueTypes),
       repair: ["not_attempted", "failed", "timeout", "accepted", "rejected"].includes(languageDiagnostics.repairState) ? languageDiagnostics.repairState : "not_attempted",
       initialIssues: types(languageDiagnostics.initialLanguageIssueTypes),
     };
     const languageProtocolFailures = LANGUAGE_REVIEW_PROTOCOL_FAILURES;
     const finiteConfidence = score => Number.isFinite(score) && score >= 0 && score <= 1;
-    if (finiteConfidence(languageDiagnostics.languageConfidence)) details.languageReview.confidence = languageDiagnostics.languageConfidence;
-    if (languageProtocolFailures.has(languageDiagnostics.languageProtocolFailure)) details.languageReview.protocol = languageDiagnostics.languageProtocolFailure;
+    if (!technicalOnly && finiteConfidence(languageDiagnostics.languageConfidence)) details.languageReview.confidence = languageDiagnostics.languageConfidence;
+    if (!technicalOnly && languageProtocolFailures.has(languageDiagnostics.languageProtocolFailure)) details.languageReview.protocol = languageDiagnostics.languageProtocolFailure;
     if (languageDiagnostics.repairKind === "regeneration") {
       details.regeneration = { attempts: 1, state: details.languageReview.repair,
         initialStatus: REVIEW_STATUSES.has(languageDiagnostics.initialReviewStatus) ? languageDiagnostics.initialReviewStatus : "unavailable" };
@@ -254,7 +290,7 @@ export function buildReplyReviewLogEvent({ logContext = {}, reviewStatus, failed
     }
     if (LANGUAGE_REPAIR_SKIP_REASONS.has(languageDiagnostics.repairSkipReason)) details.languageReview.skip = languageDiagnostics.repairSkipReason;
     if (REVIEW_STATUSES.has(languageDiagnostics.primaryReviewStatus)) details.languageReview.primary = languageDiagnostics.primaryReviewStatus;
-    if (["none", "minor", "major"].includes(languageDiagnostics.languageSeverity)) details.languageReview.severity = languageDiagnostics.languageSeverity;
+    if (!technicalOnly && ["none", "minor", "major"].includes(languageDiagnostics.languageSeverity)) details.languageReview.severity = languageDiagnostics.languageSeverity;
     const repairFailures = new Set(["invalid_assessment", "ineligible", "unavailable", "input_limit", "invalid_json", "no_candidate", "invalid_shape", "control_tags", "local_quality_block", "local_quality_unresolved", "no_change", "provider_timeout", "provider_error", "image_state_changed"]);
     if (repairFailures.has(languageDiagnostics.repairFailureCode)) details.languageReview.reason = languageDiagnostics.repairFailureCode;
     if (["grounded", "image"].includes(languageDiagnostics.repairKind)) details.replyRepair = { kind: languageDiagnostics.repairKind,

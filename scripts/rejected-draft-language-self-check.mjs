@@ -55,6 +55,9 @@ assert.equal(optimized.repairs[0].reviewResult.languageQualitySupported, undefin
 assert.deepEqual(optimized.repairs[0].failedContracts, ['business_facts'], 'not-run must not become a language failure'); checks++;
 assert.equal(optimized.output.text, corrected); checks++;
 assert.notEqual(optimized.output.degraded, true); checks++;
+const detailed = await run({ initial: primary({ repairIssues: [{ kind: 'unsupported_fact', span: original }] }) });
+assert.equal(detailed.repairs[0].repairFeedback.previousReply, original);
+assert.deepEqual(detailed.repairs[0].repairFeedback.issues, [{ kind: 'unsupported_fact', span: original }]);
 for (const repairResult of ['null', 'throw']) {
   let regeneratedAfterRejection = 0;
   const failed = await run({ repairResult, options: { regenerateReply: async () => { regeneratedAfterRejection++; return null; } } });
@@ -76,7 +79,7 @@ assert.equal(unavailable.assessments.length, 1); checks++;
 
 for (const [label, initial, options] of [
   ['primary approval', approved, {}],
-  ['low confidence', primary({ confidence: .79 }), {}],
+  ['low confidence', primary({ confidence: .53 }), {}],
   ['invalid tagged primary fields', primary({ reviewStatus: 'valid', allowed: 'false' }), {}],
   ['retained proposal', primary({ retainedText: original, retainedTextAllowed: false }), {}],
   ['already attempted', primary(), { groundedRepairAttempted: true }],
@@ -91,6 +94,41 @@ for (const [label, initial, options] of [
   const state = await run({ initial, options });
   assert(state.languages.some(value => value.text === (options.replyResult?.text || original)), label + ': original language review remains'); checks++;
 }
+const complaintOptions = {
+  userText: 'I am unhappy with the order.', trustedSite: { id: 'shop_fixture' },
+  searchIntent: { commerceRoute: 'store_policy', commerceTopic: 'support', knowledgeScope: 'business',
+    unresolvedUserComplaint: true, answerRequired: true, replyBoundary: { salesAllowed: false, contactAllowed: true } },
+  knowledgeContext: { ok: true, strategy: 'business_no_verified_answer', items: [], customerServiceIntent: true,
+    businessOwner: { siteId: 'shop_fixture', characterId: 'mascot_fixture' } },
+  feedbackActionCandidate: { kind: 'feedback', label: 'Click here' },
+};
+const complaint = await run({ options: complaintOptions });
+assert.equal(complaint.repairs.length, 1, 'owned complaint has one correction');
+assert.equal(complaint.languages.length, 0, 'eligible complaint rewrite uses technical guard rather than language model');
+assert.equal(complaint.output.text, corrected);
+assert.equal(complaint.assessments.length, 2, 'new complaint still requires primary business review');
+assert.equal(complaint.events.at(-1).languageDiagnostics.technicalGuardPassed, true);
+const mixedComplaint = await run({ options: { ...complaintOptions, orderActionCandidate: { kind: 'ttmall_order_lookup', status: 'login_required', siteSlug: 'shop' } } });
+assert(mixedComplaint.languages.some(value => value.text === original), 'mixed order keeps the existing language review');
+for (const repairResult of ['null', 'throw']) {
+  const failed = await run({ options: complaintOptions, repairResult });
+  assert.equal(failed.repairs.length, 1, 'failed complaint repair remains single-shot');
+  assert.equal(failed.assessments.length, 1, 'no nonexistent new draft is reviewed');
+  assert.equal(failed.languages.length, 0, 'rejected original is not audited after repair failure');
+  assert.equal(failed.output.degraded, true);
+}
+for (const [label, initial, options] of [
+  ['low confidence', primary({ confidence: .53 }), complaintOptions],
+  ['retained proposal', primary({ retainedText: original }), complaintOptions],
+  ['unowned site', primary(), { ...complaintOptions, trustedSite: { id: 'other' } }],
+  ['contact forbidden', primary(), { ...complaintOptions, searchIntent: { ...complaintOptions.searchIntent, replyBoundary: { salesAllowed: false, contactAllowed: false } } }],
+]) {
+  const result = await run({ initial, options });
+  assert(result.languages.some(value => value.text === original), label + ': rejected original keeps existing language path');
+}
+const complaintLanguageFail = await run({ options: complaintOptions, languageReject: true });
+assert.equal(complaintLanguageFail.languages.length, 0);
+assert.equal(complaintLanguageFail.output.text, corrected, 'unused language model verdict does not override technical-only review');
 const invalid = await run({ initial: { allowed: false, confidence: 0, reviewStatus: 'invalid_json' } });
 assert.equal(invalid.languages.length, 0, 'invalid primary keeps existing language-not-run behavior'); checks++;
 assert.equal(invalid.repairs.length, 0, 'protocol failure is not a semantic rejection eligible for this optimization'); checks++;

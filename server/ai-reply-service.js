@@ -13,7 +13,7 @@ const AI_REPLY_MIN_ATTEMPT_TIMEOUT_MS = 1000;
 export { appendStructuredReplyInstructions, normalizeReplyVoiceMeta } from "./ai-reply-contract-service.js";
 export { buildFallbackChatReply } from "./ai-reply-fallback-service.js";
 
-export async function generateChatReply({ promptContext, userText, logContext = {}, regeneration = false, regenerationProvider = null, regenerationUseAlternateProvider = false, deferIdentityToBoundaryReview = false }) {
+export async function generateChatReply({ promptContext, userText, logContext = {}, regeneration = false, regenerationProvider = null, regenerationUseAlternateProvider = false, regenerationTimeoutMs = null, regenerationRecordDiagnostic = null, deferIdentityToBoundaryReview = false }) {
   return generateChatReplyWithRequest({
     promptContext,
     userText,
@@ -21,7 +21,7 @@ export async function generateChatReply({ promptContext, userText, logContext = 
     requestReplyText: requestOpenAiReply,
     recordReplyLogFn: recordReplyLog,
     useConfiguredModelFallback: true,
-    regeneration, regenerationProvider, regenerationUseAlternateProvider, deferIdentityToBoundaryReview,
+    regeneration, regenerationProvider, regenerationUseAlternateProvider, regenerationTimeoutMs, regenerationRecordDiagnostic, deferIdentityToBoundaryReview,
   });
 }
 
@@ -35,8 +35,17 @@ export async function generateChatReplyWithRequest({
   regeneration = false,
   regenerationProvider = null,
   regenerationUseAlternateProvider = false,
+  regenerationTimeoutMs = null,
+  regenerationRecordDiagnostic = null,
   deferIdentityToBoundaryReview = false,
 } = {}) {
+  const reportRegenerationFailure = code => {
+    if (regeneration && typeof regenerationRecordDiagnostic === "function") {
+      try { regenerationRecordDiagnostic(code); } catch {}
+    }
+  };
+  const recoveryTimeout = Number.isSafeInteger(regenerationTimeoutMs) && regenerationTimeoutMs >= AI_REPLY_MIN_ATTEMPT_TIMEOUT_MS && regenerationTimeoutMs <= 120000
+    ? regenerationTimeoutMs : SERVER_CONFIG.aiReply.chatTimeouts.generation;
   const startedAt = Date.now();
   const requestId = createId("ai_req");
   const promptMeta = buildPromptLogMeta(promptContext);
@@ -51,6 +60,7 @@ export async function generateChatReplyWithRequest({
       startedAt,
       errorMessage: "AI reply service is not configured",
     });
+    reportRegenerationFailure("unavailable");
     throw createReplyError("AI reply service is not configured");
   }
 
@@ -72,7 +82,7 @@ export async function generateChatReplyWithRequest({
       || recoveryAlternates[0];
     const recoveryProviders = [regenerationModel, recoveryBackup].filter(Boolean);
     const replyRequest = regeneration ? await requestReplyWithProviderFallback(requestReplyText, promptContext, {
-      providerConfigs: recoveryProviders, providerTimeoutMs: SERVER_CONFIG.aiReply.chatTimeouts.generation, maxAttempts: recoveryProviders.length,
+      providerConfigs: recoveryProviders, providerTimeoutMs: recoveryTimeout, maxAttempts: recoveryProviders.length,
       requestOptions: { sourceRef: "chat-reply-regeneration" },
       validateReply: candidateText => validateAiReplyCandidate({ candidateText, userText, voiceFallbackMeta }),
       onProviderEvent: async event => recordReplyLogFn({ requestId, logContext, promptMeta, ...buildProviderAttemptLogEvent(event) }),
@@ -168,6 +178,7 @@ export async function generateChatReplyWithRequest({
         startedAt,
         errorMessage: qualityResult.reasons.join(","),
       });
+      reportRegenerationFailure("local_quality_block");
       return guardedReply;
     }
 
@@ -199,6 +210,9 @@ export async function generateChatReplyWithRequest({
 
     return reply;
   } catch (error) {
+    const reason = error?.aiFailureReason || classifyAiFailureReason(error);
+    reportRegenerationFailure(reason === "timeout" || reason === "http_408" ? "provider_timeout"
+      : ["empty_ai_reply", "reply_too_long", "incomplete_ending", "structured_reply_leak"].includes(reason) ? "invalid_shape" : "provider_error");
     if (error.logged) {
       throw error;
     }

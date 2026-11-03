@@ -21,7 +21,7 @@ const clone = value => structuredClone(value);
 let checks = stateChecks;
 assert.equal(isImageReplyRecoveryEligible(base), true); checks++;
 for (const override of [
-  { reviewStatus: "invalid_fields" }, { reviewStatus: "timeout" }, { reviewResult: { ...base.reviewResult, confidence: .799 } },
+  { reviewStatus: "invalid_fields" }, { reviewStatus: "timeout" }, { reviewResult: { ...base.reviewResult, confidence: .539 } },
   { failedContracts: [] }, { failedContracts: ["language"] }, { failedContracts: ["factual"] }, { failedContracts: ["confidence"] },
   { contracts: ["image_status", "evidence"] }, { contracts: ["image_status", "business_facts"] }, { contracts: ["image_status", "product_scope"] },
   { languageAssessment: { ...base.languageAssessment, confidence: .539 } }, { languageAssessment: { ...base.languageAssessment, reviewStatus: "invalid_json" } },

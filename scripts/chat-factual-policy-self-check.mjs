@@ -65,7 +65,7 @@ check(await enforceReplyBoundary({ replyResult: original, factualContext: contex
   calls++; check(input.factualRequired === true && input.factualContext.items[0].url === context.items[0].url, "combined review gets public facts scope/evidence");
   check(input.speechText.includes("2–1"), "spoken factual content is assessed too"); return yes;
 } }) === original && calls === 1, "one accepted combined assessment preserves TTS/metadata");
-for (const patch of [{ factualSupported: undefined }, { factualSupported: "true" }, { confidence: "0.99" }, { confidence: 1.1 }, { confidence: .79 }, { allowed: "true" }]) {
+for (const patch of [{ factualSupported: undefined }, { factualSupported: "true" }, { confidence: "0.99" }, { confidence: 1.1 }, { confidence: .539 }, { allowed: "true" }]) {
   const reply = await enforceReplyBoundary({ replyResult: original, factualContext: context, assess: async () => ({ ...yes, ...patch }) });
   check(reply.text !== original.text && !reply.text.includes("2–1") && reply.text !== buildFactualUnavailableCopy("en") && reply.degraded === true, "missing/malformed verdict fails closed without mislabeling its reason as facts");
 }

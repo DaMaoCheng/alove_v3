@@ -16,6 +16,9 @@ const prompt = buildChatReplyPrompt({ character, userText: "Quiero hablar con un
 assert.match(prompt.systemPrompt, /Navigation is a verified capability/);
 assert.match(prompt.systemPrompt, /not live human chat/);
 assert.match(prompt.systemPrompt, /user still needs to submit/);
+const withoutAction = buildChatReplyPrompt({ character, userText: 'Where is my order?' }).systemPrompt;
+assert.doesNotMatch(withoutAction, /then direct the user to the store's order page or support/);
+assert.match(withoutAction, /only when explicitly supplied as verified/);
 assert.doesNotMatch(buildChatReplyPrompt({ character: { categoryId: "babe" } }).systemPrompt, /Navigation is a verified capability/);
 let calls = 0;
 const safe = await enforceReplyBoundary({ character, searchIntent: intent, feedbackActionCandidate: action,
@@ -50,8 +53,9 @@ assert(payload.response_format.json_schema.schema.required.includes("guidanceSup
 const data = JSON.parse(payload.messages.at(-1).content);
 assert.equal(data.evidence.knowledge[0].scope, "site");
 assert.equal(data.feedbackActionAvailable, true);
-assert.match(payload.messages[1].content, /Reject ALL generated instructions/);
-assert.match(payload.messages[1].content, /placeholders are not current site policy/);
+const reviewInstructions = payload.messages.filter(row => row.role === 'system').map(row => row.content).join('\n');
+assert.match(reviewInstructions, /Reject ALL generated instructions/);
+assert.match(reviewInstructions, /placeholders are not current site policy/);
 
 
 const { SUPPORTED_CHARACTER_LANGUAGES } = await import("../shared/language-library.js");

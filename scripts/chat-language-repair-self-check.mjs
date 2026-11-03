@@ -98,3 +98,20 @@ await requestAiJsonWithProviderFallback([{role:'user',content:'fixture'}],{confi
  fetchImpl:async(_url,options)=>{body=JSON.parse(options.body);return{ok:true,json:async()=>({choices:[{message:{content:'{}'}}]})};}});
 assert.equal(body.response_format.type,'json_object');checks++;
 console.log(`complete independent-language/repair regression passed (${checks} assertions)`);
+
+// Transport failures can enter generic regeneration before the specialized
+// image/catalogue path; rejected details must remain isolated there as well.
+for (const protectedContext of [
+ { chatImageContext: { imageStatus: { kind: 'generated', status: 'ready', currentTurn: true } } },
+ { productContext: { products: [{ id: 'p1' }], candidateContext: { requiresConfirmation: true } } },
+ { productContext: { searchOutcome: 'no_match', products: [] }, searchIntent: { commerceRoute: 'product_search' } },
+ { productContext: null, searchIntent: { commerceRoute: 'product_question', needsLiveProductData: true } },
+]) {
+ let feedback;
+ await enforceReplyBoundary({ replyResult: candidate, language: 'hu', languageQualityRequired: true, independentLanguageQualityRequired: true,
+  recordReview: async () => {}, assess: async () => ({ reviewStatus: 'timeout' }),
+  regenerateReply: async (_old, recovery) => { feedback = recovery?.repairFeedback; return null; }, ...protectedContext });
+ assert(feedback, 'transport failure reaches existing regeneration');
+ assert.equal(feedback.previousReply, undefined, 'protected image/catalogue path never sends the rejected draft');
+ assert.deepEqual(feedback.issues, [], 'protected image/catalogue path never sends rejected fragments');
+}
