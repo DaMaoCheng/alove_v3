@@ -1,6 +1,9 @@
 import { stripTtsControlTags } from './tts-emotion-tag-service.js';
 import { toMatchedCatalogueReviewContext, toNoMatchReviewContext } from './product-candidate-context-service.js';
 
+// Shared generation instruction; this adds no reviewer or tool call.
+export const BUSINESS_SOURCE_MODALITY_CONTRACT = 'Preserve source modality and distinguish a verification instruction from a verified result. A source saying a detail must be confirmed at an entry point authorizes suggesting that confirmation, not promising that the interface displays the detail or guarantees the result. Possible, optional, estimated or conditional statements stay possible, optional, estimated or conditional. Do not infer unprovided interface fields, availability or completed actions from the existence of a contact, checkout or tracking entry. A broad service description does not establish coverage, availability or eligibility for a specific destination, customer group or item. If the source does not confirm that specific scope, state the scope remains unconfirmed; do not first say it should or probably applies and then append a disclaimer. Uncertainty wording does not supply missing evidence.';
+
 // Existing intent fields identify a no-action conceptual answer, not a new
 // permission or source of order/store facts.
 export function isGeneralCommerceExplanation(intent = {}) {

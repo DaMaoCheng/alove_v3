@@ -1,3 +1,4 @@
+import { BUSINESS_SOURCE_MODALITY_CONTRACT } from './business-claim-audit-service.js';
 import { upsertPersonaLanguageSetting } from "./chat-language-preference-service.js";
 import { toAlternativeReviewContext, PRODUCT_ALTERNATIVE_CONTRACT } from "./product-alternative-service.js";
 import { buildProductCardDeliveryContext } from "./chat-product-reply-service.js";
@@ -63,6 +64,7 @@ export function buildKnowledgeContextLayer(knowledgeContext = null, { orderActio
         : "",
       "Use them only when they directly help answer the current message.",
       "Do not mention knowledge bases, retrieval, sections, scores, or internal IDs to the user.",
+      knowledgeContext?.customerServiceIntent === true || items.some(item => item.category === 'customer_service') ? BUSINESS_SOURCE_MODALITY_CONTRACT : "",
       "Answer every supported part of the question from the applicable references, then identify any requested detail they do not verify and give one relevant real next step. Missing one detail does not make the whole policy unavailable. Keep every restriction attached to its fact: a rule for a specified destination, customer, item or circumstance must not be applied to another. Preserve the degree of certainty and authority of each source claim: possibility, optional coverage, discretion and conditional eligibility do not establish an unconditional entitlement, guarantee or completed result. Keep the qualification on that same claim; generic hedging elsewhere does not qualify it. If the references verify no part of the question, say briefly that you do not have a verified answer here. Do not fill a gap with general knowledge or invented store facts.",
       "Use URLs only when they appear in the supplied reference; never construct or repair a URL from memory.",
       ...lines,

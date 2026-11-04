@@ -1,3 +1,4 @@
+import { shouldRecheckBusinessKnowledge } from './business-knowledge-selection-service.js';
 import { registerChatImageInitialReplyForDb } from "./chat-image-failure-reply-job-service.js";
 import { resolveFeedbackConversationHistory, attachFeedbackSubmissionContext, applyFeedbackSubmissionPrompt, isSubmittedFeedbackFollowup } from './chat-feedback-submission-service.js';
 import { projectChildSizingUpdatePrompt } from './product-sizing-guidance-service.js';
@@ -198,8 +199,7 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
     query: prepared.text,
     logContext: { requestId: prepared.message.id, sessionId: prepared.guest.chat_session_id, characterId: promptCharacter.id },
     knowledgeQuery: productRecommendation.searchIntent?.knowledgeQuery,
-    recheckLowConfidence: productRecommendation.searchIntent?.pureStorePolicy === true && productRecommendation.searchIntent?.unresolvedUserComplaint !== true
-      && productRecommendation.searchIntent?.commerceRoute === 'store_policy' && productRecommendation.searchIntent?.shouldLoadProductContext === false && productRecommendation.searchIntent?.cardAllowed !== true,
+    recheckLowConfidence: shouldRecheckBusinessKnowledge(productRecommendation.searchIntent),
     knowledgeScope: resolveCommerceKnowledgeScope(productRecommendation.searchIntent, { classificationFailed: Boolean(classificationFailureReply) }),
     character: promptCharacter,
     siteId: prepared.guest.site_id,
@@ -314,7 +314,7 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
     // A validated guest request must be assessed before any broad coupon cleanup.
     // The review alone can grant permission to preserve its exact safe answer.
     const normalizedReplyText = guestBenefitContext || chatImageContext?.imageStatus || hasReplyBoundary(productRecommendation.searchIntent)
-      ? reply.text : normalizeGuestReplyText({ ...normalizationOptions, text: reply.text });
+      ? reply.text : normalizeGuestReplyText({ ...normalizationOptions, text: reply.text, preserveEmptySearchDraft: true });
     // A policy transform must not leave the previous offer in the speech channel.
     // Preserve expressive speech when its visible content already matches.
     const normalizedSpeechText = normalizedReplyText === reply.text

@@ -64,7 +64,8 @@ export function resolveChatFeedbackActionCandidate({ character = {}, productCont
   const legacyServiceTopic = !hasCommerceRoute
     && (["authenticity", "delivery", "returns", "support"].includes(knowledgeContext?.customerServiceTopic)
       || ["authenticity", "delivery", "returns", "support"].includes(searchIntent?.commerceTopic));
-  const missingKnowledgeNeedsService = searchIntent?.commerceRoute === "store_policy"
+  const missingKnowledgeNeedsService = (searchIntent?.commerceRoute === "store_policy"
+      && ["authenticity", "delivery", "returns", "support", "material", "price", "stock", "payment"].includes(searchIntent?.commerceTopic))
     || productQuestionNeedsService
     || verifiedBusinessInquiry
     || searchIntent?.unresolvedUserComplaint === true

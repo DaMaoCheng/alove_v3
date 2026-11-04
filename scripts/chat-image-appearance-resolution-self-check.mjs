@@ -55,3 +55,9 @@ const status = await classify({ ...base, hasIntent: false, allowed: false, inten
   communicativeAction: 'other', appearanceContext: appearance });
 assert.equal(status.hasIntent, false, 'prior outfit is never a new image permission');
 console.log('image appearance resolution passed: same-call continuation, clarification, normal gallery, changed outfit, invalid evidence, delivery reset, no new permission');
+
+for (const relation of ['continue', 'uncertain', 'different']) {
+ const withoutOutfit = await classify({ ...base, appearanceContext: { previousSubject:'unclear', previousOutfit:'none', previousEvidence:'who areu', relation, currentEvidence:current, target:'none' } }, {recentConversation:[{role:'user',kind:'text',text:'who areu'}]});
+ assert.equal(withoutOutfit.allowed,true,'an inapplicable relation cannot create a pending outfit');
+ assert.equal(withoutOutfit.intentType,'library_photo');
+}

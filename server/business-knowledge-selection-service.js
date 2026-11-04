@@ -64,14 +64,23 @@ export async function selectGeneralKnowledgeReferences({ query = "", sections = 
 
 // Topic names and languages never determine access. The caller supplies only
 // active, authorized business sections; selections and quotes are checked below.
+// Route labels do not establish source truth. Any explicit business question
+// can review a partial passage; all source/quote/relevance checks still apply.
+export function shouldRecheckBusinessKnowledge(intent = {}) {
+  return intent.knowledgeScope === 'business' && intent.answerRequired === true
+    && intent.customerServiceKnowledgeRequest === true
+    && intent.businessKnowledgeRequired !== false
+    && !intent.commerceClassificationUnavailable && !intent.commerceClassificationFailure;
+}
+
 export async function selectBusinessKnowledgeReferences({ query = "", sections = [], limit = 4, siteId = "", logContext = {}, select = requestBusinessKnowledgeSelection, recheckLowConfidence = false } = {}) {
   if (!String(query).trim() || !sections.length) return { items: [], reason: "no_business_reference" };
   // Do not silently omit newly added low-priority knowledge when the directory grows.
   const passages = sections.flatMap(splitBusinessSection);
   if (passages.length > MAX_DIRECTORY) return { items: [], reason: "business_directory_limit" };
   let stage = "directory";
-  // The caller opts in only after JEV confirms a standalone policy question.
-  // Other business and general knowledge retain the original threshold.
+  // Explicit business questions can use a partial passage, irrespective of route.
+  // General knowledge keeps its original threshold and access checks.
   const minimumConfidence = recheckLowConfidence ? 0.7 : 0.8;
   try {
     const directory = passages.map((s) => ({ id: s.id, title: s.title, summary: s.summary,

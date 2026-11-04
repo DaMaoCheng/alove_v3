@@ -46,3 +46,23 @@ console.log('prior-user image subject continuation retains current evidence and 
 const deliveredContext={latestImageKind:'character',recentConversation:[{role:'user',kind:'text',text:previous},{role:'assistant',kind:'image_generation',text:''}]};
 assert.equal((await replay(details,deliveredContext)).allowed,true,'a delivered character photo may preserve the previous user subject for a selected continuation');
 for (const kind of ['product','attachment','mascot_greeting_image']) assert.equal((await replay(details,{latestImageKind:'character',recentConversation:[{role:'user',kind:'text',text:previous},{role:'assistant',kind,text:''}]})).allowed,false,`${kind} is not character-photo provenance`);
+
+// A successful primary image action must not be re-voted through optional
+// literal snippets. Colloquial subjects can be fused with adjacent words.
+for (const actorEvidence of ['', 'ofu']) {
+ const ordinary = {ok:true,parsed:{hasIntent:true,allowed:true,confidence:.02,intentType:'library_photo',
+  communicativeAction:'request_visual_output',requestKind:'character_image',imageSubject:'character',
+  requestScope:'mixed',clothingTarget:'none',requestEvidence:'',actionEvidence:'',actorEvidence,
+  explicitGeneration:false,wants_clothing:false,wants_no_clothing:false}};
+ const result = await classifyChatImageIntent('couldu send me a image ofu and tell me delivery time', {
+  character:{category_id:'mascot'},jevDecision:{...primary,imageIntent:'explicit_generation'},
+  classifyImageJev:async()=>ordinary});
+ assert.equal(result.allowed,true,'primary-approved image survives absent distinct literal subject/action');
+ assert.equal(result.requestScope,'mixed','the independent business question remains mixed');
+ for(const imageSubject of ['product','user_upload','none']) {
+  const invalid=structuredClone(ordinary);invalid.parsed.imageSubject=imageSubject;
+  assert.equal((await classifyChatImageIntent('couldu send me a image ofu',{
+   character:{category_id:'mascot'},jevDecision:primary,classifyImageJev:async()=>invalid})).allowed,false);
+ }
+}
+console.log('authoritative primary image action does not depend on optional lexical snippets');

@@ -548,3 +548,8 @@ assert.equal(
 );
 
 console.log("guest product message self-check passed");
+
+const emptySearchReply = {preserveEmptySearchDraft:true,text:'Thanks, I will keep that size in mind; this search found no matching item.',productRequested:true,
+  productSearchIntent:{commerceRoute:'product_search',searchState:'ready_to_search'},productSearchOutcome:'no_match',languageCode:'en',sourceType:'ai'};
+assert.equal(normalizeGuestReplyText(emptySearchReply),emptySearchReply.text,'Successful empty search preserves contextual answer for the caller review');
+for(const productSearchOutcome of ['source_error','', 'classification_unavailable']) assert.notEqual(normalizeGuestReplyText({...emptySearchReply,productSearchOutcome}),emptySearchReply.text,'Unverified lookup cannot use the empty-search exception');

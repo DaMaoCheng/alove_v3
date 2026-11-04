@@ -138,3 +138,38 @@ const {referencedProductIds:ignored,...legacy}=shape;
 check(validateCommerceIntentShape(legacy),'legacy missing-array contract remains compatible');
 for(const invalid of [['h','a','x'],[3],['x'.repeat(161)]])check(!validateCommerceIntentShape({...shape,referencedProductIds:invalid}),'wire shape bounds references');
 console.log(`displayed product reference self-check passed: ${checks} checks; injected sites only, no DB/network/models`);
+
+const {buildLiveDisplayedProductReferenceContext: liveContext}=await import('../server/product-displayed-reference-service.js');
+const owner={version:1,status:'active',siteId:site.id,characterId:location.characterId,owner:'single',targetEvidence:'Manchester United home shirt',requirements:{requestedTeam:'Manchester United',requestedProductType:'shirt',requestedVariants:['home'],requestedSizes:[],requestedFeatures:[],requestedKeywords:[],clearFields:[]},suspectedTerm:null,proposal:null};
+const changed={...owner,requirements:{...owner.requirements,requestedPrinting:'printed'}};
+const liveHistory=[{senderType:'user',text:owner.targetEvidence},card(home),{senderType:'character',productCandidateState:owner}];
+const liveIntent={commerceRoute:'product_question',needsLiveProductData:true,cardAllowed:false,productRequirementAction:'continue',productCandidateState:changed,referencedProductId:'h'};
+let lookups=0;
+const resolveExact=async options=>{lookups++;assert.equal(options.exactProduct,true);assert.equal(options.strictSite,true);assert.equal(options.product.id,'h');return {resolvedFromSource:true,site,sourceItem:{...home,customizationOptions:[]}};};
+const live=await liveContext({site,characterId:location.characterId,searchIntent:liveIntent,recentMessages:liveHistory,resolveProduct:resolveExact});
+check(live.searchOutcome==='matched'&&live.products[0].id==='h'&&live.cardAllowed===false,'same-item live question refreshes exact ID without applying requested printing as an inventory filter');
+check(selectProductsForMessage(live).length===0,'live fact refresh never emits a new card');
+check(live.products[0].customizationOptions.length===0,'unknown attributes remain unknown');
+for(const patch of [{commerceRoute:'product_search'},{productRequirementAction:'new'},{cardAllowed:true},{productScopePending:true},{referencedProductId:'different'},{productCandidateState:{...changed,siteId:'foreign'}},{productCandidateState:{...changed,status:'cleared'}}]){
+ const before=lookups;const value=await liveContext({site,characterId:location.characterId,searchIntent:{...liveIntent,...patch},recentMessages:liveHistory,resolveProduct:resolveExact});check(value===null&&lookups===before,'unowned/new/action/ambiguous scope cannot reuse the card');
+}
+for(const result of [{resolvedFromSource:false},{resolvedFromSource:true,site:{...site,id:'foreign'},sourceItem:home},{resolvedFromSource:true,site,sourceItem:{...home,id:'other'}}]){
+ const value=await liveContext({site,characterId:location.characterId,searchIntent:liveIntent,recentMessages:liveHistory,resolveProduct:async()=>result});check(value.searchOutcome==='source_error'&&!value.products.length,'unverified refresh is source failure, never no_match or stale facts');
+}
+const laterHistory=[...liveHistory,{senderType:'user',text:'Printing too'},{senderType:'character',productCandidateState:changed}];
+check((await liveContext({site,characterId:location.characterId,searchIntent:liveIntent,recentMessages:laterHistory,resolveProduct:resolveExact})).products[0].id==='h','later attribute question retains original displayed identity');
+
+const {toLiveDisplayedProductReplyContext}=await import('../server/product-displayed-reference-service.js');
+const {isGroundedCommerceRepairEligible,repairGroundedCommerceReply}=await import('../server/chat-grounded-reply-repair-service.js');
+const liveRepairIntent={commerceRoute:'product_question',commerceTopic:'other',productRequirementAction:'continue',needsLiveProductData:true,cardAllowed:false,referencedProductId:'h',replyBoundary:{salesAllowed:true,contactAllowed:true},answerRequired:true};
+const liveRepair={character:{id:location.characterId,category_id:'mascot',site_id:site.id},trustedSite:site,searchIntent:liveRepairIntent,recentMessages:[card(home)],userText:'Can it have my name on the back?',
+ productContext:{sourceType:'product_api',sourceRef:'live-displayed-product-reference',searchOutcome:'matched',siteId:site.id,cardAllowed:false,products:[home],searchIntent:liveRepairIntent},
+ replyResult:{text:'It definitely comes with your name.',sourceType:'ai'},reviewStatus:'valid',reviewResult:{allowed:false,confidence:.9,boundarySupported:true,businessFactsSupported:false},failedContracts:['business_facts']};
+assert(toLiveDisplayedProductReplyContext(liveRepair));
+assert(isGroundedCommerceRepairEligible(liveRepair));
+for(const patch of [{groundedRepairAttempted:true},{recentMessages:[]},{trustedSite:{...site,id:'other'}},{productContext:{...liveRepair.productContext,snapshotOnly:true}},{productContext:{...liveRepair.productContext,cardAllowed:true}},{productContext:{...liveRepair.productContext,searchOutcome:'source_error'}},{searchIntent:{...liveRepairIntent,referencedProductId:'other'}}]) assert(!isGroundedCommerceRepairEligible({...liveRepair,...patch}));
+let livePrompt;
+await repairGroundedCommerceReply({...liveRepair,config:{apiKey:'fixture',model:'fixture',apiMode:'chat_completions'},requestText:async p=>{livePrompt=p;return JSON.stringify({displayText:'You want a name on the back; that option is not confirmed in this listing.'});},recordLog:async()=>{}});
+assert.equal(JSON.parse(livePrompt.messages[0].content).liveDisplayedProduct.product.id,'h');
+assert.match(livePrompt.systemPrompt,/No new card, selection, search or availability claim/);
+console.log('Live exact displayed reference: one reviewed wording correction, original identity and closed-card boundaries passed');

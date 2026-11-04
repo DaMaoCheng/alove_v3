@@ -1,5 +1,5 @@
 import { bindProductAlternativeContext } from './product-alternative-service.js';
-import { buildDisplayedProductReferenceContext } from './product-displayed-reference-service.js';
+import { buildDisplayedProductReferenceContext, buildLiveDisplayedProductReferenceContext } from './product-displayed-reference-service.js';
 import { mergeReplyCommerceContext } from "./chat-reply-boundary-service.js";
 import { buildCandidateConfirmationContext } from './product-candidate-confirmation-service.js';
 import { resolveProductCheckoutProduct } from './product-checkout-resolver-service.js';
@@ -109,6 +109,9 @@ export async function buildChatProductRecommendationContext(db, {
     if (onCommerceDecision) await onCommerceDecision(initialSearchIntent);
     return null;
   }
+
+  const liveReference = await buildLiveDisplayedProductReferenceContext({ site, characterId: character.id || character.characterId || '', searchIntent: initialSearchIntent, recentMessages, resolveProduct: resolveConfirmationProduct });
+  if (liveReference) return mergeReplyCommerceContext(liveReference, initialSearchIntent);
 
   const displayedReference = buildDisplayedProductReferenceContext({ site, characterId: character.id || character.characterId || '', searchIntent: initialSearchIntent, recentMessages });
   if (displayedReference) return mergeReplyCommerceContext(displayedReference, initialSearchIntent);

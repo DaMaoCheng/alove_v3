@@ -305,6 +305,7 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
     ...searchIntent,
     nonShoppingReason: deterministicNonShopping || decision.route === "chat" ? searchIntent.nonShoppingReason : "",
     commerceRoute,
+    productRequirementAction: decision.productRequirementAction || decision.productRequirement?.action || '',
     referencedProductIds: [],
     replyTopicHint: "", replyClarificationContext: null,
     commerceTopic: decision.topic,

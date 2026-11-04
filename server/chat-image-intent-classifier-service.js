@@ -46,7 +46,7 @@ export async function classifyChatImageIntent(userText = "", { character = null,
       const details = detailed.parsed;
       if (details.intentType === 'unclear') return { ...mapped, allowed: false, explicitGeneration: false,
         appearanceClarificationRequired: true, reason: 'appearance_uncertain', detectionSource: 'jev' };
-      const normalized = normalizeClassifierResult(details, { text, verifyCharacterTarget, followupContext,
+      const normalized = normalizeClassifierResult(details, { text, verifyCharacterTarget, followupContext, establishedImageIntent: true,
         pendingAppearance: verifyCharacterTarget && !followupContext ? pendingAppearanceUserContext(conversationContext) : null });
       if (normalized.hasIntent && details.clothingTargetUncertain) return { ...normalized,
         allowed: false, explicitGeneration: false, appearanceClarificationRequired: true, reason: 'appearance_uncertain', detectionSource: 'jev' };
@@ -174,7 +174,7 @@ async function requestClassifier(userText, { conversationContext = null, verifyC
   ], { timeoutMs: CLASSIFIER_TIMEOUT_MS, perProviderTimeout: true, providerTimeoutMs: CLASSIFIER_TIMEOUT_MS, sourceRef: "chat-image-intent-classifier", logContext });
 }
 
-function normalizeClassifierResult(parsed = {}, { text = "", verifyCharacterTarget = false, followupContext = null, pendingAppearance = null } = {}) {
+function normalizeClassifierResult(parsed = {}, { text = "", verifyCharacterTarget = false, followupContext = null, pendingAppearance = null, establishedImageIntent = false } = {}) {
   const rawConfidence = Number(parsed.confidence);
   const validConfidence = typeof parsed.confidence === 'number' && Number.isFinite(rawConfidence)
     && rawConfidence >= 0 && rawConfidence <= 1;
@@ -208,8 +208,15 @@ function normalizeClassifierResult(parsed = {}, { text = "", verifyCharacterTarg
     && normalizeText(appearance.currentEvidence).toLowerCase() === normalizeText(text).toLowerCase());
   const groundedTarget = (groundedActor || groundedFollowupActor || priorActor) && groundedAction && visualAction && parsed.requestKind === "character_image" && parsed.imageSubject === "character" && groundedEvidence;
   const unsupported = intentType === "disallowed" && (!verifyCharacterTarget || (visualAction && parsed.requestKind === "unsupported_image" && groundedEvidence));
+  // A successful primary JEV decision already owns the current visual action.
+  // Its type result must not be vetoed by optional literal actor/action spans
+  // (colloquial pronouns and elliptical requests often have no distinct span).
+  // Borrowing a prior outfit's subject still requires scoped USER provenance.
+  const inheritedActor = actorEvidence && !normalizeText(text).toLowerCase().includes(actorEvidence.toLowerCase());
+  const establishedTarget = establishedImageIntent && parsed.requestKind === 'character_image'
+    && parsed.imageSubject === 'character' && (!inheritedActor || groundedFollowupActor || priorActor);
   const hasIntent = validConfidence && parsed.hasIntent === true
-    && (unsupported || (roleIntent && ((!verifyCharacterTarget && !followupContext) || groundedTarget)));
+    && (unsupported || (roleIntent && (establishedTarget || (!establishedImageIntent && ((!verifyCharacterTarget && !followupContext) || groundedTarget)))));
   const result = {
     hasIntent,
     classificationOutcome: hasIntent ? "accepted" : parsed.hasIntent !== true ? "model_no_intent" : "grounding_rejected",

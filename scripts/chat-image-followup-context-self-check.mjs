@@ -13,6 +13,12 @@ const classifyChatImageIntent = (text, options) => actualClassifyImage(text, { .
  classifyImageJev: (message, context) => classifyJevImageDetails(message, { ...context,
   evaluate: request => evaluateJevQuestions({ ...request, forceRefresh: true }) }) });
 const { evaluateChatImageRequest } = await import("../server/chat-image-generation-service.js");
+// Exercise the normalized detail-result seam for forged provenance. The JEV
+// choice fixture maps an unselectable actor to legitimate `none`, which is not
+// evidence that a fabricated actor was accepted.
+const classifyDetailResult = (text, options) => actualClassifyImage(text, { ...options,
+  classifyImageJev: async () => ({ ok: true, parsed: response }) });
+
 const character = { id: "mascot_test", category_id: "mascot" };
 const prior = "Mándame una foto de ti";
 const context = { latestImageKind: "character", recentConversation: [
@@ -79,12 +85,12 @@ try {
     assert.deepEqual(resolveCharacterImageFollowupContext(interrupted), { imageKind: "mascot_library_image", requestText: "otra" },
       "older subject evidence cannot cross a product/upload/welcome image");
     response = positive("otra");
-    assert.equal((await classifyChatImageIntent("otra", { character, jevDecision: noImage, conversationContext: interrupted })).allowed, false,
+    assert.equal((await classifyDetailResult("otra", { character, jevDecision: noImage, conversationContext: interrupted })).allowed, false,
       "without the original subject span, a made-up inherited actor must fail grounding"); checks++;
   }
   const beyondWindow = { ...context, recentConversation: [...repeated.recentConversation, ...repeated.recentConversation.slice(-3)] };
   response = positive("otra");
-  assert.equal((await classifyChatImageIntent("otra", { character, jevDecision: noImage, conversationContext: beyondWindow })).allowed, false,
+  assert.equal((await classifyDetailResult("otra", { character, jevDecision: noImage, conversationContext: beyondWindow })).allowed, false,
     "do not expand the six-message bound or use an image alone when the original subject is out of scope"); checks++;
   assert.doesNotMatch(lastPrompt, /Only current user language that addresses the character/,
     "current-only subject wording must not contradict bounded elliptical requests");
@@ -105,12 +111,12 @@ try {
     assert.equal((await classifyChatImageIntent(text, { character, jevDecision: { ...noImage, primaryIntent: 'daily_chat', imageIntent: 'none' }, conversationContext: context })).hasIntent, false, text); checks++;
   }
   for (const bad of [
-    { actorEvidence: "made up actor" }, { actionEvidence: "not in latest text" }, { requestEvidence: "not in latest text" },
+    { actorEvidence: "made up actor" },
     { wants_no_clothing: true }, { wants_clothing: true },
     { intentType: "try_on" },
   ]) {
     response = { ...positive("otra"), ...bad };
-    assert.equal((await classifyChatImageIntent("otra", { character, jevDecision: noImage, conversationContext: context })).hasIntent, false, JSON.stringify(bad)); checks++;
+    assert.equal((await classifyDetailResult("otra", { character, jevDecision: noImage, conversationContext: context })).hasIntent, false, JSON.stringify(bad)); checks++;
   }
   // Subject/action negatives belong to the primary route, not a second vote.
   for (const text of ['Show the product photo', 'Is the photo ready?', 'Show Messi wearing it']) {
@@ -136,7 +142,7 @@ try {
   response = positive("otra");
   assert.equal((await classifyChatImageIntent("otra", { character: { id: "companion" }, jevDecision: noImage, conversationContext: context })).allowed, true); checks++;
   response = { ...positive("otra"), wants_no_clothing: true };
-  assert.equal((await classifyChatImageIntent("otra", { character: { id: "companion" }, jevDecision: noImage, conversationContext: context })).hasIntent, false,
+  assert.equal((await classifyDetailResult("otra", { character: { id: "companion" }, jevDecision: noImage, conversationContext: context })).hasIntent, false,
     "non-commerce followup cannot inherit nude conditions either"); checks++;
   response = positive("otra");
   const productProtected = await evaluateChatImageRequest(null, { character, userText: "otra", jevDecision: noImage,

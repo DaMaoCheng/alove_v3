@@ -22,7 +22,10 @@ export function resolveImageAppearance(result, parsed, { pendingContext = null, 
   const clarify = () => ({ ...result, allowed: false, explicitGeneration: false,
     appearanceClarificationRequired: true, reason: 'appearance_uncertain' });
   if (!appearance || typeof appearance !== 'object') return clarify();
-  if (appearance.previousOutfit === 'none' && appearance.relation === 'none') return result;
+  // Relation is conditional on an actual prior outfit. A generic conversational
+  // continuation cannot manufacture a pending outfit when the same decision
+  // explicitly found no outfit (for example, a prior identity question).
+  if (appearance.previousOutfit === 'none') return result;
   if (appearance.previousOutfit !== 'clothed' || !quoted(appearance.previousEvidence, pendingContext.userText)) return clarify();
   if (!quoted(appearance.currentEvidence, userText)) return clarify();
   if (appearance.relation === 'different') return result;

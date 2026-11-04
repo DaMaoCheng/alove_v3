@@ -340,3 +340,26 @@ const passedFlags=[];
 await selectBusinessKnowledgeReferences({recheckLowConfidence:true,query:'policy?',sections:[reference],select:async input=>{passedFlags.push([input.stage,input.partialEvidenceScoring]);return input.stage==='directory'?{ids:[reference.id]}:{matches:[]}}});
 assert.deepEqual(passedFlags,[['directory',undefined],['evidence',true]]);
 console.log('Partial scoring prompt confined to opted-in business policy evidence');
+
+// All production callers share the explicit-business-question opt-in. Exercise
+// the actual selector at the boundary, including both bounded evidence passes.
+const { shouldRecheckBusinessKnowledge } = await import('../server/business-knowledge-selection-service.js');
+for (const route of ['chat', 'product_question', 'store_policy']) {
+  const recheckLowConfidence = shouldRecheckBusinessKnowledge({ commerceRoute: route, knowledgeScope: 'business', answerRequired: true, customerServiceKnowledgeRequest: true });
+  assert.equal(recheckLowConfidence, true);
+  for (const [label, patch, expected, expectedCalls] of [
+    ['exact .70', {}, 1, 1],
+    ['below .70', {confidence:.69}, 0, 2],
+    ['irrelevant .70', {answersQuestion:false}, 0, 1],
+    ['fabricated quote .70', {quote:'not actually present in this source'}, 0, 1],
+    ['foreign ID .70', {id:'foreign-site-policy-id'}, 0, 1],
+  ]) {
+    let evidenceCalls = 0;
+    const checked = await selectBusinessKnowledgeReferences({ recheckLowConfidence, query:'How long will delivery take?', sections:[excerptPolicy],
+      select:async input => input.stage === 'directory' ? {ids:[excerptPolicy.id]} : (evidenceCalls++, {matches:[{...lowEvidence,...patch}]}) });
+    assert.equal(checked.items.length, expected, `${route}: ${label}`);
+    assert.equal(evidenceCalls, expectedCalls, `${route}: finite selection for ${label}`);
+    if (expected) assert.equal(checked.items[0].evidenceQuote, lastQuote);
+  }
+}
+console.log('Business route boundary matrix: .70 exact accepted, .69/irrelevant/forged/foreign rejected with bounded calls');

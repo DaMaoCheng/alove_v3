@@ -71,7 +71,7 @@ check(resolveChatFeedbackAction({ ...supportIdentityArgs, replyResult: { sourceT
 for (const route of ["store_policy", "product_question"]) {
   for (const topic of ["authenticity", "price", "stock", "material", "delivery", "returns", "support", "sizing", ...(route === "store_policy" ? ["other"] : [])]) {
     const action = resolveChatFeedbackActionCandidate({ ...identityArgs, searchIntent: { ...identityIntent, commerceRoute: route, commerceTopic: topic } });
-    check(topic === "sizing" ? action === null : action?.kind === "feedback", `real ${route}/${topic}: sizing clarification alone needs no handoff; other missing knowledge retains service fallback`);
+    check(["sizing", "other"].includes(topic) ? action === null : action?.kind === "feedback", `real ${route}/${topic}: sizing or unspecified topic alone needs no handoff; explicit service topics retain fallback`);
   }
 }
 for (const topic of ["authenticity", "delivery", "returns", "support"]) {

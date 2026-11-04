@@ -135,3 +135,32 @@ const longRun = evaluator(); await resolveJevCommerceDecision(longFixture, { eva
 const spans = commerceEvidenceChoices(text); assert(spans.every(span => text.includes(span))); assert(spans.includes('Cristiano Ronaldo'));
 assert(Object.keys(buildCommerceJevPacket(original).questions).length >= 1);
 console.log('JEV commerce admission passed: valid/unclear no LLM, exhausted-only fallback, order business knowledge purpose, bounded product evidence batches, child/retro/full name conditions; no real network/DB.');
+
+// A single merchandise followup must not enter the independent multi-item
+// selection state machine merely because JEV labels both actions continue.
+const singleLocation = { siteId: 'scope-site', characterId: 'scope-character' };
+const singleTarget = { version: 1, status: 'active', ...singleLocation, owner: 'single', targetEvidence: 'Barcelona home shirt',
+  requirements: { requestedTeam: 'Barcelona', requestedProductType: 'shirt', requestedVariant: 'home', requestedVariants: ['home'], requestedKeywords: [], requestedSizes: [], requestedFeatures: [], clearFields: [] }, suspectedTerm: null, proposal: null };
+const singleHistory = [{ senderType: 'user', text: 'Barcelona home shirt' }, { senderType: 'character', productCandidateState: singleTarget, text: 'Here is the shirt.' }];
+const followText = 'Name and number on the back too';
+const followFixture = evaluator({ route: 'product_question', requirement_action: 'continue', request_relation: 'single', request_action: 'continue' });
+const singleFollow = await resolveJevCommerceDecision(followText, { ...singleLocation, recentMessages: singleHistory, evaluate: followFixture.evaluate });
+assert.equal(singleFollow.value.productRequest.action, 'new', 'single target does not select from a nonexistent multiple scope');
+assert.equal(singleFollow.value.productRequirement.action, 'continue', 'actual merchandise continuation is preserved');
+for (const history of [[], [{ senderType: 'character', productCandidateState: { ...singleTarget, status: 'cleared' } }], [{ senderType: 'character', productCandidateState: { ...singleTarget, siteId: 'other-site' } }]]) {
+  const result = await resolveJevCommerceDecision(followText, { ...singleLocation, recentMessages: history, evaluate: followFixture.evaluate });
+  assert.equal(result.value.productRequest.action, 'continue', 'no single-target admission from missing, cleared or foreign history');
+}
+
+const priorComplaint = 'My parcel has been delayed and support has not replied.';
+const complaintFollowup = 'I am still asking about that same delay.';
+const priorFixture = evaluator({ route: 'store_policy', knowledge_kind: 'unresolved_complaint', query_source: 'prior0' });
+const continuedComplaint = await resolveJevCommerceDecision(complaintFollowup, { recentMessages: [{senderType:'user',text:priorComplaint}], evaluate:priorFixture.evaluate });
+assert(continuedComplaint.value.knowledgeQuery.startsWith(complaintFollowup));
+assert(continuedComplaint.value.knowledgeQuery.includes(priorComplaint), 'short complaint continuation retains selected prior USER context');
+const selfContained = 'Can you check whether this shirt has a sponsor logo?';
+const mistakenHistory = await resolveJevCommerceDecision(selfContained, { recentMessages:[{senderType:'user',text:'Hello'}], evaluate:priorFixture.evaluate });
+assert(mistakenHistory.value.knowledgeQuery.startsWith(selfContained), 'even a mistaken history choice cannot replace the current question');
+const longQuestion = 'Please explain delivery timing and conditions. '.repeat(12);
+const longHint = await resolveJevCommerceDecision(longQuestion, {recentMessages:[{senderType:'user',text:priorComplaint}],evaluate:priorFixture.evaluate});
+assert.equal(longHint.value.knowledgeQuery,longQuestion.trim().slice(0,240), 'bounded hint retains current question first; full current message is independently supplied to retrieval');

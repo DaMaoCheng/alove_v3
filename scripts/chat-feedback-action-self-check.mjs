@@ -340,3 +340,10 @@ assert.match(guestReplies, /resolveChatFeedbackActionCandidate\(/, "guest prompt
 assert.match(guestReplies, /guest-feedback-follow-up-action:\$\{prepared\.message\.id\}/, "guest action messages must be scoped to the triggering user turn");
 
 console.log("chat feedback action self-check passed");
+
+// A vague business classification is not a request to contact the store.
+for (const topic of ['other', 'unknown', '']) {
+  assert.equal(resolveChatFeedbackActionCandidate({character: creator, userText:'Some unrelated names and places',
+    searchIntent:{commerceRoute:'store_policy',commerceTopic:topic,replyBoundary:{contactAllowed:true}},
+    knowledgeContext:{customerServiceIntent:true,items:[]}}),null);
+}

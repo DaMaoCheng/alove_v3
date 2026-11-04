@@ -1,3 +1,4 @@
+import { shouldRecheckBusinessKnowledge } from './business-knowledge-selection-service.js';
 import { registerChatImageInitialReplyForDb } from "./chat-image-failure-reply-job-service.js";
 import { resolveFeedbackConversationHistory, attachFeedbackSubmissionContext, applyFeedbackSubmissionPrompt, isSubmittedFeedbackFollowup } from './chat-feedback-submission-service.js';
 import { projectChildSizingUpdatePrompt } from './product-sizing-guidance-service.js';
@@ -102,8 +103,7 @@ export async function buildCharacterReplyGenerationForDb(db, {
     query: userText,
     logContext,
     knowledgeQuery: commerceSearchIntent.knowledgeQuery,
-    recheckLowConfidence: commerceSearchIntent.pureStorePolicy === true && commerceSearchIntent.unresolvedUserComplaint !== true
-      && commerceSearchIntent.commerceRoute === 'store_policy' && commerceSearchIntent.shouldLoadProductContext === false && commerceSearchIntent.cardAllowed !== true,
+    recheckLowConfidence: shouldRecheckBusinessKnowledge(commerceSearchIntent),
     knowledgeScope: resolveCommerceKnowledgeScope(commerceSearchIntent, { classificationFailed: Boolean(classificationFailureReply) }),
     siteId: commerceSite?.id || "",
     character: promptCharacter,

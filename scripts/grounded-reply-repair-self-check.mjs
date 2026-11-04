@@ -437,11 +437,11 @@ const purePolicy = { ...orderPolicy, orderActionCandidate: null, userText: 'How 
   searchIntent: { ...orderPolicy.searchIntent, orderAndPolicy: false, pureStorePolicy: true, customerServiceKnowledgeRequest: true } };
 assert.equal(isGroundedCommerceRepairEligible(purePolicy), true, 'owned verified pure policy permits one correction after low confidence');
 for (const changed of [
-  { searchIntent: { ...purePolicy.searchIntent, pureStorePolicy: false } },
   { trustedSite: { id: 'foreign' } }, { groundedRepairAttempted: true },
   { orderActionCandidate: orderPolicy.orderActionCandidate },
   { knowledgeContext: { ...purePolicy.knowledgeContext, items: [{ ...purePolicy.knowledgeContext.items[0], evidenceQuote: 'invented' }] } },
 ]) assert.equal(isGroundedCommerceRepairEligible({ ...purePolicy, ...changed }), false, 'pure-order, foreign, forged or repeated correction remains closed');
+assert.equal(isGroundedCommerceRepairEligible({ ...purePolicy, searchIntent: { ...purePolicy.searchIntent, pureStorePolicy: false } }), true, 'owned business evidence does not depend on pure-policy label');
 console.log('verified pure policy: low confidence correction, pure-order and evidence isolation passed');
 
 const mixedConceptPolicy = { ...purePolicy, searchIntent: { ...purePolicy.searchIntent, pureStorePolicy: false, conceptAndPolicy: true } };
@@ -458,7 +458,6 @@ assert.equal(isGroundedCommerceRepairEligible(unansweredPolicy), true, 'owned pu
 for (const changed of [
   { trustedSite: { id: 'other' } }, { groundedRepairAttempted: true }, { orderActionCandidate: orderPolicy.orderActionCandidate },
   { knowledgeContext: { ...unansweredPolicy.knowledgeContext, strategy: 'business_selection_unavailable', selectionFailure: { kind: 'timeout' } } },
-  { searchIntent: { ...unansweredPolicy.searchIntent, pureStorePolicy: false } },
   { searchIntent: { ...unansweredPolicy.searchIntent, promotionInquiry: { evidence: 'offer' } } },
   { searchIntent: { ...unansweredPolicy.searchIntent, shouldLoadProductContext: true } },
   { chatImageContext: { taskCreated: true } },

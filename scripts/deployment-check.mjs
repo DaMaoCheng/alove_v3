@@ -116,6 +116,7 @@ const COMMANDS = Object.freeze([
   ["node", ["scripts/registered-chat-site-scope-self-check.mjs"]],
   ["node", ["scripts/commerce-candidate-protocol-self-check.mjs"]],
   ["node", ["scripts/business-knowledge-selection-self-check.mjs"]],
+  ["node", ["scripts/business-answer-recovery-self-check.mjs"]],
   ["node", ["scripts/review-request-profile-self-check.mjs"]],
   ["node", ["scripts/delivery-knowledge-prompt-self-check.mjs"]],
   ["node", ["scripts/rejected-draft-language-self-check.mjs"]],

@@ -142,7 +142,7 @@ export function sanitizeGuestReplyText(value = "", { userText = "", productSearc
     : "I’m here — tell me what’s on your mind.";
 }
 
-export function normalizeGuestReplyText({ text = "", product = null, productRequested = false, productSearchIntent = null, productSearchOutcome = "", productSourceErrorCode = "", orderActionCandidate = null, guestBenefitContext = null, chatImageContext = null, productContextSourceRef = "", productCardShown = true, sizingProduct = null, requestedSizes = [], languageCode = "", skipProductClarification = false, imageReason = "", imageTaskCreated = false, imageDeliveryType = "", userText = "", sourceType = "ai", aiTransportFallback = false } = {}) {
+export function normalizeGuestReplyText({ text = "", product = null, productRequested = false, productSearchIntent = null, productSearchOutcome = "", productSourceErrorCode = "", orderActionCandidate = null, guestBenefitContext = null, chatImageContext = null, productContextSourceRef = "", productCardShown = true, sizingProduct = null, requestedSizes = [], languageCode = "", skipProductClarification = false, imageReason = "", imageTaskCreated = false, imageDeliveryType = "", userText = "", sourceType = "ai", aiTransportFallback = false, preserveEmptySearchDraft = false } = {}) {
   // Preserve the exact audited answer. Re-running caption/no-match transforms
   // after approval could discard concurrent policy questions and audit proof.
   if (isControlledGuestBenefitCopy(guestBenefitContext, text) || isGuestBenefitReplyReviewed(guestBenefitContext, text)) {
@@ -223,6 +223,9 @@ export function normalizeGuestReplyText({ text = "", product = null, productRequ
     && !product
     && !skipProductClarification
     && !productSearchIntent?.customerServiceKnowledgeRequest
+    // Successful empty searches may keep the model's contextual answer; the
+    // caller still applies the original product/knowledge/quality review.
+    && !(preserveEmptySearchDraft && productSearchOutcome === "no_match" && !productSourceErrorCode && sourceType === "ai" && String(text || "").trim())
     && (productSearchIntent?.searchState === "ready_to_search"
       || productSearchIntent?.searchState === "ready")
   ) {

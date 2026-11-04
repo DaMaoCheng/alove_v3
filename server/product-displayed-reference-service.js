@@ -3,7 +3,7 @@ import { hasPendingProductRequest } from './product-request-scope-service.js';
 import { readProductCandidateState } from './product-candidate-state-service.js';
 
 // References identify existing cards; they never establish an action permission.
-export function findRecentDisplayedProductGroup(recentMessages = [], { siteId = '', siteSlug = '', characterId = '' } = {}) {
+export function findRecentDisplayedProductGroup(recentMessages = [], { siteId = '', siteSlug = '', characterId = '', attributeContinuation = false } = {}) {
   if (!siteId || !characterId) return [];
   const latest = findRecentProductMessage(recentMessages);
   if (!latest) return [];
@@ -19,7 +19,7 @@ export function findRecentDisplayedProductGroup(recentMessages = [], { siteId = 
     }
     for (const row of recentMessages.slice(nextUser)) {
       for (const key of stateKeys) if (Object.hasOwn(row || {}, key)
-        && stateIdentity(row[key], key) !== stateIdentity(baseline[key], key)) return [];
+        && stateIdentity(row[key], key, attributeContinuation) !== stateIdentity(baseline[key], key, attributeContinuation)) return [];
     }
   }
   const rows = [];
@@ -77,10 +77,65 @@ export function buildDisplayedProductReferenceContext({ site = {}, characterId =
 
 // Continuations may append USER evidence without changing the owned target.
 // That append is not a new owner; every other persisted state field is retained.
-function stateIdentity(value, key) {
+function stateIdentity(value, key, attributeContinuation = false) {
   if (!value || key !== 'productCandidateState') return JSON.stringify(value ?? null);
   const normalized = readProductCandidateState([{senderType:'character',productCandidateState:value}], {siteId:value.siteId,characterId:value.characterId});
   if (!normalized) return `invalid:${JSON.stringify(value)}`;
   const { requestedConditionEvidence: ignoredEvidence, ...identity } = normalized;
+  if (attributeContinuation && normalized.status === 'active' && normalized.owner === 'single' && !normalized.proposal && !normalized.suspectedTerm) {
+    identity.requirements = Object.fromEntries(['requestedTeam','requestedProductType','requestedAudience','requestedSeason','requestedKeywords','requestedVariant','requestedVariants','requestedColor','requestedEdition','requestedFeatures'].map(key => [key, normalized.requirements[key]]));
+  }
   return JSON.stringify(identity);
+}
+
+
+// A factual question about an owned displayed item refreshes that exact item.
+// New requested attributes remain USER requirements, not proof that it matches.
+export async function buildLiveDisplayedProductReferenceContext({ site = {}, characterId = '', searchIntent = {}, recentMessages = [], resolveProduct } = {}) {
+  if (searchIntent.commerceRoute !== 'product_question' || searchIntent.needsLiveProductData !== true
+    || searchIntent.cardAllowed !== false || searchIntent.productRequirementAction !== 'continue'
+    || searchIntent.nonShoppingReason || hasPendingProductRequest(searchIntent) || searchIntent.scopeUnverified
+    || searchIntent.candidateConfirmationOnly || searchIntent.unresolvedProductReference) return null;
+  const location = { siteId: site.id, siteSlug: site.slug, characterId, attributeContinuation: true };
+  const prior = readProductCandidateState(recentMessages, location);
+  const current = readProductCandidateState([{ senderType: 'character', productCandidateState: searchIntent.productCandidateState }], location);
+  if (!prior || !current || prior.status !== 'active' || current.status !== 'active'
+    || prior.owner !== 'single' || current.owner !== 'single' || prior.proposal || current.proposal
+    || prior.suspectedTerm || current.suspectedTerm
+    || stateIdentity(prior, 'productCandidateState', true) !== stateIdentity(current, 'productCandidateState', true)) return null;
+  const group = findRecentDisplayedProductGroup(recentMessages, location);
+  const requestedId = String(searchIntent.referencedProductId || '');
+  const reference = requestedId ? group.find(p => String(p.productId || p.id) === requestedId) : group.length === 1 ? group[0] : null;
+  if (!reference) return null;
+  const context = { sourceType: 'product_api', sourceRef: 'live-displayed-product-reference', siteId:site.id, siteSlug:site.slug,
+    siteName:site.name || '', searchIntent, cardAllowed:false, searchOutcome:'source_error', products:[] };
+  try {
+    const result = await resolveProduct({ siteSlug:site.slug, product:reference, strictSite:true, exactProduct:true });
+    const source = result?.sourceItem;
+    if (result?.resolvedFromSource !== true || result.site?.id !== site.id || result.site?.slug !== site.slug
+      || !source?.name || String(source.productId || source.id || '') !== String(reference.productId || reference.id)) return context;
+    return { ...context, searchOutcome:'matched', products:[{...source,siteId:site.id,siteSlug:site.slug,matchStatus:'matched'}] };
+  } catch { return context; }
+}
+
+// Fresh exact-ID refresh grants wording evidence only, never another card or
+// confirmation that a newly requested attribute exists on this item.
+export function toLiveDisplayedProductReplyContext({ productContext, searchIntent = {}, recentMessages = [], character = {}, trustedSite = null } = {}) {
+  const siteId = trustedSite?.id, characterId = character.id;
+  if (!siteId || !characterId || productContext?.siteId !== siteId
+    || productContext.sourceRef !== 'live-displayed-product-reference' || productContext.sourceType !== 'product_api'
+    || productContext.searchOutcome !== 'matched' || productContext.snapshotOnly || productContext.ok === false
+    || productContext.sourceErrorCode || productContext.cardAllowed !== false || productContext.candidateContext || productContext.sizingProduct
+    || searchIntent.commerceRoute !== 'product_question' || searchIntent.productRequirementAction !== 'continue'
+    || searchIntent.needsLiveProductData !== true || searchIntent.cardAllowed !== false
+    || searchIntent.commerceClassificationUnavailable || searchIntent.commerceClassificationFailure
+    || searchIntent.scopeUnverified || searchIntent.productScopePending || searchIntent.nonShoppingReason
+    || searchIntent.businessInquiry || searchIntent.humanHandoff || searchIntent.checkoutIssue || searchIntent.promotionInquiry
+    || hasPendingProductRequest(searchIntent) || !Array.isArray(productContext.products) || productContext.products.length !== 1) return null;
+  const product = productContext.products[0], id = String(product?.productId || product?.id || '');
+  const references = findRecentDisplayedProductGroup(recentMessages, { siteId, siteSlug:trustedSite.slug, characterId, attributeContinuation:true });
+  if (!id || !product.name || product.siteId !== siteId || !references.some(item => String(item.productId || item.id) === id)
+    || searchIntent.referencedProductId && String(searchIntent.referencedProductId) !== id) return null;
+  return { replyPurpose:'existing_product_attribute_question', productCardDelivery:{count:0},
+    product:{id,name:String(product.name).slice(0,255),summary:String(product.summary || product.description || '').slice(0,1800),attributeEvidence:product.attributeEvidence || null} };
 }

@@ -67,6 +67,37 @@ const source = core.toString();
 // Reverse ONLY these exact deltas before checking the original immutable baseline;
 // every unrelated route, question, threshold and normalization rule stays protected.
 let baselineSource = source;
+// 2026-11-04 authorized primary-image rule repair: noun lists do not request
+// visual output, while understandable colloquial photo requests remain valid.
+// Exact inverse deltas preserve the original hash protection for all other
+// routing rules. Real positive/negative probes accompany the local release.
+const reviewedImageActionRules = [
+  [
+    "  daily_chat: \"Normal conversation, disconnected fragments or lists of names/ingredients/places without a requested action, a general question, a compliment, a question about the status of an earlier image, or a comment about an earlier character image or message that does not ask the system to perform a specialized action. Product mentions used as comments such as 'Bonito bikini', 'Nice shirt', or a bare team name belong here.\",",
+    "  daily_chat: \"Normal conversation, a general question, a compliment, a question about the status of an earlier image, or a comment about an earlier character image or message that does not ask the system to perform a specialized action. Product mentions used as comments such as 'Bonito bikini', 'Nice shirt', or a bare team name belong here.\","
+  ],
+  [
+    "  character_photo: \"Requests a picture of the addressed character, including an informal or misspelled request to send a picture of you. The request need not specify creation versus library: ordinary unspecified character pictures belong here. Use this route for generic or plural requests such as 'show me your photos' or 'send some pictures' when no new-scene or creation request is present; this route uses the existing image library first.\",",
+    "  character_photo: \"Wants to see or receive existing character photos or several character images. Use this route for generic or plural requests such as 'show me your photos' or 'send some pictures' when no new-scene or creation request is present; this route uses the existing image library first.\","
+  ],
+  [
+    "  new_image: \"The CURRENT USER actually requests visual output: a new image of the AI character, or an explicit supported image creation. A descriptive scene, list of people/ingredients/places, role biography or unrelated fragments alone is not a request to create an image. A standalone photo request in the character conversation may mean the character; do not use this route for viewing a catalogue product image, asking about an existing image's status, or an image of a third person.\",",
+    "  new_image: \"Wants a new image of the AI character, or explicitly asks to create a supported new image. A standalone photo request in the character conversation may mean the character; do not use this route for viewing a catalogue product image, asking about an existing image's status, or an image of a third person.\","
+  ],
+  [
+    "  unclear: \"An actual requested task is ambiguous and cannot be identified from context. Do not use this for an understandable informal photo request, or for a noun list with no requested task (daily_chat).\",",
+    "  unclear: \"The request is ambiguous and cannot be routed safely.\","
+  ],
+  [
+    "      instructions: \"What is the user's primary requested action? First determine what action the USER is actually requesting, not what creative task could be invented from their nouns. Lists of names, ingredients, locations, scene fragments or unrelated words with no requested output are daily_chat (or unclear if a requested task is ambiguous). Never reinterpret such a list as an image prompt merely because an image could illustrate it. Interpret colloquial spelling, omitted spaces, fused pronouns and recoverable typos by meaning; an understandable request to send a picture of the addressed character is a photo request, not unclear merely because its spelling is informal. A photo noun/request or a contextual continuation of an actual user image request can authorize visual output; an automatic greeting image or the character persona cannot. First distinguish an action request from a comment or compliment. Comments such as 'Bonito bikini', 'Nice shirt', or a bare team name are daily_chat even when they mention a product. Generic or plural requests to see existing character photos go to character_photo and use the existing library first. A standalone request for one picture can count as new_image in character context, but viewing an existing catalogue product or its photo is product_request; asking whether a previous image is ready is daily_chat, not a new image request. Do not treat a third person or product as the AI character. Requests for the character to wear or try on an item from an earlier image go to try_on and override image inspection. Use unsupported_request when the user clearly asks for an unavailable specialized function. Use unclear only when the meaning is genuinely ambiguous.\",",
+    "      instructions: \"What is the user's primary requested action? First distinguish an action request from a comment or compliment. Comments such as 'Bonito bikini', 'Nice shirt', or a bare team name are daily_chat even when they mention a product. Generic or plural requests to see existing character photos go to character_photo and use the existing library first. A standalone request for one picture can count as new_image in character context, but viewing an existing catalogue product or its photo is product_request; asking whether a previous image is ready is daily_chat, not a new image request. Do not treat a third person or product as the AI character. Requests for the character to wear or try on an item from an earlier image go to try_on and override image inspection. Use unsupported_request when the user clearly asks for an unavailable specialized function. Use unclear only when the meaning is genuinely ambiguous.\","
+  ]
+];
+for (const [current, previous] of reviewedImageActionRules) {
+  assert.equal(baselineSource.split(current).length - 1, 1, 'approved image-action delta must occur exactly once');
+  baselineSource = baselineSource.replace(current, previous);
+}
+
 // Ignore only the additional current-user-text argument used for exact repeated-order evidence.
 baselineSource = baselineSource.replace("export function normalizeJevResponse(payload = {}, capabilities = {}, conversationContext = {}, userText = '') {", "export function normalizeJevResponse(payload = {}, capabilities = {}, conversationContext = {}) {");
 // Reverse only the explicitly authorized order-evidence changes before the
@@ -175,3 +206,15 @@ assert.ok(evaluationSource.includes('const CACHE_TTL_MS = 15_000;'));
 assert.ok(evaluationSource.includes('Number(config.timeoutMs)'));
 assert.ok(evaluationSource.includes('const timeout = setTimeout(() => controller.abort(), timeoutMs);'));
 console.log("chat intent turn self-check passed (request parity, isolation, reuse, mixed signals, immutable decisions, Jev baseline)");
+
+// Deterministic downstream checks for the reviewed primary outcomes. These
+// fixtures test action routing, not model interpretation; real noun-list/photo
+// positive and negative probes are recorded separately in the release evidence.
+const { normalizeJevResponse, mapJevImageIntent } = await import('../server/jev-intent-service.js');
+for (const [route, imageIntent] of [['daily_chat','none'], ['unclear','none'], ['product_request','none'], ['character_photo','library_photo'], ['new_image','explicit_generation'], ['try_on','try_on']]) {
+  const decision=normalizeJevResponse({answers:{route:{choice:route,confidence:.01},
+    wants_character_image:{choice:'no',confidence:1},explicit_generation:{choice:'no',confidence:1},
+    image_inspection:{choice:'no',confidence:1},product_action:{choice:'no',confidence:1}}});
+  assert.equal(decision.imageIntent,imageIntent,`primary ${route} preserves its image action semantics`);
+  assert.equal(Boolean(mapJevImageIntent(decision)?.hasIntent),imageIntent!=='none');
+}

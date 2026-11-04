@@ -35,7 +35,7 @@ const output=await classifyChatImageIntent(text,{character:{category_id:'mascot'
 assert.equal(output.allowed,true,'detail confidence does not reject primary image intent');assert.equal(output.detectionSource,'jev');assert.equal(output.requestScope,'image_only');assert.equal(calls,0);
 const bad={...detailed,parsed:{...detailed.parsed,actorEvidence:''}};
 const unverified=await classifyChatImageIntent(text,{character:{category_id:'mascot'},jevDecision:image,classifyImageJev:async()=>bad});
-assert.equal(unverified.allowed,false,'missing grounded actor never permits image');assert.equal(calls,0);
+assert.equal(unverified.allowed,true,'optional actor span does not veto authoritative primary image intent');assert.equal(calls,0);
 for(const decision of [{ok:true,confident:false,orderIntent:'lookup'}, {ok:true,confident:true,orderIntent:'none'}, {ok:false,llmFallbackAllowed:false}]){
  assert.equal(await classifyOrderLookup('my order',{classifyJev:async()=>decision}),false);assert.equal(calls,0);
  const p=await classifyProductIntent('show me a shirt',{classifyJev:async()=>({...decision,productIntent:'search',productAction:1})});

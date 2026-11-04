@@ -134,7 +134,9 @@ export function buildChatImageStatusInstruction(context) {
   if (!fact) return "";
   return [
     `Authoritative image fact: ${JSON.stringify(fact)}.`,
-    fact.kind === "unknown" ? "The status read failed; this does not confirm that any image task exists."
+    fact.currentRequest?.outcome === "not_created"
+      ? "The server did not create a task or deliver a photo for this request. This is NOT a failed generation, missing generated result, or failed image download. Explain naturally that the request could not be started; do not claim the photo failed to come through or that generation was attempted."
+      : fact.kind === "unknown" ? "The status read failed; this does not confirm that any image task exists."
       : "This evidence identifies only the latest image message within the bounded conversation window. Apply its state only when the current user reference clearly matches that message. If the user means an older image or the reference is ambiguous, its status is unknown; never transfer this latest state to another request.",
     buildImageRepresentationContract(fact),
     buildCurrentImageDeliveryContract(fact),

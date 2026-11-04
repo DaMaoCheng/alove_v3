@@ -110,3 +110,7 @@ assert.match(buildChatImageContextLayer(ready).content,/older image or the refer
 assert.match(buildChatImageContextLayer(gallery).content,/older image or the reference is ambiguous/);
 assert.deepEqual(toImageStatusReviewContext({imageStatus:{kind:'unknown',status:'ready',currentTurn:false}}),{kind:'unknown',status:'unknown',currentTurn:false});
 console.log('chat image status isolated checks passed (state transitions, scoping, SQL guards, initial-read failure, ambiguous references, 43 languages)');
+const notCreatedInstruction=buildChatImageContextLayer({reason:'classification_unavailable',taskCreated:false}).content;
+assert.match(notCreatedInstruction,/did not create a task/);
+assert.match(notCreatedInstruction,/NOT a failed generation/);
+assert.doesNotMatch(notCreatedInstruction,/status read failed/);

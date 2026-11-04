@@ -65,3 +65,10 @@ const diagnostic=buildReplyReviewLogEvent({reviewStatus:'valid',languageDiagnost
 assert.deepEqual(JSON.parse(diagnostic.errorMessage).languageReview,{status:'valid',issues:[],repair:'not_attempted',initialIssues:[],primary:'not_run',severity:'minor',reason:'no_change'});
 assert(!diagnostic.errorMessage.includes('PRIVATE')&&!diagnostic.errorMessage.includes('SECRET'));
 console.log('Language review policy self-check passed (severity, single judge, speech-only, formatting, locale, business guards and independent budgets; no external requests/DB)');
+
+// Invalid reviewer evidence is a protocol failure, not a substantive rejection.
+for (const span of ['', 'x'.repeat(101)]) {
+ const result=normalizeLanguageAssessment({...major,languageIssues:[{...major.languageIssues[0],span}]},{text:'x'.repeat(101)});
+ assert.equal(result.reviewStatus,'invalid_fields');
+ assert.equal(result.protocolFailure,'issue_span');
+}
