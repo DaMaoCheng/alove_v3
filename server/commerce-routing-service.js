@@ -261,6 +261,14 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
     && normalizeCommerceKnowledgeRequest(decision.knowledgeRequest, { userText, recentMessages })?.kind === 'catalogue_only'
     && !assistance.businessInquiry && !assistance.humanHandoff && !assistance.promotionInquiry && !assistance.checkoutIssue
     && !searchIntent.customerServiceKnowledgeRequest && !(searchIntent.answerRequired && searchIntent.knowledgeScope === 'business');
+  const currentKnowledgeKind = normalizeCommerceKnowledgeRequest(decision.knowledgeRequest, { userText, recentMessages })?.kind;
+  const directConversation = currentKnowledgeKind === 'conversation_only' && decision.route === 'chat'
+    && knowledgeScope === 'general' && !assistance.humanHandoff && !assistance.businessInquiry
+    && !assistance.checkoutIssue && !assistance.promotionInquiry;
+  const exchangeOnly = currentKnowledgeKind === 'size_exchange_only'
+    && assistance.humanHandoff?.reviewReason === 'size_exchange'
+    && jevDecision?.ok === true && jevDecision.orderIntent === 'none'
+    && !['product_request', 'new_image', 'try_on', 'order_lookup'].includes(jevDecision.primaryIntent);
   const knowledgeRequest = ["store_policy", "product_question"].includes(decision.route) || (answerRequired && knowledgeScope === "business");
   const generalTermExplanation = normalizeCommerceKnowledgeRequest(decision.knowledgeRequest, { userText, recentMessages })?.kind === 'general_explanation'
     && ['chat', 'product_question'].includes(decision.route) && decision.declaredLiveProductData === false
@@ -308,7 +316,7 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
     productRequirementAction: decision.productRequirementAction || decision.productRequirement?.action || '',
     referencedProductIds: [],
     replyTopicHint: "", replyClarificationContext: null,
-    commerceTopic: decision.topic,
+    commerceTopic: assistance.humanHandoff?.reviewReason === "size_exchange" && decision.topic === "sizing" ? "returns" : decision.topic,
     generalTermExplanation: Boolean(generalTermExplanation),
     orderAndPolicy: Boolean(orderAndPolicy),
     pureStorePolicy: Boolean(pureStorePolicy),
@@ -320,7 +328,7 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
     needsLiveProductData: Boolean(decision.route === "product_question" ? questionNeedsLive : decision.needsLiveProductData),
     cardAllowed: commerceRoute === "product_search" && shouldSearch && replyBoundary.salesAllowed,
     customerServiceKnowledgeRequest: catalogueOnly ? false : knowledgeRequest,
-    ...(catalogueOnly || decision.childSizingUpdateOnly ? { businessKnowledgeRequired: false } : {}),
+    ...(catalogueOnly || directConversation || exchangeOnly || decision.childSizingUpdateOnly ? { businessKnowledgeRequired: false } : {}),
     shouldLoadProductContext: Boolean(shouldSearch),
     knowledgeScope,
     knowledgeQuery: typeof decision.knowledgeQuery === "string" ? decision.knowledgeQuery.trim().slice(0, 240) : "",
@@ -493,6 +501,7 @@ export function applyCommerceQuestionPromptPolicy(promptContext = {}, searchInte
     (searchIntent.commerceTopic === "sizing" && searchIntent.knowledgeScope !== "general" || tentativeSizing) ? SIZING_CONVERSATION_CONTRACT : "",
     tentativeSizing ? "The sizing purpose is tentative, not permission for actions or a verified fact. Use current conversation only to ask a relevant missing clarification; do not force this interpretation over an explicit new topic." : "",
     searchIntent.businessInquiry ? "This turn concerns a business inquiry. Answer from retrieved business knowledge and verified store policies first. Do not convert a partnership, bulk supply or negotiated quote request into a retail sales pitch. Do not invent sales volume, commercial capabilities, negotiated prices, eligibility or contract terms. A service-policy question can be answered without automatically requesting human review; negotiated terms require the existing feedback form." : "",
+    searchIntent.humanHandoff?.reviewReason === "size_exchange" ? "The user requests changing the size of an already purchased item or continues that same request. Briefly acknowledge the size-change request and explain that the order number, purchased size and desired size are useful for review. The server appends the exact feedback navigation after your reply. Do not generate button, form, click, menu or screen-position instructions yourself. Do not ask the user to answer those fields in chat before access is offered. Do not gate this on delivery status or account binding. You cannot process or approve the exchange, promise fees or timing, or claim a request has already been submitted. Answer any independent mixed question using its own supplied evidence and actions." : "",
     searchIntent.humanHandoff ? "The server may offer the existing feedback action for this request. Do not claim that a live human is available, that a transfer has completed, or that submitting a request guarantees a response. Explain available verified support information; server-provided navigation explains the actual form submission." : "",
     searchIntent.promotionInquiry?.kind === "policy" ? "Explain only verified promotion or discount policy and its limits. Policy explanation is not issuing, applying, promising or approving a coupon or benefit. Do not invent a code, eligibility, savings or successful discount application." : "",
     searchIntent.commerceRoute === "product_search" ? "The user's shopping request may still receive a matching card; keep the substantive answer independent from any brief card caption." : "The user has asked a question, not requested a new recommendation. Do not promise a new product card, shopping link or push another item.",

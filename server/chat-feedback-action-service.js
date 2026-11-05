@@ -25,14 +25,15 @@ export function resolveChatFeedbackActionCandidate({ character = {}, productCont
   // an explicit request for human help or negotiated business terms.
   const handoffEvidence = typeof handoff?.evidence === "string" ? handoff.evidence.trim() : "";
   const businessEvidence = typeof searchIntent?.businessInquiry?.evidence === "string" ? searchIntent.businessInquiry.evidence.trim() : "";
+  const sizeExchange = handoff?.reviewReason === "size_exchange";
   const businessReview = handoff?.businessReviewRequired === true && ["quotation", "negotiation", "contract", "commercial_terms"].includes(handoff?.reviewReason)
     && ["quotation", "wholesale", "dropshipping", "distribution", "sponsorship", "partnership", "business_other"].includes(searchIntent?.businessInquiry?.kind)
     && businessEvidence && String(userText || "").includes(businessEvidence);
   if (searchIntent?.replyBoundary?.contactAllowed === true && Number.isFinite(searchIntent?.commerceConfidence) && searchIntent.commerceConfidence >= 0 && searchIntent.commerceConfidence <= 1
     && handoffEvidence && String(userText || "").includes(handoffEvidence)
-    && (handoff.explicitRequest === true || businessReview)) {
+    && (handoff.explicitRequest === true || businessReview || sizeExchange)) {
     const label = HUMAN_HANDOFF_LABELS[resolveCharacterLanguage(character)];
-    return label ? { kind: "feedback", label, reason: handoff.explicitRequest ? "human_request" : "business_review" } : null;
+    return label ? { kind: "feedback", label, reason: sizeExchange ? "size_exchange" : handoff.explicitRequest ? "human_request" : "business_review" } : null;
   }
   if (knowledgeContext?.feedbackSubmission?.relation === 'submitted_followup') return null;
   if (hasCheckoutIssue(searchIntent)) {

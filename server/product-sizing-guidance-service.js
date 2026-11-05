@@ -57,6 +57,16 @@ const UNANCHORED_SIZING_SOURCES = new Set([
   "site-product-sizing-guidance",
   "guest-site-product-sizing-guidance",
 ]);
+// The product resolver has asked for an item, not executed an empty search.
+// Reuse that outcome for review/recovery without changing shopping permissions.
+export function isUnanchoredSizingContext({ searchIntent = {}, productContext } = {}) {
+  return Boolean(productContext?.sourceType === 'product_api' && UNANCHORED_SIZING_SOURCES.has(productContext.sourceRef)
+    && productContext.searchOutcome === 'needs_clarification' && Array.isArray(productContext.products) && !productContext.products.length
+    && !productContext.sizingProduct && !productContext.candidateContext && !productContext.sourceErrorCode
+    && searchIntent.commerceTopic === 'sizing' && searchIntent.answerRequired === true && searchIntent.knowledgeScope !== 'general'
+    && !hasPendingProductRequest(searchIntent) && !searchIntent.humanHandoff && !searchIntent.sourceErrorCode);
+}
+
 const MATCHED_PRODUCT_SIZING_SOURCES = new Set([
   "site-product-sizing-match",
   "guest-site-product-sizing-match",

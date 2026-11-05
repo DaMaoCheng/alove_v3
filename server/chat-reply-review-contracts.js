@@ -7,7 +7,7 @@ import { SIZING_CONVERSATION_CONTRACT, CHILD_PRODUCT_SIZING_CONTRACT, projectChi
 import { TRUSTED_IDENTITY_CONTRACT } from "./chat-prompt-utils.js";
 import { productClarificationContext, PRODUCT_CLARIFICATION_CONTRACT, CLOSED_CLARIFICATION_RECOVERY_CONTRACT } from "./chat-reply-purpose-service.js";
 import { buildCurrentImageDeliveryContract, buildImageRepresentationContract } from "./chat-image-status-context-service.js";
-import { buildBusinessClaimContext, businessClaimAuditSchema, BUSINESS_CLAIM_AUDIT_CONTRACT, GENERAL_COMMERCE_EXPLANATION_CONTRACT } from './business-claim-audit-service.js';
+import { buildBusinessReviewCapability, buildBusinessClaimContext, businessClaimAuditSchema, BUSINESS_CLAIM_AUDIT_CONTRACT, GENERAL_COMMERCE_EXPLANATION_CONTRACT } from './business-claim-audit-service.js';
 import { toNameCandidateUncertaintyContext, toCandidateReviewContext, productCandidateConditionsContract, toNoMatchReviewContext, PRODUCT_NO_MATCH_CONTEXT_CONTRACT, toMatchedCatalogueReviewContext } from "./product-candidate-context-service.js";
 import { LANGUAGE_QUALITY_REVIEW_CONTRACT } from "./chat-reply-language-quality.js";
 import { FACTUAL_REVIEW_CONTRACT_BASE } from "./chat-factual-policy.js";
@@ -112,6 +112,8 @@ export function buildReplyReviewMessages(options = {}) {
   if (independentLanguageReview) system("A dedicated language reviewer handles language form separately. Evaluate only meaning, facts, evidence, permissions and actions under the active NON-language contracts; do not base allowed or their votes solely on spelling, grammar, typography or active-language correctness. Return JSON with allowed:boolean,confidence:number,boundarySupported:boolean and the required non-language fields. Evaluate both supplied outputs; this cannot approve an unverified claim or grant permissions.");
   if (options.languageClarificationEligible === true && independentLanguageReview) system(LANGUAGE_CLARIFICATION_REVIEW_CONTRACT);
   if (languageQualityRequired) system("Review a proposed response for language quality. Return JSON {allowed:boolean,confidence:number,languageQualitySupported:boolean}. Set allowed false if language quality fails; when business contracts are supplied, allowed requires them too. " + LANGUAGE_QUALITY_REVIEW_CONTRACT);
+  const actionCapability = buildBusinessReviewCapability(options);
+  if (actionCapability) system('Verified server action and conversational capability, shared with the businessClaimContext a0 reference when that audit is active. Apply to guidance and business-fact review; factual capability statements must cite a0, while additional policy assertions require their own sources: ' + JSON.stringify(actionCapability));
   const boundaryContract = BOUNDARY_CONTRACT_START
     + (imageStatusContext ? IMAGE_PERMISSION_CONTRACT : PERMISSION_CONTRACT) + UNVERIFIED_ACTION_PREFIX
     + (imageStatusContext ? IMAGE_EXTERNAL_ACTION_CONTRACT : EXTERNAL_ACTION_CONTRACT) + BOUNDARY_CONTRACT_END;

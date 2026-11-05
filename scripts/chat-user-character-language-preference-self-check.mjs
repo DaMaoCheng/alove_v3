@@ -43,23 +43,28 @@ try {
   const autoEnglish = await applySessionLanguagePreference(guestDb, { character: guestCharacter, session: guestSession, userText: 'Is this website real?', jevDecision: currentEnglish });
   assert.equal(autoEnglish.languageCode, 'en');
   assert.equal(autoEnglish.scope, 'turn');
-  assert.equal(guestUpdates.length, 0, 'automatic language must not change saved preference');
+  assert.equal(guestUpdates.length, 1, 'remember the current language within this chat');
   const explicitFrench = await applySessionLanguagePreference(guestDb, { character: guestCharacter, session: guestSession, userText: 'Reply in French', jevDecision: { ...currentEnglish, languageDecision: { targetCode: 'fr', scope: 'turn', confidence: .8 } } });
   assert.equal(explicitFrench.languageCode, 'fr', 'explicit turn language takes priority');
   const unclear = await applySessionLanguagePreference(guestDb, { character: guestCharacter, session: guestSession, userText: 'Hi', jevDecision: { ...currentEnglish, inputLanguage: null } });
-  assert.equal(unclear.languageCode, 'es', 'ambiguous input retains configured language');
+  assert.equal(unclear.languageCode, 'en', 'ambiguous input resumes the previous language after a turn-only request');
   const guestStandalone = await applySessionLanguagePreference(guestDb, {
     character: guestCharacter, session: guestSession, userText: "English please.",
   });
   assert.equal(guestStandalone.languageCode, "en", "standalone selection must apply to a guest prompt");
   assert.equal(guestStandalone.scope, "session", "standalone guest selection must stay session-scoped");
   assert.match(guestStandalone.character.persona_prompt, /Use English/, "guest language selection must update runtime language guidance");
-  assert.deepEqual(guestUpdates, [["English", guestSession.id]], "guest language selection must persist only its own session");
+  assert.deepEqual(guestUpdates, [["English", 0, guestSession.id, 0], ["English", 1, guestSession.id, 1]], "guest language selection must persist only its own session");
+  const lockedFollowup = await applySessionLanguagePreference(guestDb, {
+    character: guestCharacter, session: guestSession, userText: 'Jak se máš?',
+    jevDecision: { ...currentEnglish, inputLanguage: 'cs' },
+  });
+  assert.equal(lockedFollowup.languageCode, 'en', 'explicit session language survives a recognized foreign sentence');
   const guestFollowup = await applySessionLanguagePreference(guestDb, {
     character: guestCharacter, session: guestSession, userText: "Hola, quiero hablar de fútbol.",
   });
   assert.equal(guestFollowup.languageCode, "en", "ordinary foreign-language input must retain the selected language");
-  assert.equal(guestUpdates.length, 1, "ordinary input must not write another preference");
+  assert.equal(guestUpdates.length, 2, "ordinary input must not write another preference");
   assert.equal(guestCharacter.persona_prompt, "Existing persona.", "language selection must not mutate the shared character");
   const writes = [];
   const mockDb = { execute: async (sql, values) => {

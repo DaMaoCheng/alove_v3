@@ -151,7 +151,7 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
 
   const character = await loadGuestCharacter(prepared.guest);
   const [[session]] = await getDbPool().execute(
-    "SELECT id, character_id, preferred_language FROM chat_sessions WHERE id = ? AND guest_session_id = ? LIMIT 1",
+    "SELECT id, character_id, preferred_language, language_explicit FROM chat_sessions WHERE id = ? AND guest_session_id = ? LIMIT 1",
     [prepared.guest.chat_session_id, prepared.guest.id]
   );
   let languagePreference = prepared.languagePreference || await applySessionLanguagePreference(getDbPool(), {

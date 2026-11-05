@@ -35,7 +35,8 @@ export async function applySessionLanguagePreference(db, { character, session, u
     parseJsonObject(character?.profile_json || character?.profile).language
   );
   const inputLanguage = !resolveOnly && jevDecision?.ok === true ? normalizePreference(jevDecision.inputLanguage) : null;
-  const selected = requested || inputLanguage || sessionPreference || activationPreference || characterPreference;
+  const explicitSession = Number(session?.language_explicit) === 1 && sessionPreference;
+  const selected = requested || explicitSession || inputLanguage || sessionPreference || activationPreference || characterPreference;
 
   if (!selected) {
     return {
@@ -48,7 +49,7 @@ export async function applySessionLanguagePreference(db, { character, session, u
   }
 
   if (requested && requested.scope !== "turn") {
-    await saveSessionLanguagePreference(db, session, selected);
+    await saveSessionLanguagePreference(db, session, selected, true);
     if (requested.scope === "persistent" && activationPreference?.code !== selected.code) {
       await saveActivationLanguagePreference(db, {
         userId,
@@ -56,6 +57,10 @@ export async function applySessionLanguagePreference(db, { character, session, u
         language: selected,
       });
     }
+  }
+
+  if (!requested && !explicitSession && inputLanguage) {
+    await saveSessionLanguagePreference(db, session, inputLanguage, false);
   }
 
   const nextScope = selected.scope || (inputLanguage && selected === inputLanguage ? "turn" : sessionPreference ? "session" : activationPreference ? "activation" : "character");
@@ -171,14 +176,15 @@ async function saveActivationLanguagePreference(db, { userId = "", characterId =
   );
 }
 
-async function saveSessionLanguagePreference(db, session = {}, language = null) {
+async function saveSessionLanguagePreference(db, session = {}, language = null, explicit = false) {
   if (!session?.id || !language?.label) return;
-  if (safeString(session.preferred_language || session.preferredLanguage) === language.label) return;
+  if (safeString(session.preferred_language || session.preferredLanguage) === language.label && Boolean(Number(session.language_explicit)) === explicit) return;
   await db.execute(
-    "UPDATE chat_sessions SET preferred_language = ?, updated_at = NOW(3) WHERE id = ?",
-    [language.label, session.id]
+    "UPDATE chat_sessions SET preferred_language = ?, language_explicit = ?, updated_at = NOW(3) WHERE id = ? AND (language_explicit = 0 OR ? = 1)",
+    [language.label, Number(explicit), session.id, Number(explicit)]
   );
   session.preferred_language = language.label;
+  session.language_explicit = Number(explicit);
 }
 
 function buildCharacterWithLanguage(character = {}, language = null) {

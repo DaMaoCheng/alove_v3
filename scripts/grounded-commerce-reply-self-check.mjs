@@ -437,3 +437,23 @@ const purePolicyRejected = await run(verifiedPurePolicy, { firstVerdict: { ...ye
 check(purePolicyRejected.repairs.length === 1 && purePolicyRejected.reviews.length === 2 && purePolicyRejected.output.degraded,
  'twice rejected pure policy never bypasses original factual review');
 console.log('verified pure policy complete review, single correction and failure closure passed');
+
+// Actual unanchored sizing context must stay a clarification, even when the
+// primary shopping intent still carries action flags from before resolution.
+const unanchoredSizing = { ...policy, userText: 'Quiero comprar una camiseta. ¿Cómo elijo mi talla?',
+  replyResult: { ...original, text: 'La talla M te queda perfecta.', speechText: 'La talla M te queda perfecta.' },
+  searchIntent: { ...policy.searchIntent, commerceRoute: 'product_search', commerceTopic: 'sizing',
+    shouldLoadProductContext: true, needsLiveProductData: true, cardAllowed: true, searchState: 'needs_clarification' },
+  productContext: { sourceType: 'product_api', sourceRef: 'guest-site-product-sizing-guidance', searchOutcome: 'needs_clarification', products: [], cardAllowed: true },
+  knowledgeContext: { ok: true, strategy: 'business_no_relevant_section', items: [], customerServiceIntent: true } };
+const sizingQuestion = '¿De qué equipo o modelo es la camiseta para la que quieres elegir talla?';
+const sizingRejected = await run(unanchoredSizing, { replacementText: sizingQuestion, firstVerdict: { allowed: false, confidence: .99,
+  reviewStatus: 'valid', boundarySupported: true, guidanceSupported: false, businessFactsSupported: false, evidenceSupported: true },
+  secondVerdict: { allowed: true, confidence: .99, reviewStatus: 'valid', boundarySupported: true, guidanceSupported: true, businessFactsSupported: true, evidenceSupported: true } });
+check(sizingRejected.repairs.length === 1, 'unanchored sizing gets one existing grounded correction');
+check(sizingRejected.reviews.every(input => input.evidenceRequired === false), 'no catalogue-miss review for an unexecuted sizing lookup');
+check(sizingRejected.output.text === sizingQuestion, 'sizing recovery preserves natural product clarification');
+const sizingStillRejected = await run(unanchoredSizing, { replacementText: sizingQuestion, secondVerdict: { allowed: false, confidence: .99, reviewStatus: 'valid', boundarySupported: true, guidanceSupported: false, businessFactsSupported: false } });
+check(sizingStillRejected.repairs.length === 1, 'rejected sizing correction never loops');
+check(!sizingStillRejected.output.text.includes('confirmar un producto que coincida'), 'failed sizing clarification is not a catalogue no-match');
+console.log('Unanchored sizing: real boundary correction, complete re-review and terminal sizing fallback passed');

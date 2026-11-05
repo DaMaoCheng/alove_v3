@@ -12,7 +12,7 @@ export async function findLatestUserSession({ characterId, userId }) {
 export async function findLatestUserSessionForDb(db, { characterId, userId }) {
   await lockUserSessionOwnerForDb(db, userId);
   const [sessions] = await db.execute(
-    `SELECT id, internal_uid, guest_session_id, character_id, session_title, session_status, source_type, source_ref, preferred_language, last_message_at
+    `SELECT id, internal_uid, guest_session_id, character_id, session_title, session_status, source_type, source_ref, preferred_language, language_explicit, last_message_at
      FROM chat_sessions
      WHERE character_id = ?
        AND internal_uid = ?

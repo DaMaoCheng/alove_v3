@@ -45,3 +45,38 @@ assert.equal(resolveScope(pure, { classificationFailed: true }), 'none');
 const blockedPrompt = routing.applyCommerceQuestionPromptPolicy({ systemPrompt: 'base' }, { ...pure, primarySearchBlocked: true, shouldLoadProductContext: false, cardAllowed: false });
 assert(blockedPrompt.systemPrompt.includes('has not executed a catalogue search'), 'A blocked catalogue request must not be described as searched or available');
 console.log('Commerce knowledge demand: whole-turn pure lookup, legacy/uncertain/mixed/history/service boundaries and unchanged reply/card permissions passed');
+
+// Current-turn exchange handoff and lightweight conversation reuse the same
+// classifier result. Mixed questions retain retrieval and independent lookup.
+const { resolveChatFeedbackActionCandidate } = await import('../server/chat-feedback-action-service.js');
+const noAction = { ok: true, confident: true, primaryIntent: 'daily_chat', orderIntent: 'none', productIntent: 'none' };
+const mascot = { id: 'test_mascot', categoryId: 'mascot', profile: { language: 'Spanish' } };
+for (const current of ['Quiero cambiar la talla de mi compra', 'Ya lo he recibido']) {
+  const exchange = { ...value, route: 'store_policy', topic: 'sizing', needsLiveProductData: false,
+    humanHandoff: { explicitRequest: false, businessReviewRequired: false, reviewReason: 'size_exchange', evidence: current },
+    knowledgeRequest: { kind: 'size_exchange_only', evidence: current } };
+  const intent = await route(exchange, current, { jevDecision: noAction });
+  assert.equal(resolveScope(intent), 'none');
+  assert.equal(resolveChatFeedbackActionCandidate({ character: mascot, userText: current, searchIntent: intent })?.reason, 'size_exchange');
+  assert.equal(resolveChatFeedbackActionCandidate({ character: mascot, userText: current, searchIntent: { ...intent, replyBoundary: { contactAllowed: false } } }), null);
+  const mixed = await route({ ...exchange, knowledgeRequest: { kind: 'business_question', evidence: current } }, current, { jevDecision: { ...noAction, orderIntent: 'lookup', primaryIntent: 'order_lookup' } });
+  assert.equal(resolveScope(mixed), 'business');
+  assert.equal(resolveChatFeedbackActionCandidate({ character: mascot, userText: current, searchIntent: mixed })?.reason, 'size_exchange');
+}
+const social = { ...value, route: 'chat', topic: 'other', knowledgeScope: 'general', needsLiveProductData: false, knowledgeRequest: { kind: 'conversation_only', evidence: 'Madrid' } };
+assert.equal(resolveScope(await route(social, 'Madrid', { jevDecision: noAction })), 'none');
+assert.notEqual(resolveScope(await route({ ...social, knowledgeRequest: { kind: 'conversation_only', evidence: 'Madrid' } }, 'Madrid y cuánto tarda el envío?', { jevDecision: noAction })), 'none', 'partial evidence cannot suppress a mixed question');
+console.log('Exchange handoff, contact refusal, mixed lookup and whole-turn conversation checks passed');
+const exchangePrompt = routing.applyCommerceQuestionPromptPolicy({}, {
+  commerceRoute: 'store_policy', commerceTopic: 'returns', answerRequired: true,
+  humanHandoff: { reviewReason: 'size_exchange' },
+}).systemPrompt;
+assert(exchangePrompt.includes('The server appends the exact feedback navigation'));
+assert(!exchangePrompt.includes('For sizing help, continue'));
+
+const { buildReplyReviewMessages } = await import('../server/chat-reply-review-contracts.js');
+for (const [available, reason, expected] of [[true, 'size_exchange', true], [false, 'size_exchange', false], [true, 'none', false]]) {
+  const messages = buildReplyReviewMessages({ feedbackActionAvailable: available, searchIntent: { humanHandoff: { reviewReason: reason } } });
+  assert.equal(messages.some(message => message.content.includes('"sizeExchangeRequestAvailable":true')), expected, 'Exchange capability needs both the attached action and grounded exchange intent');
+}
+console.log('Exchange review capability is scoped to an attached exchange feedback action');

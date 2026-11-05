@@ -216,13 +216,14 @@ export async function requireGuestCharacterForDb(db, token, { characterId = "", 
     };
   }
   const [[chatSession]] = await db.execute(
-    "SELECT preferred_language FROM chat_sessions WHERE id = ? AND guest_session_id = ? LIMIT 1",
+    "SELECT preferred_language, language_explicit FROM chat_sessions WHERE id = ? AND guest_session_id = ? LIMIT 1",
     [characterSession.chat_session_id, rootGuest.id]
   );
   return {
     ...rootGuest,
     mascot_character_id: character.id,
     chat_session_id: characterSession.chat_session_id,
+    language_explicit: chatSession?.language_explicit,
     preferred_language: chatSession?.preferred_language || "",
     message_window_started_at: characterSession.message_window_started_at,
     message_window_count: Number(characterSession.message_window_count || 0),
@@ -364,6 +365,7 @@ export function guestSessionForImage(guest = {}) {
     internal_uid: null,
     guest_session_id: guest.id || "",
     character_id: guest.mascot_character_id || "",
+    language_explicit: guest.language_explicit,
     preferred_language: guest.preferred_language || guest.site_default_language || "",
   };
 }

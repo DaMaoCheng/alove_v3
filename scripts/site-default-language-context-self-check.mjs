@@ -175,7 +175,7 @@ const guestExplicitSwitch = await applySessionLanguagePreference(guestPreference
 });
 assert.equal(guestExplicitSwitch.languageCode, "zh", "a guest should be able to explicitly override the frozen site language for that character session");
 assert.match(guestExplicitSwitch.character.persona_prompt, /Chinese \(Mandarin\)/, "the guest prompt should receive the explicit language guidance");
-assert.deepEqual(guestLanguageUpdates[0], ["Chinese (Mandarin)", guestSession.id], "the guest language switch should persist on its own chat session");
+assert.deepEqual(guestLanguageUpdates[0], ["Chinese (Mandarin)", 1, guestSession.id, 1], "the guest language switch should persist on its own chat session");
 const guestReplyVoice = guestVoiceMeta(character, "", {
   languageCode: guestExplicitSwitch.languageCode,
   languageLabel: guestExplicitSwitch.languageLabel,

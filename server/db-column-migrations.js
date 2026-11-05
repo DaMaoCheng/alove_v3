@@ -67,6 +67,7 @@ export async function ensureCreatorCharacterOwnerUniqueness() {
 }
 
 export async function addChatSessionPreferenceColumnsIfMissing() {
+  await addColumnIfMissing("chat_sessions", "language_explicit", "TINYINT NOT NULL DEFAULT 0");
   await addColumnIfMissing("chat_sessions", "preferred_language", "VARCHAR(128) NULL AFTER source_ref");
 }
 

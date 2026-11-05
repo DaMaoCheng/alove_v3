@@ -16,7 +16,7 @@ import { complaintPromptUserReports, hasChildSizingCorrectionContext, hasMatched
 import { evaluateReplyReview, approveReplyRemainder, verifiedReplyRemainder } from "./chat-reply-review-decision.js";
 import { buildReplyReviewMessages, buildReplyReviewFormat } from "./chat-reply-review-contracts.js";
 import { buildProductSizingFallback } from "./product-sizing-copy.js";
-import { buildSizingConversationContext, buildChildProductSizingContext, hasUnsupportedChildSizingUnit } from "./product-sizing-guidance-service.js";
+import { isUnanchoredSizingContext, buildSizingConversationContext, buildChildProductSizingContext, hasUnsupportedChildSizingUnit } from "./product-sizing-guidance-service.js";
 import { getChatOrderEntryCopy } from "../shared/chat-order-copy.js";
 import { buildUnconfirmedProductStateReply } from "./guest-product-reply-copy.js";
 import { isAiTransportFallback } from "./ai-reply-fallback-service.js";
@@ -126,6 +126,7 @@ export function applyCheckoutSupportPromptPolicy(promptContext = {}, searchInten
 }
 
 export function needsProductEvidenceReview(searchIntent = {}, productContext = null) {
+  if (isUnanchoredSizingContext({ searchIntent, productContext })) return false;
   const liveQuestion = searchIntent.answerRequired === true && searchIntent.needsLiveProductData === true;
   const singleSearch = searchIntent.commerceRoute === "product_search" && searchIntent.shouldLoadProductContext === true
     && !searchIntent.nonShoppingReason && searchIntent.replyBoundary?.salesAllowed !== false && !scopeReviewRequired(searchIntent);

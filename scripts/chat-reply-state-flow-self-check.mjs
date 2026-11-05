@@ -162,7 +162,7 @@ async function runStateChecks() {
       if (fixture.readFailure) throw new Error("isolated read failed");
       return [[{ id: "image_fixture", content_type: "image_generation", display_order: fixture.imageOrder || 12, asset_id: "asset_fixture", image_status: fixture.status }]];
     }
-    if (sql.startsWith("SELECT id, character_id, preferred_language FROM chat_sessions")) return [[{ id: session.id, character_id: character.id, preferred_language: "es" }]];
+    if (sql.startsWith("SELECT id, character_id, preferred_language, language_explicit FROM chat_sessions")) return [[{ id: session.id, character_id: character.id, preferred_language: "es" }]];
     if (/^SELECT id(?:, voice_asset_id)? FROM chat_messages WHERE session_id = \? AND source_ref = \? LIMIT 1$/.test(sql.replace(/\s+/g, " ").trim())) return [[]];
     if (sql.startsWith("SELECT slug FROM sites")) return [[{ slug: "fixture" }]];
     if (sql.startsWith("UPDATE chat_sessions")) return [{}];

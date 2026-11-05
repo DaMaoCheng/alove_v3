@@ -16,7 +16,7 @@ import { recordProviderCallLog } from './ai-reply-log-service.js';
 import { isAiTransportFallback } from './ai-reply-fallback-service.js';
 import { isStorefrontGuidanceCharacter, resolveOrderActionPromptState } from './chat-global-reply-policy.js';
 import { ORDER_CONTRACT } from './chat-reply-review-contracts.js';
-import { buildSizingConversationContext, SIZING_CONVERSATION_CONTRACT, buildChildProductSizingContext, CHILD_PRODUCT_SIZING_CONTRACT, projectChildSizingUpdatePrompt } from './product-sizing-guidance-service.js';
+import { isUnanchoredSizingContext, buildSizingConversationContext, SIZING_CONVERSATION_CONTRACT, buildChildProductSizingContext, CHILD_PRODUCT_SIZING_CONTRACT, projectChildSizingUpdatePrompt } from './product-sizing-guidance-service.js';
 import { hasCheckoutIssue, buildCheckoutReviewContext, CHECKOUT_REVIEW_CONTRACT } from './checkout-support-guidance.js';
 import { toNameCandidateUncertaintyContext, toCandidateReviewContext, productCandidateConditionsContract, toNoMatchReviewContext, PRODUCT_NO_MATCH_CONTEXT_CONTRACT, toMatchedCatalogueReviewContext, isCurrentCatalogueOwner } from './product-candidate-context-service.js';
 import { getCandidateConfirmationProduct } from './product-candidate-confirmation-service.js';
@@ -351,8 +351,8 @@ export function isGroundedCommerceRepairEligible({ replyResult = {}, reviewResul
   // User-reported measurements and checkout symptoms can support a useful
   // clarification without proving any product measurement or store diagnosis.
   const diagnosticOnly = !productContext?.candidateContext && !productContext?.products?.length && !productContext?.sizingProduct
-    && productContext?.cardAllowed !== true && searchIntent.cardAllowed !== true
-    && searchIntent.shouldLoadProductContext !== true && searchIntent.needsLiveProductData !== true
+    && (isUnanchoredSizingContext({ searchIntent, productContext }) || productContext?.cardAllowed !== true && searchIntent.cardAllowed !== true
+      && searchIntent.shouldLoadProductContext !== true && searchIntent.needsLiveProductData !== true)
     && !searchIntent.businessInquiry && !searchIntent.humanHandoff;
   if (diagnosticOnly && ((searchIntent.commerceTopic === 'sizing' && searchIntent.answerRequired === true || searchIntent.replyTopicHint === 'sizing')
     || hasCheckoutIssue(searchIntent) && searchIntent.checkoutIssue.requestScope === 'checkout_only')) return true;

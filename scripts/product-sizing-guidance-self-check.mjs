@@ -63,3 +63,17 @@ assert.equal(unanchoredTurkishReply, "Hangi takım, forma veya belirli ürün i�
 assert.equal(resolveProductSizingGuidanceReply({ sourceRef: "product_api" }, { languageCode: "en" }), "", "ordinary product contexts must keep their existing reply path");
 
 console.log("product sizing guidance self-check passed");
+
+const { isUnanchoredSizingContext } = await import('../server/product-sizing-guidance-service.js');
+const { needsProductEvidenceReview } = await import('../server/chat-reply-boundary-service.js');
+const intent = { commerceRoute: 'product_search', commerceTopic: 'sizing', answerRequired: true, knowledgeScope: 'business', needsLiveProductData: true, shouldLoadProductContext: true };
+for (const sourceRef of ['guest-site-product-sizing-guidance', 'site-product-sizing-guidance']) {
+ const context = { sourceType: 'product_api', sourceRef, searchOutcome: 'needs_clarification', products: [] };
+ assert.equal(isUnanchoredSizingContext({ searchIntent: intent, productContext: context }), true);
+ assert.equal(needsProductEvidenceReview(intent, context), false);
+ for (const changed of [{ searchOutcome: 'no_match' }, { sourceRef: 'unknown' }, { sourceErrorCode: 'timeout' }, { candidateContext: {} }, { sizingProduct: { name: 'Verified product' } }])
+  assert.equal(isUnanchoredSizingContext({ searchIntent: intent, productContext: { ...context, ...changed } }), false);
+ for (const changed of [{ commerceTopic: 'stock' }, { answerRequired: false }, { humanHandoff: { reviewReason: 'size_exchange' } }, { sourceErrorCode: 'timeout' }, { productRequestState: { status: 'pending' } }])
+  assert.equal(isUnanchoredSizingContext({ searchIntent: { ...intent, ...changed }, productContext: context }), false);
+}
+console.log('Unanchored sizing proof keeps product/error/candidate/exchange boundaries');

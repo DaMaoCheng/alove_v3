@@ -131,7 +131,8 @@ for (const factual of [true, false]) {
       const body = JSON.parse(options.body);
       const data = JSON.parse(body.messages.at(-1).content);
       assert(data.businessClaimContext?.units.length, 'Every sizing output sentence must be audited even without KB');
-      assert.deepEqual(data.businessClaimContext.references, []);
+      assert.deepEqual(data.businessClaimContext.references.map(reference => [reference.id, reference.kind]), [['a0', 'capability']]);
+      assert.equal(JSON.parse(data.businessClaimContext.references[0].text).sizingClarificationAvailable, true, 'Sizing capability permits clarification, never a fit inference');
       return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify({ ...approved,
         businessClaimAudit: data.businessClaimContext.units.map(unit => ({ unitId: unit.id, factual, referenceIds: [], supported: !factual, sourceAllowsException: false, replyPreservesException: false })) }) } }] }));
     } });
