@@ -347,3 +347,23 @@ for (const topic of ['other', 'unknown', '']) {
     searchIntent:{commerceRoute:'store_policy',commerceTopic:topic,replyBoundary:{contactAllowed:true}},
     knowledgeContext:{customerServiceIntent:true,items:[]}}),null);
 }
+
+// A no-policy decision does not remove independently verified complaint support.
+{
+ const userText='Hi the paymentoptions are Not working';
+ const searchIntent={commerceRoute:'store_policy',commerceTopic:'support',knowledgeScope:'business',unresolvedUserComplaint:true,
+  replyBoundary:{contactAllowed:true},policyKnowledgeRequest:{source:'jev',required:false,evidence:userText,query:''}};
+ const options={character:mascot,userText,searchIntent,knowledgeContext:{ok:true,items:[],strategy:'not_requested',customerServiceIntent:false}};
+ assert.equal(resolveChatFeedbackActionCandidate(options)?.kind,'feedback');
+ for(const override of [
+  {replyBoundary:{contactAllowed:false}}, {unresolvedUserComplaint:false}, {knowledgeScope:'general'},
+  {policyKnowledgeRequest:{...searchIntent.policyKnowledgeRequest,source:'openai'}},
+  {policyKnowledgeRequest:{...searchIntent.policyKnowledgeRequest,required:true}},
+  {policyKnowledgeRequest:{...searchIntent.policyKnowledgeRequest,evidence:'paymentoptions'}},
+ ])assert.equal(resolveChatFeedbackActionCandidate({...options,searchIntent:{...searchIntent,...override}}),null);
+ assert.equal(resolveChatFeedbackActionCandidate({...options,knowledgeContext:{...options.knowledgeContext,feedbackSubmission:{relation:'submitted_followup'}}}),null);
+ assert.equal(resolveChatFeedbackActionCandidate({...options,orderActionCandidate:{kind:'ttmall_order_lookup',status:'login_required',siteSlug:'shop'},searchIntent:{...searchIntent,commerceTopic:'delivery'}}),null);
+ assert.equal(resolveChatFeedbackActionCandidate({...options,productContext:{products:[{id:'current-item',name:'shirt'}]}}),null);
+ assert.equal(resolveChatFeedbackActionCandidate({...options,character:plainCharacter}),null);
+ console.log('No-policy verified complaints retain feedback with refusal/submission/order/product/character/source boundaries');
+}

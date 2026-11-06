@@ -313,8 +313,8 @@ const correctedOrderDiagnostic = await repairGroundedCommerceReply({ ...orderDia
  orderDiagnosticCalls++;
  assert.match(prompt.systemPrompt, /technically unavailable/);
  assert.match(prompt.systemPrompt, /not a successful empty search/);
- assert.match(prompt.systemPrompt, /conditional definition/);
- assert.match(prompt.systemPrompt, /waiting or pending.*not.*(started|underway)/i);
+ assert.doesNotMatch(prompt.systemPrompt, /Correct the proposed general explanation/);
+ assert.doesNotMatch(prompt.systemPrompt, /first explain that reported status/);
  assert.match(prompt.systemPrompt, /server will append a real order action/i);
  const packet = JSON.parse(prompt.messages[0].content);
  assert.equal(packet.orderActionState, 'login_required');

@@ -4,7 +4,7 @@ import { toAlternativeReviewContext, validateProductAlternativeAudit } from "./p
 import { SERVER_CONFIG } from './config.js';
 import { canReviewLanguageClarification, reviewedLanguageClarification, reviewedLanguageClarificationPurpose, withClarificationVoiceLanguage, withLanguageClarificationRecovery, languageClarificationRecoveryProof } from "./chat-language-clarification-policy.js";
 import { independentJsonProviderChain, applyReviewRequestProfile } from './ai-independent-review-config.js';
-import { buildBusinessClaimContext, validateBusinessClaimAudit, isGeneralCommerceExplanation, GENERAL_COMMERCE_EXPLANATION_CONTRACT } from './business-claim-audit-service.js';
+import { hasBusinessDemandAuditContext, buildBusinessClaimContext, validateBusinessClaimAudit, isGeneralCommerceExplanation, GENERAL_COMMERCE_EXPLANATION_CONTRACT } from './business-claim-audit-service.js';
 import { buildFeedbackSubmissionFallback } from './chat-feedback-submission-service.js';
 import { recoverReviewedLanguageReply } from "./chat-reply-language-recovery-service.js";
 import { buildRepairFeedback } from "./chat-reply-repair-feedback-service.js";
@@ -12,7 +12,7 @@ import { hasUserSuppliedInternalNotation, inspectReplyTechnicalGuard } from "./c
 import { isClosedProductClarification, isConversationReplyRecoveryEligible, productClarificationContext, isProductClarificationRecoveryEligible } from "./chat-reply-purpose-service.js";
 import { buildTrustedCharacterIdentity } from "./chat-prompt-utils.js";
 import { isImageReplyRecoveryEligible, refreshImageReplyRecoveryContext } from "./chat-image-reply-recovery-service.js";
-import { complaintPromptUserReports, hasChildSizingCorrectionContext, hasMatchedCatalogueCaptionContext, hasUnansweredOwnedComplaint, isGroundedCommerceRepairEligible, repairGroundedCommerceReply } from "./chat-grounded-reply-repair-service.js";
+import { hasOwnedBusinessKnowledgeRequest, complaintPromptUserReports, hasChildSizingCorrectionContext, hasMatchedCatalogueCaptionContext, hasUnansweredOwnedComplaint, isGroundedCommerceRepairEligible, repairGroundedCommerceReply } from "./chat-grounded-reply-repair-service.js";
 import { evaluateReplyReview, approveReplyRemainder, verifiedReplyRemainder } from "./chat-reply-review-decision.js";
 import { buildReplyReviewMessages, buildReplyReviewFormat } from "./chat-reply-review-contracts.js";
 import { buildProductSizingFallback } from "./product-sizing-copy.js";
@@ -184,7 +184,9 @@ export async function enforceReplyBoundary(options = {}) {
     ? buildSizingConversationContext({ searchIntent, userText, recentMessages }) : null;
   const childProductSizingContext = isStorefrontGuidanceCharacter(character)
     ? buildChildProductSizingContext({ searchIntent, userText, recentMessages }) : null;
-  const businessFactsRequired = needsBusinessFactsReview(searchIntent, character) || Boolean(sizingConversationContext);
+  const businessFactsRequired = needsBusinessFactsReview(searchIntent, character) || Boolean(sizingConversationContext)
+    || isStorefrontGuidanceCharacter(character) && hasBusinessDemandAuditContext(searchIntent)
+    || hasOwnedBusinessKnowledgeRequest({ searchIntent, knowledgeContext, character, trustedSite: options.trustedSite });
   const orderActionState = resolveOrderActionPromptState(orderActionCandidate);
   const orderGuidanceRequired = isStorefrontGuidanceCharacter(character) && Boolean(orderActionState);
   const guestBenefitReview = getGuestBenefitReviewContext(guestBenefitContext);
@@ -665,7 +667,7 @@ export async function assessReplyBoundary({ text = "", speechText = "", userText
     const repairIssues = plannedClaimContext && claimAudit.valid && !claimAudit.accepted
       ? result.businessClaimAudit.flatMap(entry => {
         const unit = plannedClaimContext.units.find(item => item.id === entry.unitId);
-        const kind = !entry.supported ? 'unsupported_fact' : entry.sourceAllowsException && !entry.replyPreservesException ? 'missing_condition' : '';
+        const kind = !entry.supported || claimAudit.failedUnitIds?.includes(entry.unitId) ? 'unsupported_fact' : entry.sourceAllowsException && !entry.replyPreservesException ? 'missing_condition' : '';
         return kind && unit?.text && unit.text.length <= 1000 ? [{ kind, span: unit.text }] : [];
       }).slice(0, 4) : [];
     if (plannedAlternativeContext && !validateProductAlternativeAudit(result?.alternativeAudit, alternativeAuditOptions).accepted) result = { ...result, allowed: false, evidenceSupported: false,

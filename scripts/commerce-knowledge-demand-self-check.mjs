@@ -66,6 +66,17 @@ for (const current of ['Quiero cambiar la talla de mi compra', 'Ya lo he recibid
 const social = { ...value, route: 'chat', topic: 'other', knowledgeScope: 'general', needsLiveProductData: false, knowledgeRequest: { kind: 'conversation_only', evidence: 'Madrid' } };
 assert.equal(resolveScope(await route(social, 'Madrid', { jevDecision: noAction })), 'none');
 assert.notEqual(resolveScope(await route({ ...social, knowledgeRequest: { kind: 'conversation_only', evidence: 'Madrid' } }, 'Madrid y cuánto tarda el envío?', { jevDecision: noAction })), 'none', 'partial evidence cannot suppress a mixed question');
+for (const current of ['hey', 'How was your day?', 'Hola, solo quiero charlar', '你好，聊聊天吧']) {
+  const intent = await route({ ...social, knowledgeRequest: { kind: 'conversation_only', evidence: current } }, current, { jevDecision: noAction });
+  assert.equal(resolveScope(intent), 'none', 'Whole-turn social intent skips the knowledge provider without a language-specific text rule');
+}
+for (const [current, kind, scope] of [
+  ['What does customs clearance mean?', 'general_explanation', 'general'],
+  ['Hey, when will my order ship?', 'business_question', 'business'],
+]) {
+  const intent = await route({ ...social, knowledgeScope: scope, knowledgeRequest: { kind, evidence: current } }, current, { jevDecision: noAction });
+  assert.notEqual(resolveScope(intent), 'none', 'A greeting does not suppress an independent knowledge question');
+}
 console.log('Exchange handoff, contact refusal, mixed lookup and whole-turn conversation checks passed');
 const exchangePrompt = routing.applyCommerceQuestionPromptPolicy({}, {
   commerceRoute: 'store_policy', commerceTopic: 'returns', answerRequired: true,

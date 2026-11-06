@@ -10,6 +10,7 @@ const { buildSizingConversationContext } = await import('../server/product-sizin
 const { resolveCommerceSearchIntent } = await import('../server/commerce-routing-service.js');
 const { repairGroundedCommerceReply, isGroundedCommerceRepairEligible } = await import('../server/chat-grounded-reply-repair-service.js');
 const { ORDER_CONTRACT } = await import('../server/chat-reply-review-contracts.js');
+const { GENERAL_COMMERCE_EXPLANATION_CONTRACT } = await import('../server/business-claim-audit-service.js');
 const { buildCommerceDecisionLogEvent } = await import('../server/ai-reply-log-service.js');
 const character = { id: 'mascot_continuity', categoryId: 'mascot' };
 const recentMessages = [{ senderType: 'user', text: 'No puedo seleccionar el estado de Illinois en la dirección. No he enviado el pedido.' }];
@@ -106,7 +107,8 @@ for (const status of ['login_required', 'binding_required']) {
     config: { apiKey: 'isolated', model: 'fixture', apiMode: 'chat_completions' }, recordLog: async () => {},
     requestText: async input => {
       generated++;
-      assert(input.systemPrompt.includes(ORDER_CONTRACT), 'Reuse the original order entry limits in correction');
+      assert(input.systemPrompt.includes(ORDER_CONTRACT.slice(GENERAL_COMMERCE_EXPLANATION_CONTRACT.length + 1)), 'Reuse the original order entry navigation limits in correction');
+      assert(!input.systemPrompt.includes(GENERAL_COMMERCE_EXPLANATION_CONTRACT), 'Mixed order and policy alone cannot authorize general definitions');
       const data = JSON.parse(input.messages[0].content);
       assert.equal(data.orderActionState, status);
       assert.equal(JSON.stringify(data).includes('DO_NOT_DUPLICATE'), false, 'Correction receives only the finite entry state');

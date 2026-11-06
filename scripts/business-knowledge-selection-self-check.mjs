@@ -1,3 +1,4 @@
+import { knowledgeSentenceSpans } from '../server/knowledge-evidence-projection.js';
 import assert from "node:assert/strict";
 process.env.AIOVE_PROVIDER_LOG_WRITE_ENABLED = "false";
 const { selectBusinessKnowledgeReferences, requestBusinessKnowledgeSelection } = await import("../server/business-knowledge-selection-service.js");
@@ -100,6 +101,14 @@ assert.equal(retrieved.strategy, "business_verified_reference");
 assert.equal(retrieved.selectionDiagnostics.outcome, 'verified');
 assert.equal(retrieved.selectionDiagnostics.counts.accepted, 1);
 assert(retrieved.items[0].evidenceQuote && retrieved.items[0].content.includes(retrieved.items[0].evidenceQuote), "selected exact quote survives retrieval mapping for grounded correction");
+assert.equal(retrieved.evidenceSchemaVersion, 1);
+for (const reason of ['business_no_relevant_section', 'business_selection_unavailable']) {
+  const emptyVersioned = await retrieveKnowledgeSections({db,query:'Order update',knowledgeScope:'business',siteId:'store-a',characterId:'character-a',
+    selectBusinessReferences:async()=>({items:[],reason,...(reason==='business_selection_unavailable'?{selectionFailure:{stage:'evidence',kind:'timeout'}}:{})})});
+  assert.equal(emptyVersioned.evidenceSchemaVersion,1,'Empty or failed authoritative business retrieval must retain its audit schema');
+  assert.deepEqual(emptyVersioned.businessOwner,{siteId:'store-a',characterId:'character-a'});
+}
+assert.equal(skipped.evidenceSchemaVersion,undefined,'Skipped ordinary conversation must not gain business authority');
 const partialPolicy = { ...reference, id: "new-policy", title: "Shipping policy", content: "Standard shipping is listed as free. Processing normally takes 1–3 business days. Delivery estimates for region A are 5–13 days. Final destination, cost and delivery time must be checked at checkout." };
 const partial = await selectBusinessKnowledgeReferences({ query: "What is the shipping policy for region B?", sections: [partialPolicy], select: async input => input.stage === "directory"
   ? { ids: [partialPolicy.id] } : { matches: [{ id: partialPolicy.id, quote: "Final destination, cost and delivery time must be checked at checkout.", confidence: .95, answersQuestion: true }] } });
@@ -187,7 +196,7 @@ assert.equal(providerCalls.length,6,"only finite transport fallback attempts, ne
 const protocolConfig = ['venice', 'openai'].map(id => ({ id, apiKey: 'fixture', model: 'fixture',
   apiMode: 'chat_completions', baseUrl: `https://${id}.example.test` }));
 const evidenceInput = { stage: 'evidence', query: 'Payment?', siteId: 'store-a', sections: [reference], limit: 4 };
-const validEvidence = { matches: [{ id: reference.id, quote: reference.content, answersQuestion: true, confidence: .95 }] };
+const validEvidence = { matches: [{ id: reference.id, quote: reference.content, answersQuestion: true, confidence: .95, answerSentenceIds: knowledgeSentenceSpans(reference.content).map(row => row.id), qualificationSentenceIds: [] }] };
 async function protocolProbe(input, first, second = validEvidence) {
   let calls = 0;
   const result = await requestBusinessKnowledgeSelection(input, { config: protocolConfig, fetchImpl: async url => {
@@ -198,7 +207,7 @@ async function protocolProbe(input, first, second = validEvidence) {
   } });
   return { result, calls };
 }
-for (const invalid of ['{broken', { matches: 'bad' }, { matches: [{ ...validEvidence.matches[0], id: 'foreign' }] },
+for (const invalid of [{matches:[{...validEvidence.matches[0],answerSentenceIds:['s999']}]}, {matches:[{...validEvidence.matches[0],qualificationSentenceIds:undefined}]}, '{broken', { matches: 'bad' }, { matches: [{ ...validEvidence.matches[0], id: 'foreign' }] },
   { matches: [{ ...validEvidence.matches[0], quote: 'All payment methods are accepted everywhere.' }] },
   { matches: [{ ...validEvidence.matches[0], answersQuestion: 'true' }] },
   { matches: [{ ...validEvidence.matches[0], confidence: '0.95' }] },
@@ -331,7 +340,7 @@ async function capturedSelectionPrompt(input) {
   }});
   return captured;
 }
-const scoreRule = /Score confidence only in whether the exact cited text/;
+const scoreRule = /Score confidence only in whether the selected source sentences/;
 assert.match(await capturedSelectionPrompt({...evidenceInput,partialEvidenceScoring:true}),scoreRule);
 assert.doesNotMatch(await capturedSelectionPrompt(evidenceInput),scoreRule);
 assert.doesNotMatch(await capturedSelectionPrompt({...evidenceInput,purpose:'general',partialEvidenceScoring:true}),scoreRule);

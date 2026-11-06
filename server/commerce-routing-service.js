@@ -1,3 +1,4 @@
+import { isGeneralCommerceExplanation, GENERAL_COMMERCE_EXPLANATION_CONTRACT } from "./business-claim-audit-service.js";
 import { SITE_TRUST_SAFETY_CONTRACT } from "./site-trust-safety-policy.js";
 import { nameCandidateIdentityContext } from './product-name-candidate-service.js';
 import { resolveDisplayedProductReferences } from './product-displayed-reference-service.js';
@@ -5,7 +6,7 @@ import { applyProductRequestScope, readProductRequestState, normalizeProductRequ
 import { buildClosedProductClarificationContext, buildProductClarificationContext, productClarificationContext, PRODUCT_CLARIFICATION_CONTRACT } from "./chat-reply-purpose-service.js";
 import { buildProductSearchIntent, normalizeLooseText, extractRequirementClearFields } from "./product-intent-service.js";
 import { extractProductHandle } from "./product-search-match-service.js";
-import { classifyCommerceIntent, normalizeCommerceAssistance, normalizeCommerceKnowledgeRequest } from "./product-intent-classifier-service.js";
+import { classifyCommerceIntent, normalizeCommerceAssistance, normalizeCommerceKnowledgeRequest, normalizePolicyKnowledgeRequest } from "./product-intent-classifier-service.js";
 import { normalizeCommerceConstraints } from "./product-edition-service.js";
 import { applyProductCandidateState, clearProductCandidateState, readProductCandidateState, parseCurrentProductRequirement, normalizeProductRequirementDecision } from "./product-candidate-state-service.js";
 import { applyRequestedProductEdition } from "./product-edition-service.js";
@@ -123,6 +124,10 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
   // A prior turn or an injected classifier field cannot carry this authority.
   if (Object.prototype.hasOwnProperty.call(searchIntent, 'replyPurposeContext')) {
     const { replyPurposeContext: ignoredPurpose, ...currentIntent } = searchIntent;
+    searchIntent = currentIntent;
+  }
+  if (Object.hasOwn(searchIntent, 'policyKnowledgeRequest')) {
+    const { policyKnowledgeRequest: ignoredPolicy, ...currentIntent } = searchIntent;
     searchIntent = currentIntent;
   }
   if (Object.hasOwn(searchIntent, 'businessKnowledgeRequired')) {
@@ -255,7 +260,9 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
     && decision.declaredLiveProductData === false && !decision.referencedProductId && !(decision.referencedProductIds || []).length
     && !assistance.businessInquiry && !assistance.humanHandoff && !assistance.promotionInquiry && !assistance.checkoutIssue;
   const answerRequired = Boolean(assistance.businessInquiry || assistance.humanHandoff || assistance.promotionInquiry || assistance.checkoutIssue) || decision.answerRequired === true || ["store_policy", "product_question"].includes(decision.route);
-  const knowledgeScope = conceptAndPolicy || assistance.businessInquiry || assistance.humanHandoff || assistance.promotionInquiry || assistance.checkoutIssue || decision.knowledgeScope === "business" || ["product_search", "product_question", "store_policy"].includes(decision.route) ? "business" : "general";
+  const policyKnowledgeRequest = decision.detectionSource === 'jev' && jevDecision?.ok === true
+    ? normalizePolicyKnowledgeRequest(decision.policyKnowledgeRequest, { userText, recentMessages }) : null;
+  const knowledgeScope = policyKnowledgeRequest?.required === true || conceptAndPolicy || assistance.businessInquiry || assistance.humanHandoff || assistance.promotionInquiry || assistance.checkoutIssue || decision.knowledgeScope === "business" || ["product_search", "product_question", "store_policy"].includes(decision.route) ? "business" : "general";
   const catalogueOnly = decision.boundaryVerified === true
     && decision.route === 'product_search' && decision.topic === 'other'
     && normalizeCommerceKnowledgeRequest(decision.knowledgeRequest, { userText, recentMessages })?.kind === 'catalogue_only'
@@ -327,11 +334,13 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
     primarySearchVerified: Boolean(jevDecision?.ok && jevDecision.confident && primaryAllowsSearch),
     needsLiveProductData: Boolean(decision.route === "product_question" ? questionNeedsLive : decision.needsLiveProductData),
     cardAllowed: commerceRoute === "product_search" && shouldSearch && replyBoundary.salesAllowed,
-    customerServiceKnowledgeRequest: catalogueOnly ? false : knowledgeRequest,
+    customerServiceKnowledgeRequest: policyKnowledgeRequest ? policyKnowledgeRequest.required : catalogueOnly ? false : knowledgeRequest,
+    catalogueOnlyKnowledge: catalogueOnly,
     ...(catalogueOnly || directConversation || exchangeOnly || decision.childSizingUpdateOnly ? { businessKnowledgeRequired: false } : {}),
+    ...(policyKnowledgeRequest ? { policyKnowledgeRequest: { ...policyKnowledgeRequest, source: 'jev' }, businessKnowledgeRequired: policyKnowledgeRequest.required } : {}),
     shouldLoadProductContext: Boolean(shouldSearch),
     knowledgeScope,
-    knowledgeQuery: typeof decision.knowledgeQuery === "string" ? decision.knowledgeQuery.trim().slice(0, 240) : "",
+    knowledgeQuery: policyKnowledgeRequest ? policyKnowledgeRequest.query : typeof decision.knowledgeQuery === "string" ? decision.knowledgeQuery.trim().slice(0, 240) : "",
     answerRequired,
     unresolvedUserComplaint: Boolean(complaintEvidence),
     siteTrustOnly: Boolean(siteTrustOnly),
@@ -486,10 +495,11 @@ export function applyCommerceQuestionPromptPolicy(promptContext = {}, searchInte
   }
   if (!searchIntent.answerRequired && !["product_question", "store_policy"].includes(searchIntent.commerceRoute) && !tentativeSizing && !childProductSizingContext && searchIntent.businessKnowledgeRequired !== false) return promptContext;
   const content = [
+    isGeneralCommerceExplanation(searchIntent) || searchIntent.conceptAndPolicy === true ? GENERAL_COMMERCE_EXPLANATION_CONTRACT : '',
     searchIntent.siteTrustOnly === true ? "The USER asks whether the current store is legitimate or safe to buy from. Distinguish the accessible AI chat platform and character from the associated store or merchant: this chat being accessible or the AI role existing cannot establish the store identity, registration, legitimacy, payment security, fulfilment, reviews or fraud risk. Answer the actual store-trust question. Use only current verified store-specific evidence for such claims; otherwise acknowledge uncertainty and offer general independent checks without asserting those checks have passed. Do not guarantee safety or infer fraud. " + SITE_TRUST_SAFETY_CONTRACT : "",
     childProductSizingContext ? `${CHILD_PRODUCT_SIZING_CONTRACT}\n${JSON.stringify({ childProductSizingContext })}` : "",
-    searchIntent.childSizingUpdateOnly ? "This turn only supplies requested USER sizing information. Acknowledge it without a new search, stock claim, chart measurements or new question. Retain the original merchandise requirements; no alternative has been accepted merely by supplying a size." : searchIntent.businessKnowledgeRequired === false ? "This is solely a catalogue lookup, not an independent store-policy question. Acknowledge the USER's requirements as their request, never as verified attributes or availability. Use only the actual supplied search outcome and catalogue evidence; no knowledge search was requested." : "",
-    !searchIntent.childSizingUpdateOnly && searchIntent.businessKnowledgeRequired === false && (searchIntent.primarySearchBlocked || !searchIntent.shouldLoadProductContext)
+    searchIntent.childSizingUpdateOnly ? "This turn only supplies requested USER sizing information. Acknowledge it without a new search, stock claim, chart measurements or new question. Retain the original merchandise requirements; no alternative has been accepted merely by supplying a size." : searchIntent.catalogueOnlyKnowledge === true ? "This is solely a catalogue lookup, not an independent store-policy question. Acknowledge the USER's requirements as their request, never as verified attributes or availability. Use only the actual supplied search outcome and catalogue evidence; no knowledge search was requested." : "",
+    !searchIntent.childSizingUpdateOnly && searchIntent.catalogueOnlyKnowledge === true && (searchIntent.primarySearchBlocked || !searchIntent.shouldLoadProductContext)
       ? "The server has not executed a catalogue search for this turn. Do not claim to have searched, found, shown or delivered anything, and do not say there are no matching products or that requested options are available. Ask a useful concise clarification of the user's target while retaining all stated requirements, if the current clarification budget permits. No stock, policy or action claim is supported by the request alone." : "",
     "Answer the user's current product or store question in their active conversation language, using the existing character's tone.",
     searchIntent.unresolvedUserComplaint === true ? "Do not turn a past problem report into an unsolicited diagnostic workflow. Respond to the actual current request; ask for a missing detail only when needed to answer it. If the user requests advice, explanation or troubleshooting directly or in context, answer that independent request normally." : "",

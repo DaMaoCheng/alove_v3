@@ -1,3 +1,4 @@
+import { projectKnowledgeEvidence, knowledgeEvidenceModelContent } from './knowledge-evidence-projection.js';
 import { BUSINESS_SOURCE_MODALITY_CONTRACT } from './business-claim-audit-service.js';
 import { upsertPersonaLanguageSetting } from "./chat-language-preference-service.js";
 import { toAlternativeReviewContext, PRODUCT_ALTERNATIVE_CONTRACT } from "./product-alternative-service.js";
@@ -37,10 +38,13 @@ export function buildKnowledgeContextLayer(knowledgeContext = null, { orderActio
     const title = safeString(item.title);
     const label = safeString(item.knowledgeBaseLabel);
     const summary = safeString(item.summary);
-    const content = safeString(item.content);
+    const projected = projectKnowledgeEvidence(item);
+    const content = knowledgeEvidenceModelContent(item);
+    const quote = safeString(item.evidenceQuote);
     return [
       `${index + 1}. ${title}${label ? ` (${label})` : ""}`,
-      summary ? `Summary: ${summary}` : "",
+      !projected.scoped && summary ? `Summary: ${summary}` : "",
+      !projected.scoped && knowledgeContext?.customerServiceIntent === true && quote && content.includes(quote) ? `Selected evidence for this question: ${quote}` : "",
       content ? `Reference: ${content}` : "",
     ].filter(Boolean).join("\n");
   });

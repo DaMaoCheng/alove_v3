@@ -383,7 +383,7 @@ const diagnosticOptions = { character, language: 'en', userText: 'The quoted tra
  assessLanguageQuality: async () => { diagnosticLanguages++; return { reviewStatus: 'valid', confidence: .99,
   languageQualitySupported: diagnosticLanguages > 1, retainedLanguageQualitySupported: false, languageIssues: [] }; },
  repairGroundedReply: options => repairGroundedCommerceReply({ ...options, config: { apiKey: 'fixture-key', model: 'fixture-reviewer', baseUrl: 'https://fixture.invalid' },
-  requestText: async () => { diagnosticCorrections++; return JSON.stringify({ displayText: diagnosticCorrected }); } }),
+  requestText: async input => { diagnosticCorrections++; check(!JSON.stringify(input).includes('Correct the proposed general explanation'), 'an order action cannot select the general-definition repair branch'); check(!JSON.stringify(input).includes('first explain that reported status'), 'order navigation does not force a status explanation'); return JSON.stringify({ displayText: diagnosticCorrected }); } }),
  recordReview: async () => {},
 };
 const diagnosticAccepted = await enforceReplyBoundary(diagnosticOptions);
@@ -457,3 +457,35 @@ const sizingStillRejected = await run(unanchoredSizing, { replacementText: sizin
 check(sizingStillRejected.repairs.length === 1, 'rejected sizing correction never loops');
 check(!sizingStillRejected.output.text.includes('confirmar un producto que coincida'), 'failed sizing clarification is not a catalogue no-match');
 console.log('Unanchored sizing: real boundary correction, complete re-review and terminal sizing fallback passed');
+
+const ownedFollowup = { ...policy, trustedSite: { id: 'shop' }, userText: 'I paid on the date I mentioned.',
+  searchIntent: { ...policy.searchIntent, commerceRoute: 'chat', commerceTopic: 'delivery', answerRequired: false, customerServiceKnowledgeRequest: false },
+  knowledgeContext: { ...policy.knowledgeContext, ok: true, businessOwner: { siteId: 'shop', characterId: character.id },
+    items: policy.knowledgeContext.items.map(item => ({ ...item, category: 'customer_service' })) } };
+const followupResult = await run(ownedFollowup);
+assert.equal(followupResult.reviews[0].businessFactsRequired, true, 'Actual owned business retrieval activates the existing review on a declarative follow-up');
+assert.equal(followupResult.repairs.length, 1, 'The same follow-up retains exactly one existing evidence-grounded correction');
+for (const invalid of [
+  { trustedSite: { id: 'other' } },
+  { knowledgeContext: { ...ownedFollowup.knowledgeContext, businessOwner: { siteId: 'shop', characterId: 'other' } } },
+  { knowledgeContext: { ...ownedFollowup.knowledgeContext, customerServiceIntent: false } },
+  { searchIntent: { ...ownedFollowup.searchIntent, knowledgeScope: 'general' } },
+]) {
+  const result = await run({ ...ownedFollowup, ...invalid }, { firstVerdict: yes });
+  assert.equal(result.reviews[0].businessFactsRequired, false, 'Unowned or nonbusiness knowledge cannot expand review');
+}
+console.log('Owned declarative business follow-up review/one correction and scope isolation passed');
+const projectionSource = 'Standard shipping is free. Final destination and delivery time must be confirmed at checkout. Unrequested deadline is forty-five days.';
+let projectionCalls = 0;
+await repairGroundedCommerceReply({...policy, reviewResult:{...initialNo('policy'),reviewStatus:'valid'},failedContracts:['business_facts','guidance'],
+ knowledgeContext:{...policy.knowledgeContext,items:[{...policy.knowledgeContext.items[0],content:projectionSource,sourceContent:projectionSource,evidenceQuote:projectionSource,
+ answerEvidence:[{id:'s0',text:'Standard shipping is free.',role:'answer'},{id:'s1',text:'Final destination and delivery time must be confirmed at checkout.',role:'qualification'}]}]},
+ config:{apiKey:'fixture-key',model:'fixture',baseUrl:'https://fixture.invalid'},recordLog:async()=>{},
+ requestText:async input=>{projectionCalls++;assert(!JSON.stringify(input).includes('forty-five'),'Repair must not regain unselected clauses through original quote');return JSON.stringify({displayText:policyText});}});
+assert.equal(projectionCalls,1);
+console.log('Grounded correction consumes scoped evidence without legacy quote bypass');
+
+const {GENERAL_COMMERCE_EXPLANATION_CONTRACT: conceptPolicyContract}=await import('../server/business-claim-audit-service.js');
+let conceptPolicyCorrection=0;
+await repairGroundedCommerceReply({...diagnosticOptions,searchIntent:{...diagnosticOptions.searchIntent,conceptAndPolicy:true},reviewStatus:'valid',reviewResult:{allowed:false,confidence:.9,boundarySupported:true},failedContracts:['business_facts'],config:{apiKey:'fixture-key',model:'fixture-reviewer',baseUrl:'https://fixture.invalid'},requestText:async input=>{conceptPolicyCorrection++;check(JSON.stringify(input).includes(conceptPolicyContract),'Explicit concept plus policy permission survives correction');return JSON.stringify({displayText:diagnosticCorrected});}});
+check(conceptPolicyCorrection===1,'Concept-policy correction uses the existing one-candidate mechanism');

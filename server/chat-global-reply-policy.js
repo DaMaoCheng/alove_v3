@@ -1,5 +1,3 @@
-import { GENERAL_COMMERCE_EXPLANATION_CONTRACT } from "./business-claim-audit-service.js";
-
 const GLOBAL_REPLY_POLICY_LINES = Object.freeze([
   "Apply these reply rules to every character. Keep each character's identity, personality, configured language, and speaking style intact.",
   "Write the reply entirely in the resolved language for the current turn, following the user's current language when confidently identified and otherwise using the configured default. Do not mix languages or insert translated fragments, even when the user's message contains multiple languages. The narrowly bounded language-preference clarification below is a current-turn candidate exception, never a preference change.",
@@ -44,7 +42,6 @@ export function buildGlobalReplyPolicyLayer(character = {}, { feedbackActionCand
   const orderActionState = resolveOrderActionPromptState(orderActionCandidate);
   const storefrontGuidance = isStorefrontGuidanceCharacter(character)
     ? [
-      GENERAL_COMMERCE_EXPLANATION_CONTRACT,
       "For this front-desk or creator character, treat the current site's independent storefront as the default subject of the conversation.",
       "Unless the user explicitly asks about Alove itself, answer product, shopping, order, delivery, service, and football-related questions from the current site's content and verified context. Do not redirect a storefront question into Alove features or virtual-character creation.",
       // Replace this contact-first customization policy when product details support direct customization selection.

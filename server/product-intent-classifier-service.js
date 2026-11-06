@@ -123,6 +123,18 @@ export function normalizeCommerceKnowledgeRequest(value, { userText = '', recent
   return { kind: value.kind, evidence };
 }
 
+// Orthogonal to complaint/action labels. Exact USER evidence grants knowledge
+// scope only; it never grants catalogue, contact or order actions.
+export function normalizePolicyKnowledgeRequest(value, { userText = '', recentMessages = [] } = {}) {
+  if (!value || typeof value.required !== 'boolean' || typeof value.evidence !== 'string'
+    || typeof value.query !== 'string' || value.evidence.length > 240 || value.query.length > 240) return null;
+  const evidence = value.evidence.trim(), query = value.query.trim(), current = String(userText).trim();
+  if (!evidence || !current.includes(evidence)) return null;
+  if (!value.required) return current === evidence && query === '' ? { required: false, evidence, query: '' } : null;
+  const userTexts = [current, ...recentMessages.filter(row => (row.senderType || row.sender_type) === 'user').map(row => String(row.text || row.text_content || ''))];
+  return query && userTexts.some(text => text.includes(query)) ? { required: true, evidence, query } : null;
+}
+
 const normalizeLooseTextForTeamQuote = value => String(value || '').normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 
 export function normalizeCommerceDecision(value = {}, { userText = "", recentMessages = [], detectedTeam = "", requireBoundaryVerdict = false } = {}) {
@@ -226,6 +238,7 @@ export function normalizeCommerceDecision(value = {}, { userText = "", recentMes
     knowledgeScope: value.knowledgeScope === "business" || ["product_search", "product_question", "store_policy"].includes(route) ? "business" : "general",
     knowledgeQuery: (typeof value.knowledgeQuery === "string" ? value.knowledgeQuery : "").replace(/\s+/g, " ").trim().slice(0, 240),
     knowledgeRequest: confident ? normalizeCommerceKnowledgeRequest(value.knowledgeRequest, { userText, recentMessages }) : null,
+    ...(confident && normalizePolicyKnowledgeRequest(value.policyKnowledgeRequest, { userText, recentMessages }) ? { policyKnowledgeRequest: normalizePolicyKnowledgeRequest(value.policyKnowledgeRequest, { userText, recentMessages }) } : {}),
     answerRequired: confident && (value.answerRequired === true || ["product_question", "store_policy"].includes(route)),
     replyBoundary,
     boundaryVerified,

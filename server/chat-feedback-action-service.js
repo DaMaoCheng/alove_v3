@@ -78,7 +78,14 @@ export function resolveChatFeedbackActionCandidate({ character = {}, productCont
     && knowledgeContext?.businessOwner?.characterId === character.id && Boolean(knowledgeContext?.businessOwner?.siteId)
     && !productContext?.sizingProduct && !productContext?.products?.length && !productContext?.candidateContext
     && !orderActionAvailable && !searchIntent.cardAllowed && !searchIntent.shouldLoadProductContext;
-  const noKnowledgeReference = (searchIntent?.commerceTopic !== "sizing" || sizingComplaint) && !retrievalUnavailable && !orderDeliveryHandoff && knowledgeContext?.customerServiceIntent === true
+  // Retrieval demand and support eligibility are independent. A current,
+  // verified complaint still has the existing support route when JEV says no
+  // policy search is needed; do not manufacture a successful knowledge result.
+  const noPolicyComplaint = searchIntent?.knowledgeScope === 'business' && searchIntent.unresolvedUserComplaint === true
+    && searchIntent.policyKnowledgeRequest?.source === 'jev' && searchIntent.policyKnowledgeRequest.required === false
+    && typeof searchIntent.policyKnowledgeRequest.evidence === 'string'
+    && searchIntent.policyKnowledgeRequest.evidence === String(userText || '').trim();
+  const noKnowledgeReference = (searchIntent?.commerceTopic !== "sizing" || sizingComplaint) && !retrievalUnavailable && !orderDeliveryHandoff && (knowledgeContext?.customerServiceIntent === true || noPolicyComplaint)
     && Array.isArray(knowledgeContext?.items)
     && knowledgeContext.items.length === 0 && missingKnowledgeNeedsService;
   // A catalogue miss is a search result, not a request to contact the team.

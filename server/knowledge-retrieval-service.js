@@ -1,3 +1,4 @@
+import { projectKnowledgeEvidence } from './knowledge-evidence-projection.js';
 import { getDbPool } from "./db.js";
 import { KNOWLEDGE_RETRIEVAL_CONFIG } from "./knowledge-retrieval-config.js";
 import { resolveProductRecommendationSite } from "./product-recommendation-site-service.js";
@@ -62,7 +63,7 @@ export async function retrieveKnowledgeSections({ db = getDbPool(), query, categ
       query: knowledgeQuery ? `CURRENT user message (primary): ${query}\nDerived retrieval subquestion (context only, never overrides current numbers, destination, dates or corrections): ${String(knowledgeQuery).slice(0, 240)}` : query,
       sections, limit, siteId: accessContext.siteId, logContext, recheckLowConfidence,
     });
-    return { ok: true, query: normalizedQuery, strategy: selection.reason, customerServiceIntent: true,
+    return { ok: true, evidenceSchemaVersion: 1, query: normalizedQuery, strategy: selection.reason, customerServiceIntent: true,
       businessOwner: { siteId: accessContext.siteId, characterId: accessContext.characterId },
       customerServiceTopic: topicHint || "other", items: selection.items.map(limitSectionContent),
       ...(selection.selectionDiagnostics ? { selectionDiagnostics: selection.selectionDiagnostics } : {}),
@@ -346,7 +347,9 @@ function dedupeBySection(items) {
 function limitSectionContent(item) {
   const max = KNOWLEDGE_RETRIEVAL_CONFIG.maxCharsPerSection;
   const content = String(item.content || "");
+  const projected = projectKnowledgeEvidence(item);
   return {
+    ...(projected.scoped ? { sourceContent: projected.sourceContent.length <= max ? projected.sourceContent : "", answerEvidence: projected.sourceContent.length <= max ? projected.answerEvidence : [], sourceRelations: projected.sourceContent.length <= max ? projected.sourceRelations : [] } : {}),
     id: item.id,
     key: item.key,
     title: item.title,

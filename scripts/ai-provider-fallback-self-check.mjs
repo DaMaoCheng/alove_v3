@@ -206,7 +206,7 @@ try {
     check(malformed.calls.length === (consumer.protocolFallback ? chain.length : 1), `${consumer.name} malformed HTTP 200 follows its bounded protocol opt-in only`);
   }
   const section = { id: "new-topic", title: "Payment", content: "Only card payments are supported.", keywords: [], scope: "site", siteId: "site-fixture" };
-  const knowledge = fixture([{ status: 402 }, { text: JSON.stringify({ ids: [section.id] }) }, { status: 402 }, { text: JSON.stringify({ matches: [{ id: section.id, quote: section.content, answersQuestion: true, confidence: .95 }] }) }]);
+  const knowledge = fixture([{ status: 402 }, { text: JSON.stringify({ ids: [section.id] }) }, { status: 402 }, { text: JSON.stringify({ matches: [{ id: section.id, answerSentenceIds: ["s0"], qualificationSentenceIds: [], answersQuestion: true, confidence: .95 }] }) }]);
   globalThis.fetch = knowledge.fetchImpl;
   const result = await selectBusinessKnowledgeReferences({ query: "How can I pay?", sections: [section], siteId: "site-fixture" });
   check(result.items[0]?.content === section.content, "knowledge directory and exact-evidence stages both recover through backup");

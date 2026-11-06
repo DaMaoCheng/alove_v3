@@ -52,3 +52,7 @@ assert.doesNotMatch(noDeliveryEvidence.content, /carrier tracking page|delivery 
   "an empty reference pool retains its existing no-source contract");
 assert.equal(buildKnowledgeContextLayer(null).content, "", "ordinary no-knowledge chat remains unchanged");
 console.log("delivery knowledge prompt checks passed (source alignment, real order actions, mixed references and unchanged adjacent topics; no network/DB)");
+
+const scoped = buildKnowledgeContextLayer({...deliveryKnowledge, items:[{content:mailTrackingReference, evidenceQuote:mailTrackingReference}]});
+assert(scoped.content.includes('Selected evidence for this question: '+mailTrackingReference));
+assert(!buildKnowledgeContextLayer({...deliveryKnowledge, items:[{content:mailTrackingReference,evidenceQuote:'Invented evidence'}]}).content.includes('Selected evidence for this question:'));

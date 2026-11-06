@@ -20,7 +20,7 @@ assert.match(policy, /Never claim to be checking/i);
 assert.match(policy, /never invent order contents or status/i);
 assert.match(policy, /briefly apologize/i);
 assert.match(policy, /cannot check it here/i);
-assert.match(policy, /reported status.*usual meaning/i, 'unavailable lookup cannot erase an answerable status explanation');
+assert.doesNotMatch(policy, /reported status.*usual meaning/i, 'global policy must not force an unrequested status explanation');
 for (const status of ["login_required", "binding_required"]) {
   const candidate = { kind: "ttmall_order_lookup", siteSlug: "pj", status, orderNumber: "PRIVATE_ORDER_REFERENCE" };
   assert.equal(resolveChatFeedbackActionCandidate({ ...feedbackInput, orderActionCandidate: candidate }), null, "Available order entry replaces only the generic unavailable-tracking handoff");
@@ -32,10 +32,7 @@ for (const status of ["login_required", "binding_required"]) {
   const actionPrompt = buildChatReplyPrompt({ character: { categoryId: "mascot" }, userText: "Where is my order?", orderActionCandidate: candidate }).systemPrompt;
   assert.match(actionPrompt, /system will append one real order action/i);
   assert.match(actionPrompt, /not an order lookup result/i);
-  assert.match(actionPrompt, /reported status.*usual meaning/i);
-  assert.match(actionPrompt, /login or binding instructions alone/i);
-  assert.match(actionPrompt, /waiting or pending.*not.*(started|underway)/i);
-  assert.match(actionPrompt, /in progress.*not.*completed/i);
+  assert.doesNotMatch(actionPrompt, /reported status.*usual meaning/i, 'an order entry alone does not authorize a general explanation');
   assert.match(actionPrompt, status === "login_required" ? /sign in/ : /if requested/);
   assert.doesNotMatch(actionPrompt, /direct the user to the store's order page or support/);
   assert.doesNotMatch(actionPrompt, /PRIVATE_ORDER_REFERENCE/);
@@ -99,8 +96,22 @@ assert.match(ORDER_CONTRACT, /in progress.*not.*completed/i);
   const { GENERAL_COMMERCE_EXPLANATION_CONTRACT: general } = await import('../server/business-claim-audit-service.js');
   for (const [options, expectOrder] of [[{ businessFactsRequired: true }, false], [{ orderActionState: 'login_required' }, true], [{ businessFactsRequired: true, orderActionState: 'login_required' }, true]]) {
     const text = buildReplyReviewMessages({ ...options, text: 'test', speechText: 'test', userText: 'test' }).filter(row => row.role === 'system').map(row => row.content).join('\n');
-    assert.equal(text.split(general).length - 1, 1, 'general contract occurs exactly once');
+    assert.equal(text.split(general).length - 1, 0, 'order/policy flags alone cannot authorize a general explanation');
     assert.equal(text.includes(ORDER_CONTRACT.slice(general.length + 1)), expectOrder, 'order constraints retained exactly when active');
   }
   console.log('mixed order+business review contract de-duplication preserves all active clauses');
 }
+
+
+const { applyCommerceQuestionPromptPolicy } = await import('../server/commerce-routing-service.js');
+const { GENERAL_COMMERCE_EXPLANATION_CONTRACT: conceptContract } = await import('../server/business-claim-audit-service.js');
+for (const intent of [
+ {commerceRoute:'chat',knowledgeScope:'general',commerceTopic:'delivery',answerRequired:true,generalTermExplanation:true},
+ {commerceRoute:'store_policy',knowledgeScope:'business',answerRequired:true,conceptAndPolicy:true},
+]) {
+ assert(applyCommerceQuestionPromptPolicy({},intent).systemPrompt.includes(conceptContract),'Authorized concept generation keeps the shared contract');
+ const review=(await import('../server/chat-reply-review-contracts.js')).buildReplyReviewMessages({searchIntent:intent,businessFactsRequired:true,text:'test'});
+ assert.equal(review.map(row=>row.content).join('\n').split(conceptContract).length-1,1,'Authorized concept review receives exactly one contract');
+}
+assert(!applyCommerceQuestionPromptPolicy({},{commerceRoute:'store_policy',knowledgeScope:'business',answerRequired:true}).systemPrompt.includes(conceptContract));
+console.log('General explanation contract is scoped to current concept intent in generation and review');
