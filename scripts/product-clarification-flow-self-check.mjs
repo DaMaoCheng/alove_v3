@@ -62,7 +62,9 @@ const guestPrompt = applyGuestProductClarificationPromptPolicy({ systemPrompt: "
   product: null,
   searchIntent: exhausted,
 });
-assert.match(guestPrompt.systemPrompt, /guest_product_clarification_exhausted:TONE/);
+assert.doesNotMatch(guestPrompt.systemPrompt, /\[guest_product_clarification/);
+assert.match(guestPrompt.systemPrompt, /natural user-visible clarification/);
+assert.match(guestPrompt.systemPrompt, /Do not ask another question/);
 assert.match(
   normalizeGuestReplyText({
     text: "[guest_product_clarification_exhausted:direct]",

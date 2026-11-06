@@ -33,7 +33,9 @@ try {
   calls = 0;
   await resolveTrustedCurrentProductSizing({ site, product: { ...product, sizeChart: chart, sizeChartResolved: true }, resolveProduct });
   await resolveTrustedCurrentProductSizing({ site, product: { ...product, sizeChart: null, sizeChartResolved: true }, resolveProduct });
-  check(calls === 0, "verified historical chart and confirmed no-table state are reused without refetching");
+  check(calls === 2, "serialized historical flags cannot prove a chart or no-table result; each receives one exact source read");
+  await resolveTrustedCurrentProductSizing({site,product:hydrated,resolveProduct});
+  check(calls === 2, "an unchanged private source-proven in-memory product is reused without another read");
   for (const result of [
     { resolvedFromSource: false, site: { id: site.id, slug: site.slug }, item: { ...product, sizeChart: chart, sizeChartResolved: true } },
     { resolvedFromSource: true, site: { id: "other", slug: site.slug }, sourceItem: { ...product, sizeChart: chart, sizeChartResolved: true } },

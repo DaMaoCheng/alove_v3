@@ -135,6 +135,19 @@ export function normalizePolicyKnowledgeRequest(value, { userText = '', recentMe
   return query && userTexts.some(text => text.includes(query)) ? { required: true, evidence, query } : null;
 }
 
+export function normalizeGeneralExplanationRequest(value, { userText = '' } = {}) {
+  if (!value || typeof value !== 'object' || typeof value.required !== 'boolean'
+    || typeof value.evidence !== 'string' || value.evidence.length > 240) return null;
+  const current = String(userText).trim(), evidence = value.evidence.trim();
+  const hasKind = Object.hasOwn(value, 'kind');
+  if (hasKind && !['term_meaning','reported_status_meaning','case_diagnosis','none'].includes(value.kind)) return null;
+  const required = hasKind ? ['term_meaning','reported_status_meaning'].includes(value.kind) : value.required;
+  if (!evidence || !current.includes(evidence) || !hasKind && !required && evidence !== current) return null;
+  // The selected purpose determines permission; legacy missing-kind records stay
+  // compatible. Provenance is assigned only after a successful JEV decision.
+  return { ...(hasKind ? {kind:value.kind} : {}), required, evidence };
+}
+
 const normalizeLooseTextForTeamQuote = value => String(value || '').normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 
 export function normalizeCommerceDecision(value = {}, { userText = "", recentMessages = [], detectedTeam = "", requireBoundaryVerdict = false } = {}) {
@@ -239,6 +252,7 @@ export function normalizeCommerceDecision(value = {}, { userText = "", recentMes
     knowledgeQuery: (typeof value.knowledgeQuery === "string" ? value.knowledgeQuery : "").replace(/\s+/g, " ").trim().slice(0, 240),
     knowledgeRequest: confident ? normalizeCommerceKnowledgeRequest(value.knowledgeRequest, { userText, recentMessages }) : null,
     ...(confident && normalizePolicyKnowledgeRequest(value.policyKnowledgeRequest, { userText, recentMessages }) ? { policyKnowledgeRequest: normalizePolicyKnowledgeRequest(value.policyKnowledgeRequest, { userText, recentMessages }) } : {}),
+    ...(confident && normalizeGeneralExplanationRequest(value.generalExplanationRequest, { userText }) ? { generalExplanationRequest: normalizeGeneralExplanationRequest(value.generalExplanationRequest, { userText }) } : {}),
     answerRequired: confident && (value.answerRequired === true || ["product_question", "store_policy"].includes(route)),
     replyBoundary,
     boundaryVerified,

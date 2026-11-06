@@ -22,12 +22,28 @@ function anchorKey(context) {
 
 // The caller supplies the existing scoped reader; this module never owns a DB.
 export async function refreshImageReplyRecoveryContext(context, refreshFn) {
+  if (!isFulfilledImageOnlyRequest(context)) return null;
+  const fresh = await refreshAnchoredImageReplyContext(context, refreshFn);
+  return isFulfilledImageOnlyRequest(fresh) ? fresh : null;
+}
+
+// The same read-only anchor check also serves a mixed text correction. Scope
+// eligibility remains with its caller; this helper grants no image action.
+export async function refreshAnchoredImageReplyContext(context, refreshFn) {
   const key = anchorKey(context);
-  if (!key || !isFulfilledImageOnlyRequest(context) || typeof refreshFn !== "function") return null;
+  if (!key || typeof refreshFn !== "function") return null;
   try {
     const fresh = await refreshFn(context);
-    return isFulfilledImageOnlyRequest(fresh) && anchorKey(fresh) === key ? fresh : null;
+    return anchorKey(fresh) === key ? fresh : null;
   } catch { return null; }
+}
+
+export function withCurrentImageReplyFact(promptContext, context) {
+  if (!anchorKey(context) || typeof promptContext?.systemPrompt !== 'string') return null;
+  const content = buildChatImageStatusInstruction(context);
+  const layer = { id: 'current_image_reply_fact', title: 'Latest Server Image Fact', content };
+  return { ...promptContext, layers: [...(promptContext.layers || []), layer],
+    systemPrompt: `${promptContext.systemPrompt}\n\n## ${layer.title}\n${content}` };
 }
 
 export function isImageReplyRecoveryEligible({ chatImageContext, reviewStatus, reviewResult = {}, failedContracts = [], contracts = [],

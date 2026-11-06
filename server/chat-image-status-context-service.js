@@ -124,7 +124,7 @@ export function buildCurrentImageDeliveryContract(fact) {
     "Only this photo's delivery is verified. Browser loading, the user having seen it, image contents, poses, clothing and where the user can browse it are unverified. Media source metadata cannot establish a gallery, profile, album, menu, page position or navigation instruction. Unsupported claims about those details remain unsupported.",
     "Other requested actions, merchandise recommendations, discounts, contact collection, off-platform or future follow-up and store/order facts retain all their existing permissions and evidence requirements.",
     fact.terminalReplyOnly === true
-      ? "The original reply already handled the mixed business questions. Evaluate only this delayed image caption; do not require it to answer those questions again. Any new business or action claim in the caption still requires its own evidence and permissions."
+      ? "This subtask evaluates only the delayed image caption. It does not establish whether other mixed questions were answered. Do not repeat business answers or treat a photo acknowledgement as evidence of a business answer."
       : "In mixed turns, each other question still needs its own supported answer; a photo acknowledgement does not replace that answer.",
   ].join("\n");
 }
@@ -143,7 +143,7 @@ export function buildChatImageStatusInstruction(context) {
     "queued/generating means pending at the latest check; ready means the server finished, not that the user saw it; failed means no successful image; unknown means unverified. Do not invent progress, completion, retry, delivery visibility, or timing.",
     "currentTurn=false describes an earlier image, not delivery of another image. A currentRequest outcome of not_created records that no image was added this turn; never replace this outcome with the earlier image's ready state. For old-image questions, explicitly identify the prior image and do not claim browser visibility.",
     fact.terminalReplyOnly === true
-      ? "This is only the delayed image caption; the original mixed business answer is retained. It grants no permission for a new image task."
+      ? "This is only the delayed image caption, not a new business request or proof that other questions were answered. It grants no permission for a new image task."
       : "Use this fact only if relevant to the user's current message. For ordinary unrelated chat, do not mention image status. Answer other questions in mixed turns normally. It grants no permission for a new image task.",
     "The latest authoritative status overrides earlier conversational claims and any older image-task instruction.",
   ].join("\n");

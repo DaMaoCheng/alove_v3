@@ -40,7 +40,7 @@ try {
   check(local.requestedTeam === "" && !local.requestedKeywords.includes("argentina") && local.requestedSizes[0] === "L", "location clears scalar and recall keyword without erasing size");
   const unknown = await resolveCommerceSearchIntent({ userText: "Find Brazil shirt", searchIntent: { requestedTeam: "Brazil" }, classifyCommerce: async () => shopping() });
   check(unknown.requestedTeam === "Brazil", "absent structured constraint does not clear existing requirement");
-  for (const primaryIntent of ["daily_chat", "new_image", "order_lookup", "unsupported_request"]) {
+  for (const primaryIntent of ["daily_chat", "chat", "character_photo", "new_image", "group_photo", "order_lookup", "unsupported_request"]) {
     const primary = { ok: true, confident: true, primaryIntent, productIntent: "none" };
     const result = await resolveCommerceSearchIntent({ userText: "shirt", classifyCommerce: async () => shopping({ answerRequired: true }), jevDecision: primary });
     check(!result.shouldLoadProductContext && !result.cardAllowed && result.answerRequired, "commerce cannot override primary action but retains questions");
@@ -50,16 +50,23 @@ try {
   check(facts.shouldLoadProductContext && !facts.cardAllowed, "fact lookup survives no-sales boundary and unsupported action flag");
   const tryOn = await resolveCommerceSearchIntent({ userText: "Try on this shirt", classifyCommerce: async () => shopping(), jevDecision: { ok: true, confident: true, primaryIntent: "try_on", productIntent: "search" } });
   check(tryOn.shouldLoadProductContext, "try-on keeps the original product context ability");
+  // The primary product_request selects the merchandise channel. Commerce's
+  // search/question subtype now owns its action, not a second primary score.
   for (const productDecision of [
     { productIntent: "none", productAction: .4 },
     { productIntent: "search", productAction: .71 },
     { productIntent: "search", productAction: Infinity },
     { productIntent: "search", productAction: null },
-    { productIntent: "search", productAction: .99, unsupported: true, unsupportedIntent: "product_request" },
   ]) {
-    const result = await resolveCommerceSearchIntent({ userText: "shirt", classifyCommerce: async () => shopping(), jevDecision: { ok: true, confident: true, primaryIntent: "product_request", ...productDecision } });
-    check(!result.shouldLoadProductContext && !result.cardAllowed, "commercial enrichment cannot override JEV product action threshold or unsupported product capability");
+    const primary = { ok: true, confident: true, primaryIntent: "product_request", ...productDecision };
+    const result = await resolveCommerceSearchIntent({ userText: "shirt", classifyCommerce: async () => shopping(), jevDecision: primary });
+    check(result.shouldLoadProductContext && result.cardAllowed, "selected primary product lane permits the Commerce search subtype without a duplicate binary threshold");
+    const question = await resolveCommerceSearchIntent({ userText: "shirt", classifyCommerce: async () => shopping({ route: "product_question", needsLiveProductData: false, answerRequired: true }), jevDecision: primary });
+    check(!question.shouldLoadProductContext && !question.cardAllowed && question.answerRequired, "the same primary product lane cannot turn a no-live Commerce question into a product card");
   }
+  const capabilityDenied = await resolveCommerceSearchIntent({ userText: "shirt", classifyCommerce: async () => shopping(),
+    jevDecision: { ok: true, confident: true, primaryIntent: "product_request", productIntent: "search", productAction: 1, unsupported: true, unsupportedIntent: "product_request" } });
+  check(!capabilityDenied.shouldLoadProductContext && !capabilityDenied.cardAllowed, "Commerce cannot override an explicitly unsupported product capability");
   for (const productDecision of [{ productIntent: "search" }, { productIntent: "search", productAction: 1 }, { productIntent: "search", productAction: 1, unsupported: true, unsupportedIntent: "order_lookup" }]) {
     const result = await resolveCommerceSearchIntent({ userText: "shirt", classifyCommerce: async () => shopping(), jevDecision: { ok: true, confident: true, primaryIntent: "product_request", ...productDecision } });
     check(result.shouldLoadProductContext && result.cardAllowed, "verified JEV product search and legacy explicit search retain permission; unrelated unsupported action does not veto it");
@@ -178,7 +185,7 @@ try {
     { name: "invalid independent scope remains blocked", extra: { productRequest: { ...singleProductRequest, items: [{ evidence: "Real Madrid" }] } }, search: false },
     { name: "multiple unselected scope remains blocked", text: "Find a Real Madrid shirt and a Barcelona shirt.", extra: { productRequest: { relation: "multiple", action: "new", items: [{ evidence: "Real Madrid shirt", sharedEvidence: "" }, { evidence: "Barcelona shirt", sharedEvidence: "" }], selectedIndex: null, selectionEvidence: "" } }, search: false },
     { name: "JEV primary action still blocks search", jevDecision: { ...unifiedJev, primaryIntent: "chat", productIntent: "none" }, extra: {}, search: false },
-    { name: "JEV score still blocks search", jevDecision: { ...unifiedJev, productAction: .5 }, extra: {}, search: false },
+    { name: "selected product channel delegates search subtype despite old score", jevDecision: { ...unifiedJev, productIntent: "none", productAction: .5 }, extra: {}, expectedTeam: "Real Madrid", search: true },
     { name: "sales boundary still blocks search", extra: { replyBoundary: { salesAllowed: false, contactAllowed: true } }, search: false },
   ];
   for (const test of unifiedCases) {

@@ -109,3 +109,5 @@ for (const change of [x => { x.searchIntent.primarySearchBlocked = true; },
   assert.equal(contextFor(probe), null, 'No evidence bypass for blocked, legacy/uncertain, unexecuted or failed searches');
 }
 console.log('Completed commerce-owned empty lookup correction without primary permission escalation passed');
+assert.equal(eligibility({ ...base, retained: 'The supplied size is a user report.' }), true,
+  'an owned completed search can correct the whole answer despite a separately approved fragment');

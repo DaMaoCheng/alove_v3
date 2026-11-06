@@ -105,3 +105,14 @@ assert(validateBusinessClaimAudit([{...relationshipRow,roles:['store_policy','po
 assert(validateBusinessClaimAudit([{...relationshipRow,roles:['store_policy','policy_condition'],referenceIds:['k0.s1'],relationEvidence:[{type:'condition',quote:relationshipContext.references[1].text}]}],relationshipContext).accepted,'Explicit single-sentence proof can support its own internal relationship without extractor metadata');
 
 assert(!validateBusinessClaimAudit([{...child,roles:['policy_condition']}],{...dependencyContext,units:[dependencyContext.units[1]]}).accepted,'A relation role inherits store-policy qualification dependencies even when the reviewer omits store_policy');
+
+// A validated relation range may span source sentences; its meaning still
+// requires the independent reviewer's supported vote.
+const alternativeQuote='Redeem from the personal center. Alternatively, email store support.';
+const multiSentenceRelation={...relationshipContext,references:[...relationshipContext.references,{id:'k0.rel0',kind:'knowledge_relation',relationType:'alternative',text:alternativeQuote}]};
+const alternativeRow={...relationshipRow,roles:['store_policy','policy_alternative'],referenceIds:['k0.s0','k0.rel0'],relationEvidence:[{type:'alternative',quote:alternativeQuote}]};
+assert(validateBusinessClaimAudit([alternativeRow],multiSentenceRelation).accepted,'A complete validated multi-sentence alternative must not fail a single-sentence-only check');
+assert(!validateBusinessClaimAudit([{...alternativeRow,supported:false}],multiSentenceRelation).accepted,'Source relation metadata never overrides the independent semantic rejection');
+assert(!validateBusinessClaimAudit([{...alternativeRow,relationEvidence:[{type:'alternative',quote:alternativeQuote+' Added guarantee.'}]}],multiSentenceRelation).accepted);
+assert(!validateBusinessClaimAudit([{...alternativeRow,roles:['store_policy','policy_addition']}],multiSentenceRelation).accepted);
+console.log('Complete relation range and independent semantic vote checks passed');

@@ -62,7 +62,8 @@ const confirmationRows = [{ senderType: 'character', characterId: confirmationCh
 const confirmationIntent = await resolveCommerceSearchIntent({ userText: confirmationText, recentMessages: confirmationRows,
   siteId: 'shop', siteSlug: 'shop', characterId: confirmationCharacter.id,
   jevDecision: { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'none', productAction: .5 },
-  classifyCommerce: async () => ({ confident: true, confidence: .99, route: 'product_search', topic: 'other', replyBoundary: { salesAllowed: true, contactAllowed: true },
+  // Pure identity assent is a Commerce read-only question, independent of the primary binary action score.
+  classifyCommerce: async () => ({ confident: true, confidence: .99, route: 'product_question', topic: 'other', needsLiveProductData: false, declaredLiveProductData: false, replyBoundary: { salesAllowed: true, contactAllowed: true },
     productRequest: { relation: 'single', action: 'new', items: [], selectedIndex: null, selectionEvidence: '' },
     productRequirement: { action: 'continue', evidence: confirmationText, updates: [], suspectedTerm: null },
     candidateResponse: { action: 'confirm', candidateId: 'p1', evidence: confirmationText } }) });

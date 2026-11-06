@@ -1,3 +1,4 @@
+import { ownedBusinessTextCorrectionContext } from './chat-owned-business-correction-context.js';
 import { supportsNameCandidateYears, validateNameIdentityAudit } from './product-name-candidate-service.js';
 import { toNameCandidateDifferenceContext, toNameCandidateUncertaintyContext } from './product-candidate-context-service.js';
 import { toAlternativeReviewContext, validateProductAlternativeAudit } from "./product-alternative-service.js";
@@ -11,7 +12,7 @@ import { buildRepairFeedback } from "./chat-reply-repair-feedback-service.js";
 import { hasUserSuppliedInternalNotation, inspectReplyTechnicalGuard } from "./chat-reply-technical-guard.js";
 import { isClosedProductClarification, isConversationReplyRecoveryEligible, productClarificationContext, isProductClarificationRecoveryEligible } from "./chat-reply-purpose-service.js";
 import { buildTrustedCharacterIdentity } from "./chat-prompt-utils.js";
-import { isImageReplyRecoveryEligible, refreshImageReplyRecoveryContext } from "./chat-image-reply-recovery-service.js";
+import { isImageReplyRecoveryEligible, refreshImageReplyRecoveryContext, refreshAnchoredImageReplyContext } from "./chat-image-reply-recovery-service.js";
 import { hasOwnedBusinessKnowledgeRequest, complaintPromptUserReports, hasChildSizingCorrectionContext, hasMatchedCatalogueCaptionContext, hasUnansweredOwnedComplaint, isGroundedCommerceRepairEligible, repairGroundedCommerceReply } from "./chat-grounded-reply-repair-service.js";
 import { evaluateReplyReview, approveReplyRemainder, verifiedReplyRemainder } from "./chat-reply-review-decision.js";
 import { buildReplyReviewMessages, buildReplyReviewFormat } from "./chat-reply-review-contracts.js";
@@ -326,6 +327,7 @@ export async function enforceReplyBoundary(options = {}) {
             : await assessLanguageQuality({ text: removeTtsControlTags(originalText),
               speechText: removeTtsControlTags(replyResult.speechText || originalText), retainedText: proposedRetained,
               userText, language: languageClarification?.targetCode || language, replyResult, logContext, timeoutMs: languageBudget,
+              sizingReviewContext: sizingRequired ? { productContext, searchIntent, character, trustedSite: options.trustedSite, sizingRequired } : null,
               languageClarification: languageClarification ? { ...languageClarification, configuredLanguage: language } : null });
           languageDiagnostics = { ...languageDiagnostics, primaryReviewStatus: primaryReviewRequired ? primaryStatus : "not_run",
             languageReviewStatus: languageAssessment.reviewStatus, languageSeverity: languageAssessment.severity,
@@ -479,22 +481,34 @@ export async function enforceReplyBoundary(options = {}) {
     languageDiagnostics = { ...languageDiagnostics, repairKind: "grounded",
       initialFailedContracts: failedContracts, repairSkipReason: undefined };
     const complaintCorrection = hasUnansweredOwnedComplaint(groundedRepairInput);
+    const ownedTextCorrection = ownedBusinessTextCorrectionContext(groundedRepairInput);
     const recovery = await recoverReviewedLanguageReply({ replyResult, assessment: languageAssessment, languageDiagnostics,
       language, userText, logContext, repairScope: productCorrection ? 'grounded_commerce' : complaintCorrection ? 'grounded_complaint' : '',
       repairTimeoutMs: productCorrection || complaintCorrection ? GROUNDED_COMMERCE_REPAIR_TIMEOUT_MS : REPLY_REPAIR_TIMEOUT_MS, repairLanguageReply: async input => {
         // Reuse the initial generation provider, parser and full context for
         // complaint text. Catalogue corrections retain their evidence protocol.
-        if (complaintCorrection && !options.repairGroundedReply) {
+        if ((complaintCorrection || ownedTextCorrection) && !options.repairGroundedReply) {
           if (typeof regenerateReply !== 'function') { input.recordDiagnostic('unavailable'); return null; }
+          if (ownedTextCorrection?.imageStatus) {
+            const current = await refreshAnchoredImageReplyContext(chatImageContext, refreshImageStatus);
+            if (!current) { input.recordDiagnostic('image_state_changed'); return null; }
+            chatImageContext = current;
+          }
           const fresh = await regenerateReply(replyResult, { kind: 'review', repairFeedback,
+            ...(ownedTextCorrection?.imageStatus ? { chatImageContext } : {}),
             timeoutMs: input.timeoutMs, recordDiagnostic: input.recordDiagnostic });
+          if (ownedTextCorrection?.imageStatus) {
+            const current = await refreshAnchoredImageReplyContext(chatImageContext, refreshImageStatus);
+            if (!current) { input.recordDiagnostic('image_state_changed'); return null; }
+            chatImageContext = current;
+          }
           return fresh?.sourceType === 'ai' && String(fresh.text || '').trim() && !isAiTransportFallback(fresh) ? fresh : null;
         }
         return (options.repairGroundedReply || repairGroundedCommerceReply)({ ...options, ...input,
           searchIntent, productContext, knowledgeContext, character, reviewResult: repairReviewResult, reviewStatus: repairReviewStatus, failedContracts: repairFailedContracts, retained, repairFeedback });
       },
       recordReview: complaintRepair ? event => recordReview({ ...event, complaintRepair: { state: event.guardApplied ? 'rejected' : 'accepted', reason: 'reviewed' } }) : recordReview, primaryReviewTimeoutMs: reviewTimeoutMs,
-      reviewCandidate: (candidate, reviewOptions) => enforceReplyBoundary({ ...options, replyResult: candidate, ...reviewOptions,
+      reviewCandidate: (candidate, reviewOptions) => enforceReplyBoundary({ ...options, replyResult: candidate, chatImageContext, ...reviewOptions,
         groundedRepairAttempted: true }),
     });
     if (recovery.terminal) return recovery.reply;

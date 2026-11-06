@@ -19,7 +19,7 @@ const product={id:'shirt',productId:'shirt',name:'Real Madrid Away Fan Jersey',s
 const state={version:1,status:'active',...loc,owner:'single',targetEvidence:'Real Madrid away shirt without printing',requirements:{requestedTeam:'Real Madrid',requestedProductType:'shirt',requestedPrinting:'none',requestedEdition:'fan',requestedFeatures:['short_sleeve'],requestedVariants:['away']},proposal:{status:'displayed',candidateId:'shirt',name:product.name,reply:'¿Es esta la camiseta que buscas?'}};
 const history=[{senderType:'character',characterId:loc.characterId,contentType:'product',product},{senderType:'character',characterId:loc.characterId,productCandidateState:state}];
 const userText='Sí, esa es la camiseta que quiero.';
-const raw={route:'product_search',confidence:.99,searchQuery:'Real Madrid shirt',needsLiveProductData:true,replyBoundary:{salesAllowed:true,contactAllowed:false},commerceConstraints:{team:null,edition:null},productRequest:{relation:'single',action:'new',items:[],selectedIndex:null,selectionEvidence:''},productRequirement:{action:'continue',evidence:userText,updates:[],suspectedTerm:null},candidateResponse:{action:'confirm',candidateId:'shirt',evidence:userText}};
+const raw={route:'product_question',confidence:.99,searchQuery:'Real Madrid shirt',needsLiveProductData:false,replyBoundary:{salesAllowed:true,contactAllowed:false},commerceConstraints:{team:null,edition:null},productRequest:{relation:'single',action:'new',items:[],selectedIndex:null,selectionEvidence:''},productRequirement:{action:'continue',evidence:userText,updates:[],suspectedTerm:null},candidateResponse:{action:'confirm',candidateId:'shirt',evidence:userText}};
 const jev={ok:true,confident:true,primaryIntent:'product_request',productIntent:'none',productAction:.7,webSearchIntent:false,imageIntent:'none',orderIntent:'none'};
 const classify=(value=raw,text=userText)=>normalizeCommerceDecision(value,{userText:text});
 async function route({text=userText,rows=history,decision=raw,primary=jev,location=loc}={}){return resolveCommerceSearchIntent({...location,userText:text,recentMessages:rows,searchIntent:buildProductSearchIntent(text),jevDecision:primary,classifyCommerce:async()=>classify(decision,text)})}
@@ -30,8 +30,11 @@ check(intent.productCandidateState.proposal.status==='confirmed'&&intent.request
 check(intent.replyBoundary.contactAllowed===false&&intent.primarySearchVerified===false,'metadata confirmation retains contact restrictions and does not claim search approval');
 check(commerceClassificationTimeout(userText,{...loc,recentMessages:history,jevDecision:jev})===40000,'trusted displayed confirmation uses the bounded candidate interpretation budget');
 const authorizedSearch=await route({primary:{...jev,productIntent:'search',productAction:1}});
-check(!authorizedSearch.candidateConfirmationOnly&&authorizedSearch.cardAllowed===true&&authorizedSearch.primarySearchVerified===true,'already authorized search retains its original card path rather than being suppressed by metadata confirmation');
-check((await route({primary:{...jev,productAction:.55}})).candidateConfirmationOnly===true,'metadata identity assent does not lower or reuse the new-search score threshold');
+check(authorizedSearch.candidateConfirmationOnly&&!authorizedSearch.cardAllowed,'Commerce pure confirmation stays read-only even when the primary redundant binary says search');
+const resendText='Sí, esa es la camiseta que quiero. Muéstramela otra vez.';
+const requestedResend=await route({text:resendText,decision:{...raw,route:'product_search',needsLiveProductData:true,productRequirement:{...raw.productRequirement,evidence:resendText}}});
+check(!requestedResend.candidateConfirmationOnly&&requestedResend.cardAllowed===true&&requestedResend.primarySearchVerified===true,'Commerce explicit show subtype retains authorized resend without relying on a second primary action vote');
+check((await route({primary:{...jev,productAction:.55}})).candidateConfirmationOnly===true,'metadata identity assent does not reuse the redundant primary binary score');
 const scopedItems=[{evidence:'Real Madrid away shirt without printing',sharedEvidence:'',text:'Real Madrid away shirt without printing'},
  {evidence:'Barcelona home shirt',sharedEvidence:'',text:'Barcelona home shirt'}];
 const scope={version:1,status:'selected',...loc,items:scopedItems,selectedIndex:0,clarificationCount:0};
@@ -97,9 +100,12 @@ const capturedRaw={route:'product_search',topic:'other',needsLiveProductData:tru
     {field:'requestedFeatures',value:['short_sleeve'],evidence:'manga corta'},
     {field:'requestedPrinting',value:'none',evidence:'sin nombre ni número'}],suspectedTerm:null},
   candidateResponse:{action:'confirm',evidence:'Sí, esa Fan es la que busco',candidateId:'709334'},confidence:.9};
-const capturedConfirmation=await route({text:capturedText,rows:capturedRows,decision:capturedRaw,primary:{...jev,productAction:.52}});
+// Keep the historical quotation/unchanged-condition evidence, but use the new
+// Commerce subtype contract for pure assent. The historical product_search
+// label was previously overridden only by the redundant primary action score.
+const capturedConfirmation=await route({text:capturedText,rows:capturedRows,decision:{...capturedRaw,route:'product_question',needsLiveProductData:false},primary:{...jev,productAction:.52}});
 check(capturedConfirmation.candidateConfirmationOnly===true&&capturedConfirmation.productCandidateState.proposal.status==='confirmed',
-  'Captured exact classifier output with unchanged conditions and overlapping edition assent completes the metadata-only route');
+  'Captured unchanged conditions and overlapping assent use the Commerce read-only confirmation subtype');
 check(capturedConfirmation.cardAllowed===false&&capturedConfirmation.shouldLoadProductContext===false,
   'Captured low-action assent does not grant a new search or another card');
 const changed=await route({text:'Sí, esa es. Ahora la quiero en manga larga.',decision:{...raw,productRequirement:{...raw.productRequirement,evidence:'Sí, esa es. Ahora la quiero en manga larga.',

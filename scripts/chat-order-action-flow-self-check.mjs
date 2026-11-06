@@ -39,6 +39,7 @@ async function runFlowChecks() {
     },
   };
   const stubs = {
+    "product-checkout-resolver-service.js": { resolveProductCheckoutProduct: () => { throw Error("flow fixture must not read product sources"); }, isSameResolvedProductIdentity: () => { throw Error("flow fixture must not resolve product identities"); } },
     "ai-json-provider-service.js": { isAiJsonProviderConfigured: () => false, requestAiJsonWithProviderFallback: async () => { throw new Error("unexpected secondary intent classifier"); } },
     "db.js": { getDbPool: () => ({ getConnection: async () => db }) },
     "db-core.js": { getDbPool: () => ({ getConnection: async () => db }) },
@@ -48,7 +49,7 @@ async function runFlowChecks() {
       assert.equal(options.snapshot, undefined, 'ordinary order fixtures must not register an image task');
       return '';
     } },
-    "chat-image-reply-recovery-service.js": { buildImageReplyRecoveryPrompt: () => { throw new Error("order flow must not regenerate image text"); } },
+    "chat-image-reply-recovery-service.js": { withCurrentImageReplyFact: () => { throw new Error("order flow must not refresh image text"); }, buildImageReplyRecoveryPrompt: () => { throw new Error("order flow must not regenerate image text"); } },
     "chat-intent-turn-service.js": { prepareChatIntentTurn: async () => ({ decision: { ok: true, confident: true, orderIntent: "lookup" }, classify: async () => { fixture.classifications++; fixture.events.push("order_classify"); return { ok: true, confident: true, orderIntent: "lookup", unsupported: false }; } }) },
     "ttmall-runtime-access-service.js": {
       resolveTtmallRuntimeAccess: async (slug) => { fixture.accessCalls++; fixture.events.push("order_resolve"); check(slug === "fixture", "order candidate uses the resolved current site"); return { mode: "ttmall", source: {} }; },
@@ -107,7 +108,7 @@ async function runFlowChecks() {
   };
   globalThis.__orderActionFlowStubs = stubs;
   stubs["guest-product-reply-copy.js"] = { buildGuestProductReplyCopy: () => "Unavailable." };
-  const realModules = new Set(["knowledge-evidence-projection.js", "business-knowledge-selection-service.js", "product-displayed-reference-service.js", "chat-reply-repair-feedback-service.js", "site-trust-safety-policy.js","chat-feedback-submission-service.js", "product-name-candidate-service.js", "guest-product-sanitizer.js", "product-source-provenance.js", "product-source-error-service.js","product-alternative-service.js", "product-search-match-service.js", "product-response-sanitizer.js","business-claim-audit-service.js", "tts-emotion-tag-service.js", "product-candidate-source-proof.js", "chat-reply-purpose-service.js", "chat-reply-recovery-state.js", "chat-language-clarification-policy.js", "chat-prompt-utils.js", "chat-reply-review-outcome.js", "product-sizing-guidance-service.js", "product-size-chart-catalog.js", "product-candidate-confirmation-service.js", "chat-product-routing-context-service.js", "product-requirement-fields.js", "commerce-classification-failure-service.js","product-search-decision-service.js", "product-request-scope-service.js", "product-candidate-state-service.js", "product-candidate-context-service.js", "product-attribute-evidence-service.js", "product-edition-service.js", "product-request-scope-service.js", "product-request-scope-copy.js", "chat-reply-orchestrator-service.js", "chat-text-message-service.js", "chat-order-intent-service.js", "checkout-support-guidance.js", "chat-global-reply-policy.js"]);
+  const realModules = new Set(["product-sizing-context-service.js", "product-candidate-reference-service.js", "chat-owned-business-correction-context.js", "knowledge-evidence-projection.js", "business-knowledge-selection-service.js", "product-displayed-reference-service.js", "chat-reply-repair-feedback-service.js", "site-trust-safety-policy.js","chat-feedback-submission-service.js", "product-name-candidate-service.js", "guest-product-sanitizer.js", "product-source-provenance.js", "product-source-error-service.js","product-alternative-service.js", "product-search-match-service.js", "product-response-sanitizer.js","business-claim-audit-service.js", "tts-emotion-tag-service.js", "product-candidate-source-proof.js", "chat-reply-purpose-service.js", "chat-reply-recovery-state.js", "chat-language-clarification-policy.js", "chat-prompt-utils.js", "chat-reply-review-outcome.js", "product-sizing-guidance-service.js", "product-size-chart-catalog.js", "product-candidate-confirmation-service.js", "chat-product-routing-context-service.js", "product-requirement-fields.js", "commerce-classification-failure-service.js","product-search-decision-service.js", "product-request-scope-service.js", "product-candidate-state-service.js", "product-candidate-context-service.js", "product-attribute-evidence-service.js", "product-edition-service.js", "product-request-scope-service.js", "product-request-scope-copy.js", "chat-reply-orchestrator-service.js", "chat-text-message-service.js", "chat-order-intent-service.js", "checkout-support-guidance.js", "chat-global-reply-policy.js"]);
   const serverUrl = new URL("../server/", import.meta.url).href;
   // Async loaders run in another thread. Transfer only serializable export
   // names; the generated modules read function stubs in the worker's realm.
@@ -121,7 +122,7 @@ async function runFlowChecks() {
     export async function resolve(specifier, context, nextResolve) {
       if (context.parentURL?.startsWith(serverUrl) && specifier.startsWith("./")) {
         const filename = specifier.slice(2);
-        if (filename === "product-intent-service.js" && (context.parentURL.endsWith("/product-candidate-confirmation-service.js") || context.parentURL.endsWith("/product-alternative-service.js") || context.parentURL.endsWith("/product-name-candidate-service.js") || context.parentURL.endsWith("/product-displayed-reference-service.js"))) return nextResolve(specifier, context);
+        if (filename === "product-intent-service.js" && (context.parentURL.endsWith("/product-sizing-context-service.js") || context.parentURL.endsWith("/product-candidate-confirmation-service.js") || context.parentURL.endsWith("/product-alternative-service.js") || context.parentURL.endsWith("/product-name-candidate-service.js") || context.parentURL.endsWith("/product-displayed-reference-service.js"))) return nextResolve(specifier, context);
         if (!realModules.has(filename)) {
           if (!stubExportNames[filename]) throw new Error("Unmocked server dependency: " + filename);
           return { url: "order-flow:" + filename, shortCircuit: true };

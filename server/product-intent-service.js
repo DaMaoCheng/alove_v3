@@ -764,6 +764,20 @@ export function extractRequirementClearFields(text = "") {
   return [...new Set(fields)];
 }
 
+// Literal USER season options shared with the JEV adapter. This normalizes
+// spelling only; a single year never silently becomes an inferred full season.
+export function extractExplicitProductSeasons(text = "") {
+  const seasons = [];
+  for (const match of String(text).matchAll(/\b((?:19|20)\d{2})(?:\s*[/\-–—~～]\s*((?:19|20)\d{2}|\d{2}))?\b/g)) {
+    const start = Number(match[1]);
+    const end = match[2] ? normalizeSeasonYear(match[2], start) : 0;
+    if (match[2] && !(end > start && end <= start + 2)) continue;
+    const value = end > start && end <= start + 2 ? `${start}/${String(end).slice(-2)}` : match[1];
+    if (!seasons.includes(value)) seasons.push(value);
+  }
+  return seasons;
+}
+
 function extractRequestedSeason(text = "", { requestedTeam = "" } = {}) {
   const value = safeString(text).toLowerCase();
   if (!value) return "";
@@ -833,7 +847,7 @@ function extractRequestedKeywords(text = "", {
     .filter((token) => !ignored.has(token)))].slice(0, 6);
 }
 
-export function extractRequestedSizes(text = "") {
+export function extractRequestedSizes(text = "", { catalogueEvidence = false } = {}) {
   const raw = safeString(text);
   if (!raw) return [];
   const hasSizingCue = SIZE_PATTERNS.some((pattern) => pattern.test(raw));
@@ -842,6 +856,13 @@ export function extractRequestedSizes(text = "") {
     const normalized = normalizeRequestedSize(value);
     if (normalized && !sizes.includes(normalized)) sizes.push(normalized);
   };
+  // JEV has already identified this exact USER span as garment-size evidence.
+  // Read all supported labels, including parallel alternatives, without needing
+  // language-specific copulas. Ordinary text retains its stricter cue checks.
+  if (catalogueEvidence) {
+    const labels = new RegExp(`(?<![\\p{L}\\p{N}])(?:${CHILD_PRODUCT_SIZE_LABELS.join('|')})(?![\\p{L}\\p{N}])`, 'gu');
+    for (const match of raw.matchAll(labels)) add(match[0]);
+  }
   // Numeric child sizes require an explicit size cue; a shirt number, year,
   // age, height or weight alone never becomes a catalogue size.
   const childSizePattern = new RegExp(`(?:\\b(?:size|talla|beden|méret|meret)\\b|尺码|尺寸)\\s*[:#-]?\\s*(${CHILD_PRODUCT_SIZE_LABELS.join('|')})(?![\\p{L}\\p{N}])`, 'giu');

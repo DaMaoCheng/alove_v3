@@ -9,6 +9,7 @@ import { formatTrustedProductSizingFacts } from "./product-sizing-context-servic
 import { resolveOrderActionPromptState } from "./chat-global-reply-policy.js";
 import { mapPromptMessage, normalizeCharacter, normalizeSummaryRow, parseJsonArray, parseJsonObject, parseJsonValue, safeString, buildTrustedCharacterIdentity, TRUSTED_IDENTITY_CONTRACT } from "./chat-prompt-utils.js";
 import { productClarificationContext } from "./chat-reply-purpose-service.js";
+import { toCandidateAttributeReplyContext, CANDIDATE_ATTRIBUTE_REFERENCE_CONTRACT } from './product-candidate-reference-service.js';
 import { DISCOUNT_OFFER_MENTION_DIRECTIVE } from "./chat-discount-offer-output-policy.js";
 
 export {
@@ -258,6 +259,9 @@ export function buildVoiceLayer(character) {
 
 export function buildProductContextLayer(character, productContext = null, userText = "") {
   if (!canCharacterSendProductContext(character)) return { id: "site_product_context", title: "Site Product Context", content: "" };
+  const candidateAttributeContext = toCandidateAttributeReplyContext(productContext, { characterId: character.id });
+  if (candidateAttributeContext) return { id: 'site_product_context', title: 'Existing Candidate Attributes',
+    content: CANDIDATE_ATTRIBUTE_REFERENCE_CONTRACT + '\n' + JSON.stringify(candidateAttributeContext) };
   const products = Array.isArray(productContext?.products) ? productContext.products.slice(0, 5) : [];
   const searchIntent = productContext?.searchIntent || {};
   const productCardDelivery = buildProductCardDeliveryContext(productContext);

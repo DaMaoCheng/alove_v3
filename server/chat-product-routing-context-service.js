@@ -9,7 +9,7 @@ const scalarRules = {
   requestedProductType: value => PRODUCT_REQUIREMENT_SCALAR_VALUES.requestedProductType.includes(value) ? value : '',
   requestedAudience: value => PRODUCT_REQUIREMENT_SCALAR_VALUES.requestedAudience.includes(value) ? value : '',
   requestedColor: value => PRODUCT_REQUIREMENT_SCALAR_VALUES.requestedColor.includes(value) ? value : '',
-  requestedSeason: value => /^\d{4}\/\d{2}$/.test(text(value, 7)) ? value : '',
+  requestedSeason: value => /^\d{4}(?:\/\d{2})?$/.test(text(value, 7)) ? text(value, 7) : '',
   requestedEdition: value => PRODUCT_REQUIREMENT_SCALAR_VALUES.requestedEdition.includes(value) ? value : '',
   requestedPrinting: value => PRODUCT_REQUIREMENT_SCALAR_VALUES.requestedPrinting.includes(value) ? value : '',
 };

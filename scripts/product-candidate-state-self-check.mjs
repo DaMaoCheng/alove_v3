@@ -303,7 +303,15 @@ for (const deniedDecision of [
 }
 const deniedPrimary = await resolveCommerceSearchIntent({ ...location, userText: text, searchIntent: buildProductSearchIntent(text),
   classifyCommerce: async () => encodedRequirement, jevDecision: { ...jev, productAction: .5 } });
-assert.notEqual(deniedPrimary.candidateSearchAllowed, true);
+// A primary product lane plus the validated Commerce search subtype owns this
+// current target. The former redundant binary score is no longer a veto.
+assert.equal(deniedPrimary.candidateSearchAllowed, true);
+for (const primaryIntent of ['daily_chat', 'character_photo', 'new_image', 'order_lookup', 'unsupported_request']) {
+  const closedLane = await resolveCommerceSearchIntent({ ...location, userText: text, searchIntent: buildProductSearchIntent(text),
+    classifyCommerce: async () => encodedRequirement, jevDecision: { ...jev, primaryIntent, productIntent: 'none', productAction: 0 } });
+  assert.notEqual(closedLane.candidateSearchAllowed, true, 'Commerce cannot reopen a non-product primary lane');
+  assert.equal(closedLane.cardAllowed, false);
+}
 const freshAfterOld = await resolveCommerceSearchIntent({ ...location, userText: text, searchIntent: buildProductSearchIntent(text),
   recentMessages: [{ senderType: 'character', productCandidateState: { ...displayed, requirements: { ...displayed.requirements,
     requestedTeam: 'Barcelona', requestedAudience: 'kids', requestedSizes: ['XL'], requestedPrinting: 'printed', requestedPrintNumber: '5' } } }],

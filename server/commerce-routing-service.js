@@ -1,4 +1,4 @@
-import { isGeneralCommerceExplanation, GENERAL_COMMERCE_EXPLANATION_CONTRACT } from "./business-claim-audit-service.js";
+import { isGeneralCommerceExplanation, hasGeneralCommerceDefinitionPermission, GENERAL_COMMERCE_EXPLANATION_CONTRACT } from "./business-claim-audit-service.js";
 import { SITE_TRUST_SAFETY_CONTRACT } from "./site-trust-safety-policy.js";
 import { nameCandidateIdentityContext } from './product-name-candidate-service.js';
 import { resolveDisplayedProductReferences } from './product-displayed-reference-service.js';
@@ -6,31 +6,42 @@ import { applyProductRequestScope, readProductRequestState, normalizeProductRequ
 import { buildClosedProductClarificationContext, buildProductClarificationContext, productClarificationContext, PRODUCT_CLARIFICATION_CONTRACT } from "./chat-reply-purpose-service.js";
 import { buildProductSearchIntent, normalizeLooseText, extractRequirementClearFields } from "./product-intent-service.js";
 import { extractProductHandle } from "./product-search-match-service.js";
-import { classifyCommerceIntent, normalizeCommerceAssistance, normalizeCommerceKnowledgeRequest, normalizePolicyKnowledgeRequest } from "./product-intent-classifier-service.js";
+import { classifyCommerceIntent, normalizeCommerceAssistance, normalizeCommerceKnowledgeRequest, normalizePolicyKnowledgeRequest, normalizeGeneralExplanationRequest } from "./product-intent-classifier-service.js";
+import { resolveProductSearchReadiness } from './product-search-decision-service.js';
 import { normalizeCommerceConstraints } from "./product-edition-service.js";
 import { applyProductCandidateState, clearProductCandidateState, readProductCandidateState, parseCurrentProductRequirement, normalizeProductRequirementDecision } from "./product-candidate-state-service.js";
 import { applyRequestedProductEdition } from "./product-edition-service.js";
 import { buildChatProductRoutingContext } from "./chat-product-routing-context-service.js";
 import { pendingDisplayedCandidate, resolveCandidateConfirmationIntent } from './product-candidate-confirmation-service.js';
+import { preserveCandidateAttributeReference, isCandidateAttributeQuestion, hasDisplayedSizingUpdateReference, preserveCandidateSizingUpdate } from './product-candidate-reference-service.js';
 import { SIZING_CONVERSATION_CONTRACT, buildChildProductSizingContext, CHILD_PRODUCT_SIZING_CONTRACT } from './product-sizing-guidance-service.js';
 
 function reconcileCatalogueContinuation(decision, { userText, recentMessages, siteId, characterId, jevDecision, searchIntent, current }) {
+  // A same-candidate attribute question is already a read-only Commerce type.
+  // A requested printing change must not turn it into a fresh recommendation.
+  if (isCandidateAttributeQuestion(decision,{recentMessages,siteId,characterId})) return decision;
   const prior = readProductCandidateState(recentMessages, { siteId, characterId });
   const sizeUpdates = decision.productRequirement?.updates || [];
   const sizingAct = normalizeCommerceKnowledgeRequest(decision.knowledgeRequest, { userText, recentMessages })?.kind;
-  // Supplying a requested child size refines USER state; it is neither a new
-  // catalogue action nor abandonment when the primary correctly grants none.
-  if (['product_search','product_question'].includes(decision.route) && decision.topic === 'sizing' && (decision.declaredLiveProductData === false || sizingAct === 'sizing_update')
+  // The independent Commerce type distinguishes supplying a size from asking
+  // for a chart/new search. A coarse primary action or an unconfirmed candidate
+  // cannot turn this USER-only update into a new lookup or identity assent.
+  if (['product_search','product_question'].includes(decision.route) && decision.topic === 'sizing' && decision.declaredLiveProductData === false && sizingAct === 'sizing_update'
     && decision.productRequirement?.action === 'continue' && sizeUpdates.length > 0
     && sizeUpdates.every(update => update.field === 'requestedSizes')
-    && prior?.status === 'active' && prior.owner === 'single' && prior.requirements.requestedAudience === 'kids' && !prior.proposal
+    && decision.productRequest?.relation==='single' && decision.productRequest?.action==='new'
+    && prior?.status === 'active' && prior.owner === 'single' && prior.requirements.requestedAudience === 'kids'
+    && (!prior.proposal || hasDisplayedSizingUpdateReference({recentMessages,siteId,characterId}))
+    && !hasPendingProductRequest(searchIntent)
+    && !['pending','selected'].includes(readProductRequestState(recentMessages,{siteId,characterId})?.status)
+    && decision.policyKnowledgeRequest?.required!==true
+    && !decision.businessInquiry && !decision.humanHandoff && !decision.promotionInquiry && !decision.checkoutIssue
     && decision.replyBoundary?.salesAllowed !== false && jevDecision?.ok === true && !jevDecision.unsupported
     && ['daily_chat','product_request'].includes(jevDecision.primaryIntent)
     && (!jevDecision.imageIntent || jevDecision.imageIntent === 'none') && (!jevDecision.orderIntent || jevDecision.orderIntent === 'none')
-    && !jevDecision.webSearchIntent && !searchIntent.nonShoppingReason
-    && !(jevDecision.productIntent === 'search' && Number(jevDecision.productAction) === 1)) {
+    && !jevDecision.webSearchIntent && !searchIntent.nonShoppingReason) {
     return { ...decision, route: 'product_question', needsLiveProductData: false,
-      childSizingUpdateOnly: ['catalogue_only','sizing_update'].includes(sizingAct) };
+      childSizingUpdateOnly: true };
   }
   const action = jevDecision?.productAction;
   if (!['store_policy', 'product_question'].includes(decision.route) || decision.declaredLiveProductData !== true
@@ -130,12 +141,16 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
     const { policyKnowledgeRequest: ignoredPolicy, ...currentIntent } = searchIntent;
     searchIntent = currentIntent;
   }
+  if (Object.hasOwn(searchIntent, 'generalExplanationRequest')) {
+    const { generalExplanationRequest: ignoredExplanation, ...currentIntent } = searchIntent;
+    searchIntent = currentIntent;
+  }
   if (Object.hasOwn(searchIntent, 'businessKnowledgeRequired')) {
     const { businessKnowledgeRequired: ignoredKnowledge, ...currentIntent } = searchIntent;
     searchIntent = currentIntent;
   }
   // Group identities belong to this decision, never a carried previous turn.
-  searchIntent = { ...searchIntent, referencedProductIds: [] };
+  searchIntent = { ...searchIntent, referencedProductIds: [], candidateAttributeReadOnly: false };
   if (!enrichAllTurns && (explicitTrigger || (searchIntent.nonShoppingReason && searchIntent.nonShoppingReason !== "business_contact"))) return searchIntent;
   let decision;
   try { decision = classifyCommerce ? await classifyCommerce(userText, { recentMessages, siteId, characterId, jevDecision, logContext }) : null; } catch { decision = { commerceClassificationFailure: "provider" }; }
@@ -213,13 +228,17 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
   }
   const actionVerified = jevDecision?.productAction === undefined
     || Number(jevDecision.productAction) === 1;
-  // Legacy JEV fallbacks may omit the score, but must still explicitly permit
-  // search. A primary label alone cannot bypass an explicit no-action choice.
-  const primaryAllowsSearch = ["product_request", "try_on"].includes(jevDecision?.primaryIntent)
-    && jevDecision.productIntent === "search" && actionVerified
+  // The primary product lane is already a semantic choice. Commerce selects
+  // search versus read-only question without a redundant binary action veto.
+  // A try-on still needs its independently requested catalogue action.
+  const primaryAllowsSearch = (jevDecision?.primaryIntent === 'product_request'
+    || jevDecision?.primaryIntent === 'try_on' && jevDecision.productIntent === 'search' && actionVerified)
     && !(jevDecision.unsupported && jevDecision.unsupportedIntent === "product_request");
   const primaryBlocksSearch = Boolean(jevDecision?.ok && jevDecision.confident && jevDecision.primaryIntent && !primaryAllowsSearch);
-  const currentRequirement = parseCurrentProductRequirement(userText);
+  const currentRequirement = { ...parseCurrentProductRequirement(userText),
+    // The current JEV subtype already distinguishes asking an attribute from
+    // requesting a revision. Lexical mentions must not create new conditions.
+    typedUpdatesOnly: isCandidateAttributeQuestion(decision,{recentMessages,siteId,characterId}) };
   // A genuine name-only assent to this displayed different-model candidate
   // may narrow a coarse primary search vote to a read-only source confirmation.
   // The existing resolver still rejects changed requirements and other actions.
@@ -228,7 +247,11 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
     && normalizeCommerceKnowledgeRequest(decision.knowledgeRequest, { userText, recentMessages })?.kind === 'catalogue_only'
     && !searchIntent.customerServiceKnowledgeRequest
     && nameCandidateIdentityContext(pendingDisplayedCandidate({ recentMessages, siteId, characterId }));
-  const confirmation = (primaryBlocksSearch || nameReferenceAssent) && resolveCandidateConfirmationIntent(searchIntent, decision, { userText, recentMessages, siteId, siteSlug, characterId, jevDecision, currentRequirement });
+  const readOnlyCandidateAssent = decision.route === 'product_question' && decision.topic === 'other'
+    && decision.declaredLiveProductData === false && decision.policyKnowledgeRequest?.required !== true
+    && [undefined, 'catalogue_only'].includes(normalizeCommerceKnowledgeRequest(decision.knowledgeRequest, { userText, recentMessages })?.kind);
+  const confirmation = (primaryBlocksSearch || readOnlyCandidateAssent || nameReferenceAssent)
+    && resolveCandidateConfirmationIntent(searchIntent, decision, { userText, recentMessages, siteId, siteSlug, characterId, jevDecision, currentRequirement });
   if (confirmation) return confirmation;
   decision = reconcileCatalogueContinuation(decision, { userText, recentMessages, siteId, characterId, jevDecision, searchIntent, current: currentRequirement });
   const assistance = normalizeCommerceAssistance(decision, { userText, recentMessages });
@@ -262,6 +285,8 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
   const answerRequired = Boolean(assistance.businessInquiry || assistance.humanHandoff || assistance.promotionInquiry || assistance.checkoutIssue) || decision.answerRequired === true || ["store_policy", "product_question"].includes(decision.route);
   const policyKnowledgeRequest = decision.detectionSource === 'jev' && jevDecision?.ok === true
     ? normalizePolicyKnowledgeRequest(decision.policyKnowledgeRequest, { userText, recentMessages }) : null;
+  const generalExplanationRequest = decision.detectionSource === 'jev' && jevDecision?.ok === true
+    ? normalizeGeneralExplanationRequest(decision.generalExplanationRequest, { userText }) : null;
   const knowledgeScope = policyKnowledgeRequest?.required === true || conceptAndPolicy || assistance.businessInquiry || assistance.humanHandoff || assistance.promotionInquiry || assistance.checkoutIssue || decision.knowledgeScope === "business" || ["product_search", "product_question", "store_policy"].includes(decision.route) ? "business" : "general";
   const catalogueOnly = decision.boundaryVerified === true
     && decision.route === 'product_search' && decision.topic === 'other'
@@ -324,7 +349,8 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
     referencedProductIds: [],
     replyTopicHint: "", replyClarificationContext: null,
     commerceTopic: assistance.humanHandoff?.reviewReason === "size_exchange" && decision.topic === "sizing" ? "returns" : decision.topic,
-    generalTermExplanation: Boolean(generalTermExplanation),
+    generalTermExplanation: generalExplanationRequest ? generalExplanationRequest.required : Boolean(generalTermExplanation),
+    ...(generalExplanationRequest ? { generalExplanationRequest: { ...generalExplanationRequest, source: 'jev' } } : {}),
     orderAndPolicy: Boolean(orderAndPolicy),
     pureStorePolicy: Boolean(pureStorePolicy),
     conceptAndPolicy: Boolean(conceptAndPolicy),
@@ -478,6 +504,20 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
       candidateIntent.productCandidateState = prior;
     }
   }
+  // Query text is a retrieval hint, never the final USER requirements. Recheck
+  // readiness after validated deltas and scope application, without reopening a
+  // closed owner, source failure or exhausted clarification budget.
+  if (candidateIntent.commerceRoute === 'product_search' && candidateIntent.shouldLoadProductContext === true
+    && !candidateIntent.productCandidateInterpretationUnverified && !candidateIntent.scopeUnverified
+    && !candidateIntent.productScopePending && !candidateIntent.teamConstraintUnverified
+    && !candidateIntent.unresolvedProductReference
+    && !['source_error', 'clarification_exhausted'].includes(candidateIntent.searchState)) {
+    candidateIntent.searchState = resolveProductSearchReadiness(candidateIntent);
+  }
+  const candidateSizingUpdate=preserveCandidateSizingUpdate(candidateIntent,{siteId,siteSlug,characterId,recentMessages});
+  if (candidateSizingUpdate) return candidateSizingUpdate;
+  const candidateAttributeReference = preserveCandidateAttributeReference(candidateIntent, decision, { siteId, characterId, recentMessages });
+  if (candidateAttributeReference) return candidateAttributeReference;
   return candidateIntent.productCandidateInterpretationUnverified
     ? unavailableProductInterpretation(candidateIntent, "missing_fields", { recentMessages, siteId, characterId }) : candidateIntent;
 }
@@ -485,17 +525,19 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
 // This layer only applies to semantically identified product/store questions.
 export function applyCommerceQuestionPromptPolicy(promptContext = {}, searchIntent = {}, sizingOptions = {}) {
   const childProductSizingContext = buildChildProductSizingContext({ ...sizingOptions, searchIntent });
+  const explainGeneralProcess = isGeneralCommerceExplanation(searchIntent)
+    || hasGeneralCommerceDefinitionPermission({ ...sizingOptions, searchIntent });
   const tentativeSizing = searchIntent.replyTopicHint === "sizing";
   const clarification = productClarificationContext(searchIntent);
   if (clarification) {
     const layer = { id: "commerce_clarification", title: "Merchandise Clarification", content:
-      `${PRODUCT_CLARIFICATION_CONTRACT}\nUSER context: ${JSON.stringify(clarification)}` };
+      `${PRODUCT_CLARIFICATION_CONTRACT}\n${explainGeneralProcess ? GENERAL_COMMERCE_EXPLANATION_CONTRACT : ''}\nUSER context: ${JSON.stringify(clarification)}` };
     return { ...promptContext, systemPrompt: `${String(promptContext.systemPrompt || "").trim()}\n\n## ${layer.title}\n${layer.content}`,
       layers: [...(Array.isArray(promptContext.layers) ? promptContext.layers : []), layer] };
   }
   if (!searchIntent.answerRequired && !["product_question", "store_policy"].includes(searchIntent.commerceRoute) && !tentativeSizing && !childProductSizingContext && searchIntent.businessKnowledgeRequired !== false) return promptContext;
   const content = [
-    isGeneralCommerceExplanation(searchIntent) || searchIntent.conceptAndPolicy === true ? GENERAL_COMMERCE_EXPLANATION_CONTRACT : '',
+    explainGeneralProcess ? GENERAL_COMMERCE_EXPLANATION_CONTRACT : '',
     searchIntent.siteTrustOnly === true ? "The USER asks whether the current store is legitimate or safe to buy from. Distinguish the accessible AI chat platform and character from the associated store or merchant: this chat being accessible or the AI role existing cannot establish the store identity, registration, legitimacy, payment security, fulfilment, reviews or fraud risk. Answer the actual store-trust question. Use only current verified store-specific evidence for such claims; otherwise acknowledge uncertainty and offer general independent checks without asserting those checks have passed. Do not guarantee safety or infer fraud. " + SITE_TRUST_SAFETY_CONTRACT : "",
     childProductSizingContext ? `${CHILD_PRODUCT_SIZING_CONTRACT}\n${JSON.stringify({ childProductSizingContext })}` : "",
     searchIntent.childSizingUpdateOnly ? "This turn only supplies requested USER sizing information. Acknowledge it without a new search, stock claim, chart measurements or new question. Retain the original merchandise requirements; no alternative has been accepted merely by supplying a size." : searchIntent.catalogueOnlyKnowledge === true ? "This is solely a catalogue lookup, not an independent store-policy question. Acknowledge the USER's requirements as their request, never as verified attributes or availability. Use only the actual supplied search outcome and catalogue evidence; no knowledge search was requested." : "",

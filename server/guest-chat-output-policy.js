@@ -45,21 +45,17 @@ export function applyGuestProductClarificationPromptPolicy(promptContext = {}, {
     ? `A high-confidence spelling suggestion is pending: ${searchIntent.correctionSuggestion.correctedText}. Ask only whether the user means that phrase; do not search until the user confirms.`
     : "";
   const exhausted = searchIntent?.searchState === "clarification_exhausted";
-  const outputToken = exhausted
-    ? "[guest_product_clarification_exhausted:TONE]"
-    : "[guest_product_clarification:TONE]";
   const policy = [
-    "No live product was confirmed by the trusted product source for this request.",
+    "No live product was confirmed for this request. Pending clarification does not mean a catalogue search was performed or that no match exists.",
     "Choose the tone that best matches the active character: warm, playful, direct, or encouraging.",
     exhausted
       ? "The request has already used the maximum two clarification attempts. Do not ask another question."
       : "Ask exactly one concise question for the single most useful missing product detail.",
-    `Follow the required Reply Output Contract JSON format, but set both displayText and speechText to exactly this internal token: ${outputToken}.`,
-    "Do not put any other words or expressive tags in displayText or speechText.",
-    "TONE must be one of warm, playful, direct, or encouraging.",
+    "Follow the required Reply Output Contract JSON format. Write a natural user-visible clarification in the active language and character voice in displayText and speechText; never emit internal control tokens.",
     criteriaLine,
     exhausted ? "" : correctionLine,
-    "Do not write the user-visible reply and do not include any product, price, stock, size availability, URL, checkout, shipping, discount, API, database, search-system, or tool claim.",
+    "This restriction concerns only the unconfirmed merchandise. Preserve answers to independent questions in the same turn when supported by their supplied evidence; do not replace a supported policy or order-entry answer with a product clarification.",
+    "Do not invent a product, price, stock, size availability, URL or action, or expose API, database, search-system or tool details.",
   ].join("\n");
   return {
     ...promptContext,

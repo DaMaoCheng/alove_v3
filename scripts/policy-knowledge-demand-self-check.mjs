@@ -44,7 +44,8 @@ const chat=await resolveCommerceSearchIntent({userText:chatText,enrichAllTurns:t
 assert.equal(resolveCommerceKnowledgeScope(chat),'none');assert.equal(chat.knowledgeScope,'general');
 // New intent selections have no confidence threshold; evidence is a server-owned
 // literal choice. All questions fit in the original one ordinary admission call.
-const packet=buildCommerceJevPacket('How long is processing?');assert.equal(Object.keys(packet.questions).length,32);
+const packet=buildCommerceJevPacket('How long is processing?');assert.equal(Object.keys(packet.questions).length,34);
+assert(packet.questions.general_explanation_kind && packet.questions.general_explanation_evidence);
 let calls=0;
 const result=await resolveJevCommerceDecision('How long is processing?',{evaluate:async({questions})=>{calls++;const answers={};
 for(const [key,q] of Object.entries(questions)){let choice=key==='route'?'store_policy':key==='knowledge_scope'?'business':key==='policy_required'?'yes':key==='policy_evidence'?'e0':key==='query_source'?'current':q.criteria.none?'none':q.criteria.no?'no':q.criteria.absent?'absent':Object.keys(q.criteria)[0];answers[key]={choice,confidence:.1};}

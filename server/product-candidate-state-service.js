@@ -140,7 +140,7 @@ function normalizeTargetTransition(delta, previous, decision, current, { sameOwn
 
 function reviseRequirements(base, delta, current) {
   const next = requirements(base);
-  if (delta.action === 'continue') {
+  if (delta.action === 'continue' && !current.typedUpdatesOnly) {
     for (const field of ['requestedPrintNumber', 'customizationRequest', 'requestedAgeRange', 'requestedSizeProfile']) {
       if (current[field]) next[field] = current[field];
     }
@@ -168,7 +168,7 @@ function reviseRequirements(base, delta, current) {
     else next[update.field] = update.value;
     if (update.field === 'requestedEdition') next.requestedFeatures = next.requestedFeatures.filter(feature => !['authentic', 'fan_version'].includes(feature));
   }
-  if (current.sleeves.length === 1 && !current.clearFields.includes('requestedFeatures')
+  if (!current.typedUpdatesOnly && current.sleeves.length === 1 && !current.clearFields.includes('requestedFeatures')
     && !delta.updates.some(update => update.field === 'requestedFeatures')) {
     next.requestedFeatures = [...next.requestedFeatures.filter(feature => !PRODUCT_REQUIREMENT_ARRAY_VALUES.requestedFeatures.includes(feature)), ...current.sleeves];
   }

@@ -91,20 +91,32 @@ for (const isGuest of [true, false]) {
     : await buildChatProductRecommendationContext(db, { ...options, character, fetchProducts: blocked('search'), searchCache: blocked('cache') });
   check(context?.searchOutcome === 'needs_clarification' && context.searchIntent.scopeUnverified === true, 'a confident shopping response without the new request contract is still unverified');
 }
-for (const precomputed of [true, false]) {
+// A precomputed rejection is final. Otherwise the primary product channel
+// delegates search/question selection to Commerce; its old binary score is not
+// a second veto and the legacy product classifier cannot reopen either result.
+for (const mode of ['precomputed_denial','commerce_search','commerce_question','unsupported_product']) {
   let legacyCalls = 0;
   let sourceReads = 0;
   const deniedIntent = { ...buildProductSearchIntent('Chelsea shirt'), shouldLoadProductContext: false, cardAllowed: false, commerceRoute: 'product_search' };
-  const denied = await resolveGuestProductRecommendation(db, {
+  const output = await resolveGuestProductRecommendation(db, {
     guest, userText: 'Chelsea shirt', recentMessages: [],
-    ...(precomputed ? { precomputedSearchIntent: deniedIntent } : {
-      intentTurn: { decision: { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'none', productAction: .4 } },
-      classifyCommerce: async () => ({ confident: true, confidence: .99, route: 'product_search', searchQuery: 'Chelsea shirt', productRequest: { relation: 'single', action: 'new', items: [], selectedIndex: null, selectionEvidence: '' }, replyBoundary: { salesAllowed: true, contactAllowed: true } }),
+    ...(mode === 'precomputed_denial' ? { precomputedSearchIntent: deniedIntent } : {
+      intentTurn: { decision: { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'none', productAction: .4,
+        ...(mode === 'unsupported_product' ? {unsupported:true,unsupportedIntent:'product_request'} : {}) } },
+      classifyCommerce: async () => ({ confident: true, confidence: .99, route: mode === 'commerce_question' ? 'product_question' : 'product_search',
+        needsLiveProductData: mode !== 'commerce_question', answerRequired: true, searchQuery: 'Chelsea shirt',
+        productRequest: { relation: 'single', action: 'new', items: [], selectedIndex: null, selectionEvidence: '' }, replyBoundary: { salesAllowed: true, contactAllowed: true } }),
     }),
     classifyIntent: async () => { legacyCalls++; return { isProductRequest: true }; },
     searchProducts: async () => { sourceReads++; return { items: [oldProduct] }; },
   });
-  check(sourceReads === 0 && !denied.context?.products?.length, 'an existing commerce/JEV denial cannot be reopened into a catalogue read or card');
+  if (mode === 'commerce_search') {
+    check(sourceReads === 1 && output.searchIntent.shouldLoadProductContext === true && output.searchIntent.cardAllowed === true && output.searchIntent.primarySearchBlocked === false,
+      'the primary product channel delegates an actual search to the Commerce subtype despite the old binary score');
+  } else {
+    check(sourceReads === 0 && !output.context?.products?.length,
+      'a precomputed denial, no-live Commerce question or unsupported product capability cannot be reopened into a catalogue read or card');
+  }
   check(legacyCalls === 0, 'the legacy product classifier cannot override a resolved or precomputed decision');
 }
 console.log(`Product scope producer self-check passed (${checks} assertions; mock DB/source, no external calls)`);

@@ -215,24 +215,32 @@ await test('Valid low-score sizing URL cannot authorize an unverified product or
   assess:async()=>({...passed,allowed:false,productScopeSupported:false})});
  assert(!out.text.includes('OLD_UNAPPROVED'));assert.equal(out.speechText,out.text);
 });
-const {isClosedProductClarification}=await import('../server/chat-reply-purpose-service.js');
+const {isClosedProductClarification,buildClosedProductClarificationContext}=await import('../server/chat-reply-purpose-service.js');
 const {buildProductClarificationFallbackReply}=await import('../server/product-request-scope-copy.js');
 const closedText='I would like some shirts';
-const closedJev={ok:true,confident:true,primaryIntent:'product_request',productIntent:'none',productAction:.53,imageIntent:'none',orderIntent:'none',webSearchIntent:false,unsupported:false};
+const closedJev={ok:true,confident:true,primaryIntent:'product_request',productIntent:'none',productAction:0,imageIntent:'none',orderIntent:'none',webSearchIntent:false,unsupported:false};
 const closedDecision={route:'product_search',topic:'other',confidence:.85,answerRequired:true,needsLiveProductData:false,
  replyBoundary:{salesAllowed:true,contactAllowed:true},productRequest:{relation:'single',action:'new',items:[],selectedIndex:null,selectionEvidence:''},
  productRequirement:{action:'new',evidence:closedText,updates:[{field:'requestedProductType',value:'shirt',evidence:'shirts'}],suspectedTerm:null,priorTargetEvidence:''},
  candidateResponse:{action:'none',evidence:'',candidateId:''}};
 async function closedFixture({decision={},jev={},intent={},recentMessages=[]}={}){
  const normalized=normalizeCommerceDecision({...closedDecision,...decision},{userText:closedText,requireBoundaryVerdict:true});
- const resolved=await resolveCommerceSearchIntent({userText:closedText,searchIntent:{...buildProductSearchIntent(closedText),...intent},enrichAllTurns:true,
-  recentMessages,jevDecision:{...closedJev,...jev},classifyCommerce:async()=>normalized});
+ // Exercise the existing server-owned closed-purpose factory explicitly.
+ // The selected product lane no longer closes merely from productAction=0.
+ const resolved={...buildProductSearchIntent(closedText),commerceRoute:normalized.route,commerceTopic:normalized.topic,
+  knowledgeScope:'business',primarySearchBlocked:true,primarySearchVerified:false,shouldLoadProductContext:false,cardAllowed:false,
+  replyBoundary:normalized.replyBoundary,replyBoundaryReason:'',replyClarificationContext:null,...intent};
+ const context=buildClosedProductClarificationContext({decision:normalized,jevDecision:{...closedJev,...jev},
+  searchIntent:resolved,userText:closedText,recentMessages,hasRetainedProduct:Boolean(intent.productCandidateState?.status==='active'
+   || ['pending','selected'].includes(intent.productRequestState?.status))});
+ resolved.replyClarificationContext=context;
+ resolved.replyBoundaryReason=context?'product_action_closed':'';
  return {...options,userText:closedText,searchIntent:resolved,language:'en',groundedRepairAttempted:true,
   knowledgeContext:{ok:true,customerServiceIntent:true,strategy:'business_no_relevant_section',items:[]},
   replyResult:{sourceType:'ai',text:'OLD_UNAPPROVED: I found your item in stock.',speechText:'OLD_UNAPPROVED: I found your item in stock.'},
   assess:async()=>({...passed,allowed:false,evidenceSupported:false,businessFactsSupported:false})};
 }
-await test('A current pure category request with closed actions gets a useful final clarification',async()=>{
+await test('An explicitly server-closed category purpose gets a useful final clarification',async()=>{
  const input=await closedFixture();assert(isClosedProductClarification(input));
  const output=await enforceReplyBoundary(input);
  assert.equal(output.text,buildProductClarificationFallbackReply('en'));assert.equal(output.speechText,output.text);
@@ -247,7 +255,7 @@ await test('Accepted contextual display and tagged speech remain unchanged',asyn
  // This boundary already normalizes speech; the new path must not substitute a fixed question.
  assert(output.speechText.includes(text));
 });
-await test('Only current complete JEV and pure new category decisions issue clarification authority',async()=>{
+await test('Closed-purpose authority remains strict while selected product intent follows the Commerce subtype',async()=>{
  const changes=[
   ...['daily_chat','character_photo','new_image','try_on','order_lookup','unclear'].map(primaryIntent=>({jev:{primaryIntent}})),
   ...[{ok:false},{ok:1},{confident:undefined},{unsupported:undefined},{unsupported:true},{imageIntent:'generate'},{orderIntent:'lookup'},
@@ -269,9 +277,19 @@ await test('Only current complete JEV and pure new category decisions issue clar
  ];
  for(const change of changes){const input=await closedFixture(change);assert(!isClosedProductClarification(input),JSON.stringify(change));}
  assert(isClosedProductClarification(await closedFixture({decision:{confidence:.6}})), 'low confidence alone must not veto a selected classification');
- const authorized=await closedFixture({jev:{productIntent:'search',productAction:1}});
- assert.equal(authorized.searchIntent.shouldLoadProductContext,true);assert.equal(authorized.searchIntent.cardAllowed,true);
- assert(!isClosedProductClarification(authorized));
+ for(const productAction of [0,.53,1]) {
+  const normalized=normalizeCommerceDecision(closedDecision,{userText:closedText,requireBoundaryVerdict:true});
+  const searchIntent=await resolveCommerceSearchIntent({userText:closedText,searchIntent:buildProductSearchIntent(closedText),enrichAllTurns:true,
+   jevDecision:{...closedJev,productIntent:productAction===1?'search':'none',productAction},classifyCommerce:async()=>normalized});
+  assert.equal(searchIntent.shouldLoadProductContext,true,'A selected Commerce search is not vetoed by the redundant primary action score');
+  assert.equal(searchIntent.cardAllowed,true);
+  assert(!isClosedProductClarification({...options,userText:closedText,searchIntent}));
+ }
+ const question=normalizeCommerceDecision({...closedDecision,route:'product_question',needsLiveProductData:false},{userText:closedText,requireBoundaryVerdict:true});
+ const readOnly=await resolveCommerceSearchIntent({userText:closedText,searchIntent:buildProductSearchIntent(closedText),enrichAllTurns:true,
+  jevDecision:{...closedJev,productIntent:'search',productAction:1},classifyCommerce:async()=>question});
+ assert.equal(readOnly.cardAllowed,false,'The same selected primary cannot upgrade a Commerce read-only question to a new card');
+ assert.equal(readOnly.shouldLoadProductContext,false);
 });
 await test('Runtime parallel contexts, retrieval failures and real outcomes retain their original fallback',async()=>{
  const base=await closedFixture();

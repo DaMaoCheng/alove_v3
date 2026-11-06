@@ -233,7 +233,8 @@ console.log('Image terminal reply: opposite ordering, enqueue/executor concurren
 const delivered = {kind:"generated",status:"ready",currentTurn:true};
 assert.match(buildCurrentImageDeliveryContract(delivered), /each other question still needs/);
 assert.doesNotMatch(buildCurrentImageDeliveryContract({...delivered, terminalReplyOnly:true}), /each other question still needs/);
-assert.match(buildCurrentImageDeliveryContract({...delivered, terminalReplyOnly:true}), /already handled/);
+assert.doesNotMatch(buildCurrentImageDeliveryContract({...delivered, terminalReplyOnly:true}), /already handled/);
+assert.doesNotMatch(buildCurrentImageDeliveryContract({...delivered, terminalReplyOnly:true, businessReplyRetained:true}), /already handled/);
 
 const captionFormat=fixture({initial});
 const captionText="[happy] Aquí tienes. [nervous] ¿Qué te parece? (como comentamos) 12";

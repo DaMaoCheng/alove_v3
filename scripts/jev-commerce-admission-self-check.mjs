@@ -122,8 +122,23 @@ const lowEvidence = async request => {
  return result;
 };
 const noInventedQuote = await classifyCommerceIntent('Find Real Madrid jersey', { resolveJevCommerce: (t, o) => resolveJevCommerceDecision(t, { ...o, evaluate: lowEvidence }) });
-assert.equal(noInventedQuote.businessInquiry, null); assert.equal(noInventedQuote.humanHandoff, null);
-assert(!noInventedQuote.productRequirement?.updates.some(update => ['requestedKeywords', 'requestedProductType', 'requestedTeam'].includes(update.field)), 'Low-confidence evidence must not become the first/whole user span');
+// This fixture explicitly selects quotation/review semantics. A valid selected
+// CURRENT quote no longer vetoes that choice merely because overlapping spans
+// split its probability; none/invalid quotes still cannot authorize a field.
+assert.equal(noInventedQuote.businessInquiry?.kind, 'quotation');
+assert.equal(noInventedQuote.humanHandoff?.businessReviewRequired, true);
+assert(noInventedQuote.productRequirement?.updates.some(update => update.field === 'requestedProductType'), 'Low-probability valid current spans preserve the selected product type');
+for (const selected of ['none', 'e999', 'prior0']) {
+ const rejectedQuote = await classifyCommerceIntent('Find Real Madrid jersey', { resolveJevCommerce: (t, o) => resolveJevCommerceDecision(t, { ...o,
+  evaluate: async request => {
+   const result = await unclearEvidence.evaluate(request);
+   for (const key of ['business_evidence', 'human_evidence', 'identity', 'candidate_evidence', 'e_requestedProductType', 'team_evidence'])
+    if (result.answers[key]) result.answers[key] = { choice: selected, confidence: .99 };
+   return result;
+  } }) });
+ assert.equal(rejectedQuote.businessInquiry, null); assert.equal(rejectedQuote.humanHandoff, null);
+ assert(!rejectedQuote.productRequirement?.updates.some(update => ['requestedKeywords', 'requestedProductType', 'requestedTeam'].includes(update.field)), 'None, out-of-range or historical selections cannot become CURRENT evidence');
+}
 const noQuote = evaluator({ business_kind: 'quotation', review_reason: 'quotation' }, { human_explicit: .99 });
 const noQuoteResult = await resolveJevCommerceDecision('Hello', { evaluate: async request => {
  const result = await noQuote.evaluate(request); for (const key of ['business_evidence', 'human_evidence']) if (result.answers[key]) result.answers[key] = { choice: 'none', confidence: .99 }; return result;

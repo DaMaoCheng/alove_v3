@@ -1,5 +1,6 @@
 import { bindProductAlternativeContext } from './product-alternative-service.js';
 import { buildDisplayedProductReferenceContext, buildLiveDisplayedProductReferenceContext } from './product-displayed-reference-service.js';
+import { buildCandidateAttributeReferenceContext, buildSizingUpdateReferenceContext } from './product-candidate-reference-service.js';
 import { mergeReplyCommerceContext } from "./chat-reply-boundary-service.js";
 import { buildCandidateConfirmationContext } from './product-candidate-confirmation-service.js';
 import { resolveProductCheckoutProduct } from './product-checkout-resolver-service.js';
@@ -27,7 +28,7 @@ import { classifyCommerceIntent } from "./product-intent-classifier-service.js";
 import { normalizeProductSourceError } from "./product-source-error-service.js";
 import { normalizeCurrency } from "./product-normalizer.js";
 import { requestedProductEdition } from "./product-edition-service.js";
-import { resolveTrustedCurrentProductSizing, selectCurrentProductForSizing } from "./product-sizing-context-service.js";
+import { resolveTrustedCurrentProductSizing, selectCurrentProductForSizing, hasOwnedSizingProductSearch } from "./product-sizing-context-service.js";
 import { executeProductSearchDetailed, productCandidateContext } from "./product-search-execution-service.js";
 import { resolvePromotionCampaignForChatRecommendation } from "./promotion-campaign-chat-recommendation-service.js";
 import { fetchProductSummary } from "./product-source-service.js";
@@ -110,6 +111,11 @@ export async function buildChatProductRecommendationContext(db, {
     return null;
   }
 
+  const sizingUpdate=buildSizingUpdateReferenceContext({site,characterId:character.id||character.characterId||'',searchIntent:initialSearchIntent,recentMessages});
+  if (sizingUpdate) return mergeReplyCommerceContext(sizingUpdate,initialSearchIntent);
+  const candidateReference = await buildCandidateAttributeReferenceContext({ site, characterId: character.id || character.characterId || '',
+    searchIntent: initialSearchIntent, recentMessages, resolveProduct: resolveConfirmationProduct });
+  if (candidateReference) return mergeReplyCommerceContext(candidateReference, initialSearchIntent);
   const liveReference = await buildLiveDisplayedProductReferenceContext({ site, characterId: character.id || character.characterId || '', searchIntent: initialSearchIntent, recentMessages, resolveProduct: resolveConfirmationProduct });
   if (liveReference) return mergeReplyCommerceContext(liveReference, initialSearchIntent);
 
@@ -126,6 +132,7 @@ export async function buildChatProductRecommendationContext(db, {
   if (currentProductImageContext) return mergeReplyCommerceContext(currentProductImageContext, initialSearchIntent);
   const currentProductSizingContext = await buildCurrentProductSizingContextForSite({
     site,
+    characterId: character.id || character.characterId || '',
     searchIntent: initialSearchIntent,
     recentProductMessage,
     recentMessages,
@@ -283,12 +290,20 @@ export async function buildChatProductRecommendationContext(db, {
     filterPurchasedProductDuplicates(products, preferenceFallback?.excludeProductNames || []),
     fallbackSearchIntent.productCandidateState?.proposal?.status === "confirmed" ? new Set() : recentProductState.excludedIdentities
   ).slice(0, 5);
-  if (isExplicitProductSizingSearch(fallbackSearchIntent)) {
-    const sizeMatchedProducts = filterProductsByRequestedSizes(products, fallbackSearchIntent.requestedSizes);
+  let sizingOptionsUnverified = false;
+  if (products.length && isExplicitProductSizingSearch(fallbackSearchIntent)) {
+    // Keep completed empty searches distinct from known size options. Unknown
+    // source options may inform a reply, but ordinary matches with unknown
+    // options grant no sized-product card proof.
+    const knownSizeProducts = filterProductsByRequestedSizes(products, fallbackSearchIntent.requestedSizes);
+    const unknownSizeProducts = products.filter(product => !Array.isArray(product.sizes) || !product.sizes.length);
+    const sizeMatchedProducts = products.filter(product => knownSizeProducts.includes(product)
+      || unknownSizeProducts.includes(product) && (!knownSizeProducts.length || product.matchStatus === 'candidate'));
     if (fallbackSearchIntent.requestedSizes?.length && !sizeMatchedProducts.length) {
       return buildProductSizingUnavailableContext(site, fallbackSearchIntent);
     }
     products = sizeMatchedProducts;
+    sizingOptionsUnverified = !knownSizeProducts.length && unknownSizeProducts.some(product => product.matchStatus !== 'candidate');
   }
   if (!products.length) return buildEmptyProductContext(site, fallbackSearchIntent, "site-product-no-match");
 
@@ -302,7 +317,7 @@ export async function buildChatProductRecommendationContext(db, {
     commerceEnabled: site.commerce_enabled == null ? true : Boolean(site.commerce_enabled),
     productApiUrl: site.product_api_url || "",
     searchIntent: fallbackSearchIntent,
-    cardAllowed: fallbackSearchIntent.cardAllowed !== false,
+    cardAllowed: fallbackSearchIntent.cardAllowed !== false && !sizingOptionsUnverified,
     searchOutcome: products.some(product => product.matchStatus === "alternative") ? "alternative" : products.some(product => product.matchStatus === "candidate") ? "candidate" : resolveProductSearchState(fallbackSearchIntent, products).status,
     candidateContext: productCandidateContext(products, fallbackSearchIntent, { siteId: site.id, characterId: character.id || character.characterId || '' }),
     sizingProduct: isExplicitProductSizingSearch(fallbackSearchIntent) ? products[0] : null,
@@ -430,7 +445,7 @@ function buildCurrentProductImageContext({ site = {}, product = {}, searchIntent
   };
 }
 
-async function buildCurrentProductSizingContextForSite({ site = {}, searchIntent = {}, recentMessages = [], resolveSizingProduct = resolveTrustedCurrentProductSizing } = {}) {
+async function buildCurrentProductSizingContextForSite({ site = {}, characterId = '', searchIntent = {}, recentMessages = [], resolveSizingProduct = resolveTrustedCurrentProductSizing } = {}) {
   if (hasPendingProductRequest(searchIntent)) return null;
   if (searchIntent?.intent !== "sizing" && !(searchIntent.commerceRoute === "product_question" && searchIntent.commerceTopic === "sizing")) return null;
   const referencedSizingQuestion = Boolean(searchIntent.referencedProductId)
@@ -440,7 +455,8 @@ async function buildCurrentProductSizingContextForSite({ site = {}, searchIntent
   // Let the normal product search/ranking path run so verified extended-size
   // products can be returned instead of forcing an unnecessary clarification.
   if (searchIntent?.requestedSizeProfile === "plus_size" && !referencedSizingQuestion) return null;
-  if (isExplicitProductSizingSearch(searchIntent) && !referencedSizingQuestion) return null;
+  if (!referencedSizingQuestion && (isExplicitProductSizingSearch(searchIntent)
+    || hasOwnedSizingProductSearch({ site, characterId, searchIntent }))) return null;
   const product = selectCurrentProductForSizing({ site, searchIntent, recentMessages });
   if (product?.name && productMatchesSite(product, site)) {
     const sizingProduct = await resolveSizingProduct({ site, product });

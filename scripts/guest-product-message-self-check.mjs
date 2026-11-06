@@ -320,7 +320,9 @@ const clarificationPrompt = applyGuestProductClarificationPromptPolicy({
 });
 assert.match(clarificationPrompt.systemPrompt, /No live product was confirmed/i, "the model should know that trusted product search returned no result");
 assert.match(clarificationPrompt.systemPrompt, /warm, playful, direct, or encouraging/i, "the model should select a bounded tone from the active character");
-assert.match(clarificationPrompt.systemPrompt, /both displayText and speechText to exactly this internal token/i, "the bounded token must fit the global structured reply contract");
+assert.match(clarificationPrompt.systemPrompt, /natural user-visible clarification/i, "the model writes the reviewed clarification in character");
+assert.doesNotMatch(clarificationPrompt.systemPrompt, /\[guest_product_clarification/, "internal state stays outside language generation and review");
+assert.match(clarificationPrompt.systemPrompt, /Preserve answers to independent questions/i, "clarification does not erase supported mixed answers");
 assert.deepEqual(
   applyGuestProductClarificationPromptPolicy({ systemPrompt: "Base persona", layers: [] }, {
     productRequested: true,

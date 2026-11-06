@@ -4,6 +4,7 @@ import { resolveFeedbackConversationHistory, attachFeedbackSubmissionContext, ap
 import { projectChildSizingUpdatePrompt } from './product-sizing-guidance-service.js';
 import { buildCommerceClassificationFailureReply } from "./commerce-classification-failure-service.js";
 import { finalizeProductCandidateState } from "./product-candidate-state-service.js";
+import { getCandidateAttributeReferenceState } from './product-candidate-reference-service.js';
 import { getCandidateConfirmationProduct } from './product-candidate-confirmation-service.js';
 import { productScopeResultLabel } from "./product-request-scope-copy.js";
 import { shouldSkipOrderLookupForCheckout } from "./checkout-support-guidance.js";
@@ -19,7 +20,7 @@ import {
 } from "./chat-message-store.js";
 import { buildChatReplyPrompt } from "./chat-prompt-service.js";
 import { generateChatReply } from "./ai-reply-service.js";
-import { buildImageReplyRecoveryPrompt } from "./chat-image-reply-recovery-service.js";
+import { buildImageReplyRecoveryPrompt, withCurrentImageReplyFact } from "./chat-image-reply-recovery-service.js";
 import { buildReplyPurposeRecoveryPrompt } from "./chat-reply-purpose-service.js";
 import { appendRepairFeedback } from "./chat-reply-repair-feedback-service.js";
 import { isAiTransportFallback } from "./ai-reply-fallback-service.js";
@@ -249,8 +250,9 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
     directive: prepared.imageResult?.directive || null, currentImageMessageId: prepared.imageResult?.message?.id || "",
   });
   const sizeUpdatePrompt = projectChildSizingUpdatePrompt({ searchIntent: productRecommendation.searchIntent, productContext, recentMessages });
+  const promptSite = { id: prepared.guest.site_id, slug: prepared.guest.site_slug, name: prepared.guest.site_name, identity_mascot_character_id: prepared.guest.site_mascot_character_id };
   let promptContext = applyCheckoutSupportPromptPolicy(applyReplyBoundaryPromptPolicy(applyCommerceQuestionPromptPolicy(buildChatReplyPrompt({
-      character: promptCharacter, trustedSite: { id: prepared.guest.site_id, slug: prepared.guest.site_slug, name: prepared.guest.site_name, identity_mascot_character_id: prepared.guest.site_mascot_character_id },
+      character: promptCharacter, trustedSite: promptSite,
       recentMessages: sizeUpdatePrompt.recentMessages,
       userText: prepared.text,
       userContext: null,
@@ -262,7 +264,7 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
       orderActionCandidate: orderAction,
       chatImageContext,
       visionInputs,
-    }), productRecommendation.searchIntent, { userText: prepared.text, recentMessages }), productRecommendation.searchIntent), productRecommendation.searchIntent, promptCharacter);
+    }), productRecommendation.searchIntent, { userText: prepared.text, recentMessages, character: promptCharacter, trustedSite: promptSite }), productRecommendation.searchIntent), productRecommendation.searchIntent, promptCharacter);
   promptContext = applyFeedbackSubmissionPrompt(promptContext, knowledgeContext);
   const guestPromptContext = applyGuestPromptPolicy(applyGuestProductClarificationPromptPolicy(promptContext, {
     productRequested: productRecommendation.requested,
@@ -333,7 +335,8 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
     refreshImageStatus: context => refreshChatImageStatusContext(getDbPool(), context),
     regenerateReply: async (previousReply, recovery = null) => {
       const recoveryPrompt = recovery?.kind === "image" ? buildImageReplyRecoveryPrompt(guestPromptContext, recovery)
-        : recovery?.kind === "purpose" ? buildReplyPurposeRecoveryPrompt(guestPromptContext, recovery) : guestPromptContext;
+        : recovery?.kind === "purpose" ? buildReplyPurposeRecoveryPrompt(guestPromptContext, recovery)
+        : recovery?.chatImageContext ? withCurrentImageReplyFact(guestPromptContext, recovery.chatImageContext) : guestPromptContext;
       if (!recoveryPrompt) return null;
       return prepareGeneratedReply(await generateChatReply({
         deferIdentityToBoundaryReview: true,
@@ -398,7 +401,7 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
       contentType: "text",
       text: replyText,
       productRequestState: productRecommendation.searchIntent?.productRequestState,
-      productCandidateState: finalizeProductCandidateState(productRecommendation.searchIntent?.productCandidateState,
+      productCandidateState: getCandidateAttributeReferenceState(productContext) || finalizeProductCandidateState(productRecommendation.searchIntent?.productCandidateState,
         selectedProducts[0] || (reply.candidateEvidenceVerified === true ? getCandidateConfirmationProduct(productContext) : null), {
         approvedReply: replyText, confirmationRequested: reply.candidateConfirmationVerified === true, evidenceVerified: reply.candidateEvidenceVerified === true }),
       replyRecoveryState: reply.replyRecoveryState,

@@ -4,12 +4,13 @@ import { resolveFeedbackConversationHistory, attachFeedbackSubmissionContext, ap
 import { projectChildSizingUpdatePrompt } from './product-sizing-guidance-service.js';
 import { buildCommerceClassificationFailureReply } from "./commerce-classification-failure-service.js";
 import { finalizeProductCandidateState } from "./product-candidate-state-service.js";
+import { getCandidateAttributeReferenceState } from './product-candidate-reference-service.js';
 import { getCandidateConfirmationProduct } from './product-candidate-confirmation-service.js';
 import { hasPendingProductRequest } from "./product-request-scope-service.js";
 import { productScopeResultLabel } from "./product-request-scope-copy.js";
 import { getDbPool } from "./db-core.js";
 import { resolveChatImageStatusContext, refreshChatImageStatusContext, withChatImageReplySnapshot } from "./chat-image-status-context-service.js";
-import { buildImageReplyRecoveryPrompt } from "./chat-image-reply-recovery-service.js";
+import { buildImageReplyRecoveryPrompt, withCurrentImageReplyFact } from "./chat-image-reply-recovery-service.js";
 import { buildReplyPurposeRecoveryPrompt } from "./chat-reply-purpose-service.js";
 import { appendRepairFeedback } from "./chat-reply-repair-feedback-service.js";
 import { prepareChatIntentTurn } from "./chat-intent-turn-service.js";
@@ -163,7 +164,7 @@ export async function buildCharacterReplyGenerationForDb(db, {
     orderActionCandidate: orderAction,
     chatImageContext,
     visionInputs,
-  }), commerceSearchIntent, { userText, recentMessages }), commerceSearchIntent), commerceSearchIntent, promptCharacter);
+  }), commerceSearchIntent, { userText, recentMessages, character: promptCharacter, trustedSite: commerceSite }), commerceSearchIntent), commerceSearchIntent, promptCharacter);
   promptContext = applyFeedbackSubmissionPrompt(promptContext, knowledgeContext);
   const generatedReplyResult = classificationFailureReply || await generateChatReply({
     deferIdentityToBoundaryReview: true,
@@ -221,7 +222,8 @@ export async function buildCharacterReplyGenerationForDb(db, {
     refreshImageStatus: context => refreshChatImageStatusContext(getDbPool(), context),
     regenerateReply: async (previousReply, recovery = null) => {
       const recoveryPrompt = recovery?.kind === "image" ? buildImageReplyRecoveryPrompt(promptContext, recovery)
-        : recovery?.kind === "purpose" ? buildReplyPurposeRecoveryPrompt(promptContext, recovery) : promptContext;
+        : recovery?.kind === "purpose" ? buildReplyPurposeRecoveryPrompt(promptContext, recovery)
+        : recovery?.chatImageContext ? withCurrentImageReplyFact(promptContext, recovery.chatImageContext) : promptContext;
       if (!recoveryPrompt) return null;
       return prepareGeneratedReply(await generateChatReply({
         deferIdentityToBoundaryReview: true,
@@ -308,7 +310,7 @@ export async function persistCharacterReplyForDb(db, {
     contentType: "text",
     text: replyText,
     productRequestState: replyResult.productRequestState,
-    productCandidateState: finalizeProductCandidateState(productContext?.searchIntent?.productCandidateState || replyResult.productCandidateState,
+    productCandidateState: getCandidateAttributeReferenceState(productContext) || finalizeProductCandidateState(productContext?.searchIntent?.productCandidateState || replyResult.productCandidateState,
       selectedProduct || (replyResult.candidateEvidenceVerified === true ? getCandidateConfirmationProduct(productContext) : null), {
       approvedReply: replyText, confirmationRequested: replyResult.candidateConfirmationVerified === true, evidenceVerified: replyResult.candidateEvidenceVerified === true }),
     replyRecoveryState: replyResult.replyRecoveryState,
