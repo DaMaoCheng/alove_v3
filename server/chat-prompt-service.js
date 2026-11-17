@@ -1,4 +1,5 @@
 import { isProductAlternativeContext } from "./product-alternative-service.js";
+import { PLATFORM_CHAT_ACCESS_FACTS, PLATFORM_ACCESS_SOURCE_CONTRACT } from '../shared/platform-access-policy.js';
 const RECENT_MESSAGE_LIMIT = 50;
 import {
   buildBoundaryLayer,
@@ -27,6 +28,7 @@ export function buildChatReplyPrompt({ character, trustedSite = null, recentMess
   const layers = [
     buildPersonaLayer({ ...normalizedCharacter, site_id: character?.site_id, siteId: character?.siteId }, trustedSite),
     buildVoiceLayer(normalizedCharacter),
+    { id: 'platform_access', title: 'Platform Interface Facts', content: `${PLATFORM_ACCESS_SOURCE_CONTRACT}\n${JSON.stringify(PLATFORM_CHAT_ACCESS_FACTS)}` },
     { id: "language_expression", title: "Language Expression", content: "Use correct spelling, word formation and natural grammar in the configured active reply language. Prefer clear familiar wording over an uncertain invented expression. Preserve the character\'s style, informal idioms, names, code and explicitly requested quotations or translations. Do not imitate spelling or grammar errors in prior assistant messages. This layer does not change persona, relationships, intent, language-selection rules, permissions or factual constraints." },
     buildGlobalReplyPolicyLayer(normalizedCharacter, { feedbackActionCandidate, orderActionCandidate }),
     buildUserContextLayer(userContext),

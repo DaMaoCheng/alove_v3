@@ -51,6 +51,10 @@ for (const mixed of [false, true]) for (const acceptRewrite of [false, true]) {
   assert.equal(generations, 1, 'only one text generation across all recovery branches');
   assert.equal(reviews, 2, 'the changed reply receives the complete original review');
   assert(failure.repairFeedback.failedContracts.includes('business_facts'), 'specific failing contract reaches original generator');
+  assert.equal(failure.sourceContext.kind,'owned_business_text');
+  assert.equal(failure.sourceContext.knowledgeState,'not_requested');
+  assert.equal(failure.sourceContext.capabilities.feedbackActionAvailable,true,'The same real feedback capability accompanies source-limited regeneration');
+  assert.equal(Boolean(failure.sourceContext.imageStatus),mixed,'An actual mixed image retains the source marker so recovery cannot strip its history');
   assert.equal(output.text === text, acceptRewrite, 'rejected new text cannot be published');
   if (mixed) { assert.equal(output._imageDeliveryReply.natural, acceptRewrite);
     assert.equal(output._imageDeliveryReply.businessReplyRetained, undefined, 'accepted wording is not proof every mixed question was answered'); }

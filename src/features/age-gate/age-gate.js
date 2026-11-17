@@ -1,9 +1,10 @@
 import { createSiteCopy } from "../../i18n/site-copy.js";
+import { AGE_GATE_MAX_AGE_SECONDS, AGE_GATE_EXEMPT_PATH_PREFIXES } from '../../../shared/platform-access-policy.js';
 
-export const AGE_GATE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60;
+export { AGE_GATE_MAX_AGE_SECONDS };
 const AGE_GATE_AVATARS = ["bs", "cf", "mtt", "pj", "tfk", "tms"];
 const AGE_GATE_COOKIE_PREFIX = "aiove_age_verified_";
-const EXEMPT_PATH_PREFIXES = ["/admin", "/creator"];
+const EXEMPT_PATH_PREFIXES = AGE_GATE_EXEMPT_PATH_PREFIXES;
 
 function normalizeSiteSlug(siteSlug) {
   const normalized = String(siteSlug || "default").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-");

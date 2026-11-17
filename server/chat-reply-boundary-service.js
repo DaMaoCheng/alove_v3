@@ -1,11 +1,11 @@
 import { ownedBusinessTextCorrectionContext } from './chat-owned-business-correction-context.js';
 import { supportsNameCandidateYears, validateNameIdentityAudit } from './product-name-candidate-service.js';
-import { toNameCandidateDifferenceContext, toNameCandidateUncertaintyContext } from './product-candidate-context-service.js';
+import { toNameCandidateDifferenceContext, toNameCandidateUncertaintyContext, toNoMatchReviewContext } from './product-candidate-context-service.js';
 import { toAlternativeReviewContext, validateProductAlternativeAudit } from "./product-alternative-service.js";
 import { SERVER_CONFIG } from './config.js';
 import { canReviewLanguageClarification, reviewedLanguageClarification, reviewedLanguageClarificationPurpose, withClarificationVoiceLanguage, withLanguageClarificationRecovery, languageClarificationRecoveryProof } from "./chat-language-clarification-policy.js";
 import { independentJsonProviderChain, applyReviewRequestProfile } from './ai-independent-review-config.js';
-import { hasBusinessDemandAuditContext, buildBusinessClaimContext, validateBusinessClaimAudit, isGeneralCommerceExplanation, GENERAL_COMMERCE_EXPLANATION_CONTRACT } from './business-claim-audit-service.js';
+import { hasBusinessDemandAuditContext, buildBusinessReviewCapability, buildBusinessClaimContext, validateBusinessClaimAudit, isGeneralCommerceExplanation, GENERAL_COMMERCE_EXPLANATION_CONTRACT } from './business-claim-audit-service.js';
 import { buildFeedbackSubmissionFallback } from './chat-feedback-submission-service.js';
 import { recoverReviewedLanguageReply } from "./chat-reply-language-recovery-service.js";
 import { buildRepairFeedback } from "./chat-reply-repair-feedback-service.js";
@@ -32,7 +32,7 @@ import { buildSupportGuidanceUnavailableCopy } from "./support-guidance-copy.js"
 import { getGuestBenefitReviewContext, approveGuestBenefitContext, buildGuestBenefitFailureFallback } from "./guest-benefit-guidance-service.js";
 import { hasUnauthorizedDiscountPolicyClaim } from "./discount-policy-explanation-service.js";
 import { toImageStatusReviewContext, getChatImageStatusFallbackCopy, isFulfilledImageOnlyRequest, withChatImageReplySnapshot, cleanCurrentImageReplyMarkup } from "./chat-image-status-context-service.js";
-import { guardLanguageQualityReply, buildLanguageQualityFallbackReply } from "./chat-reply-language-quality.js";
+import { guardLanguageQualityReply, buildLanguageQualityFallbackReply, withFallbackVoiceLanguage } from "./chat-reply-language-quality.js";
 import { factualReviewRequired, toFactualReviewContext, buildFactualUnavailableCopy, containsFactualUnavailableCopy } from "./chat-factual-policy.js";
 import { activeReviewContracts, resolveReplyReviewStages, reviewOutcomeStatus, reviewErrorStatus, reviewFieldProtocolFailure, REVIEW_CONTRACTS, REPLY_REPAIR_TIMEOUT_MS, GROUNDED_COMMERCE_REPAIR_TIMEOUT_MS, languageReviewConfident } from "./chat-reply-review-outcome.js";
 import { assessIndependentLanguageQuality, languageReviewerConfig } from "./chat-language-quality-service.js";
@@ -247,9 +247,10 @@ export async function enforceReplyBoundary(options = {}) {
           retainedText: '', retainedTextAllowed: false };
       }
       if (productContext?.searchOutcome === "alternative" && !toAlternativeReviewContext(productContext)) result = { ...result, allowed: false, evidenceSupported: false, boundarySupported: false };
-      if (result?.protocolFailures?.length) languageDiagnostics = { ...languageDiagnostics,
+      const protocolHistory = result?.protocolFailureHistory || result?.protocolFailures;
+      if (protocolHistory?.length) languageDiagnostics = { ...languageDiagnostics,
         reviewProtocol: { ...languageDiagnostics.reviewProtocol,
-          [languageRepairAttempted ? 'corrected' : 'initial']: result.protocolFailures } };
+          [languageRepairAttempted ? 'corrected' : 'initial']: protocolHistory } };
       let primaryStatus = reviewOutcomeStatus(result, primaryContracts);
       if (dedicatedLanguageReview && primaryReviewRequired && primaryStatus === "valid"
         && typeof result?.boundarySupported !== "boolean") {
@@ -495,6 +496,8 @@ export async function enforceReplyBoundary(options = {}) {
             chatImageContext = current;
           }
           const fresh = await regenerateReply(replyResult, { kind: 'review', repairFeedback,
+            ...(ownedTextCorrection ? { sourceContext: { ...ownedTextCorrection, capabilities: buildBusinessReviewCapability({ ...options, orderActionState,
+              feedbackActionAvailable: Boolean(feedbackActionCandidate && searchIntent.replyBoundary?.contactAllowed !== false) }) } } : {}),
             ...(ownedTextCorrection?.imageStatus ? { chatImageContext } : {}),
             timeoutMs: input.timeoutMs, recordDiagnostic: input.recordDiagnostic });
           if (ownedTextCorrection?.imageStatus) {
@@ -516,6 +519,7 @@ export async function enforceReplyBoundary(options = {}) {
     if (complaintRepair) { complaintRepair.state = 'failed'; complaintRepair.reason = 'recovery_failed'; }
   }
   const finish = async (output, guardApplied = false, productClarification = false) => {
+    if (guardApplied) output = withFallbackVoiceLanguage(output, language);
     output = withChatImageReplySnapshot(output, chatImageContext, { natural: !guardApplied && accepted === true });
     if (productContext?.searchOutcome === "alternative") output = { ...output, alternativeEvidenceVerified: !guardApplied && accepted === true && Boolean(toAlternativeReviewContext(productContext)) };
     if (!guardApplied && accepted && languageClarification) output = withClarificationVoiceLanguage(output, languageClarification);
@@ -550,7 +554,11 @@ export async function enforceReplyBoundary(options = {}) {
     ? productClarificationContext(searchIntent, userText) && searchIntent.scopeUnverified
       ? buildProductClarificationFallbackReply(code)
       : buildProductRequestScopeCopy({ scopeUnverified: true }, { languageCode: code }) : "";
-  const scopeCopy = uncertaintyCopy || (productScopeRequired && searchIntent.replyBoundary?.salesAllowed !== false
+  const selectedNoMatch = productScopeRequired && searchIntent.productRequestState?.status === 'selected'
+    && searchIntent.replyBoundary?.salesAllowed !== false
+    && toNoMatchReviewContext(productContext, { searchIntent, characterId: character.id, siteId: options.trustedSite?.id || character.site_id || character.siteId });
+  const scopeCopy = selectedNoMatch ? buildEvidenceFallback(searchIntent, productContext, { languageCode: code, userText })
+    : uncertaintyCopy || (productScopeRequired && searchIntent.replyBoundary?.salesAllowed !== false
     ? pendingProductScope ? buildProductRequestScopeCopy(searchIntent, { languageCode: code })
       : [productScopeResultLabel(searchIntent, { languageCode: code }), buildProductScopeUnverifiedResultCopy(searchIntent, { languageCode: code })].filter(Boolean).join("\n\n") : "");
   const expressionFailureCopy = (pureQualityFailure || purposeRecoveryAttempted || hasMatchedCatalogueCaptionContext(options) || isGeneralCommerceExplanation(searchIntent)
@@ -588,7 +596,8 @@ export async function enforceReplyBoundary(options = {}) {
       : [retained, submittedFeedbackCopy || imageCopy || (businessFactsRequired && result?.businessFactsSupported === false ? expressionFailureCopy || buildSupportGuidanceUnavailableCopy(code) : "")]).filter(Boolean).join("\n\n") : fallback;
   if (!accepted && !retained && imageCopy && (guestBenefitReview || result?.imageStatusRelevant === true) && !safeText.includes(imageCopy)) safeText += `\n\n${imageCopy}`;
   const scopeLabel = productScopeResultLabel(searchIntent, { languageCode: code });
-  const scopeNote = scopeLabel && safeText.includes(scopeLabel) ? buildProductScopeUnverifiedResultCopy(searchIntent, { languageCode: code }) : scopeCopy;
+  const scopeNote = selectedNoMatch ? scopeCopy
+    : scopeLabel && safeText.includes(scopeLabel) ? buildProductScopeUnverifiedResultCopy(searchIntent, { languageCode: code }) : scopeCopy;
   if (!accepted && scopeNote && !safeText.includes(scopeNote)) safeText += `\n\n${scopeNote}`;
   const approvedBenefit = guestBenefitReview && approveGuestBenefitContext(guestBenefitContext, {
     text: safeText, allowed: Boolean(accepted || retained), confidence: result?.confidence,
@@ -682,7 +691,7 @@ export async function assessReplyBoundary({ text = "", speechText = "", userText
       ? result.businessClaimAudit.flatMap(entry => {
         const unit = plannedClaimContext.units.find(item => item.id === entry.unitId);
         const kind = !entry.supported || claimAudit.failedUnitIds?.includes(entry.unitId) ? 'unsupported_fact' : entry.sourceAllowsException && !entry.replyPreservesException ? 'missing_condition' : '';
-        return kind && unit?.text && unit.text.length <= 1000 ? [{ kind, span: unit.text }] : [];
+        return kind && unit?.text && unit.text.length <= 1000 ? [{ kind, span: unit.text, ...(claimAudit.sourceKindMismatchUnitIds?.includes(entry.unitId) ? { reason: 'source_kind_mismatch: the cited reference does not establish this claim type; use only its actual capability or evidence scope.' } : {}) }] : [];
       }).slice(0, 4) : [];
     if (plannedAlternativeContext && !validateProductAlternativeAudit(result?.alternativeAudit, alternativeAuditOptions).accepted) result = { ...result, allowed: false, evidenceSupported: false,
       retainedText: '', retainedTextAllowed: false, retainedEvidenceSupported: false };
@@ -701,7 +710,7 @@ export async function assessReplyBoundary({ text = "", speechText = "", userText
       && (text.includes(reviewSpan) || (speechText || text).includes(reviewSpan))
       && typeof reviewReason === 'string' && reviewReason.trim() && reviewReason.length <= 240)
       repairIssues.push({ kind: 'review_reason', span: reviewSpan, reason: reviewReason.trim() });
-    return { reviewStatus, missingFields, protocolFailures, ...(repairIssues.length ? { repairIssues } : {}), ...(languageClarificationEligible ? { languageClarification: result?.languageClarification } : {}), checkoutProblem: bool("checkoutProblem"), ...Object.fromEntries(supportFields.map(field => [field, bool(field)])),
+    return { reviewStatus, missingFields, protocolFailures: [], ...(protocolFailures.length ? { protocolFailureHistory: protocolFailures } : {}), ...(repairIssues.length ? { repairIssues } : {}), ...(languageClarificationEligible ? { languageClarification: result?.languageClarification } : {}), checkoutProblem: bool("checkoutProblem"), ...Object.fromEntries(supportFields.map(field => [field, bool(field)])),
       boundarySupported: bool("boundarySupported"), retainedBoundarySupported: bool("retainedBoundarySupported"),
       allowed: result?.allowed === true && (!checkoutContext?.classificationUnavailable || result?.checkoutProblem === false),
       imageStatusRelevant: result?.imageStatusRelevant === true, imageReferenceMatched: result?.imageReferenceMatched === true,

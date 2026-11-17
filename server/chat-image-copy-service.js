@@ -123,6 +123,60 @@ export function getChatImageUnverifiedStatusCopy(language = "en", failed = false
   return (UNVERIFIED_IMAGE_COPY[code] || UNVERIFIED_IMAGE_COPY.en)[failed ? 1 : 0];
 }
 
+// Known blocked requests never become an unknown task state. These are bounded
+// failure copies, not permission to create an image or a promise of new quota.
+const BLOCKED_IMAGE_REQUEST_COPY = {
+  en: ['The image allowance is used up, so no new photo was started.', 'You may register or sign in, but another image is not guaranteed.', 'This image request is not supported here, so no new photo was started.'],
+  zh: ['图片额度已用完，这次没有开始生成新照片。', '你可以注册或登录，但这不保证能再生成一张。', '这里不支持这类图片请求，这次没有开始生成新照片。'],
+  es: ['El cupo de imágenes se ha agotado; no se inició otra foto.', 'Puedes registrarte o iniciar sesión, pero eso no garantiza otra imagen.', 'Esta solicitud de imagen no se admite aquí; no se inició otra foto.'],
+  fr: ['Le quota d’images est épuisé ; aucune nouvelle photo n’a été lancée.', 'Tu peux t’inscrire ou te connecter, sans garantie de pouvoir créer une autre image.', 'Cette demande d’image n’est pas prise en charge ici ; aucune nouvelle photo n’a été lancée.'],
+  hu: ['A képkeret elfogyott, ezért nem indult új fénykép készítése.', 'Regisztrálhatsz vagy bejelentkezhetsz, de ez nem garantál újabb képet.', 'Ez a képkérés itt nem támogatott, ezért nem indult új fénykép készítése.'],
+  tr: ['Görsel hakkı tükendiği için yeni bir fotoğraf başlatılmadı.', 'Kayıt olabilir veya giriş yapabilirsin; bu, başka bir görseli garanti etmez.', 'Bu görsel isteği burada desteklenmediği için yeni bir fotoğraf başlatılmadı.'],
+  ar: ['نفد رصيد الصور، لذا لم يبدأ إنشاء صورة جديدة.', 'يمكنك التسجيل أو تسجيل الدخول، لكن ذلك لا يضمن صورة أخرى.', 'طلب الصورة هذا غير مدعوم هنا، لذا لم يبدأ إنشاء صورة جديدة.'],
+  de: ['Das Bildkontingent ist aufgebraucht; es wurde kein neues Foto gestartet.', 'Du kannst dich registrieren oder anmelden, aber das garantiert kein weiteres Bild.', 'Diese Bildanfrage wird hier nicht unterstützt; es wurde kein neues Foto gestartet.'],
+  pt: ['O limite de imagens foi atingido; nenhuma nova foto foi iniciada.', 'Você pode se cadastrar ou entrar, mas isso não garante outra imagem.', 'Este pedido de imagem não é suportado aqui; nenhuma nova foto foi iniciada.'],
+  it: ['La quota di immagini è esaurita; non è stata avviata una nuova foto.', 'Puoi registrarti o accedere, ma questo non garantisce un’altra immagine.', 'Questa richiesta di immagine non è supportata qui; non è stata avviata una nuova foto.'],
+  ja: ['画像の利用枠を使い切ったため、新しい写真の生成は開始していません。', '登録やログインはできますが、追加の画像を生成できる保証はありません。', 'この画像リクエストには対応していないため、新しい写真の生成は開始していません。'],
+  ko: ['이미지 한도를 모두 사용해 새 사진 생성을 시작하지 않았어요.', '가입하거나 로그인할 수 있지만 추가 이미지가 보장되지는 않아요.', '여기서는 이 이미지 요청을 지원하지 않아 새 사진 생성을 시작하지 않았어요.'],
+  hi: ['तस्वीरों की सीमा पूरी हो गई है, इसलिए नई तस्वीर बनाना शुरू नहीं हुआ।', 'आप पंजीकरण या लॉग इन कर सकते हैं, लेकिन इससे अगली तस्वीर की गारंटी नहीं मिलती।', 'यह तस्वीर अनुरोध यहाँ समर्थित नहीं है, इसलिए नई तस्वीर बनाना शुरू नहीं हुआ।'],
+  id: ['Kuota gambar sudah habis, jadi foto baru belum mulai dibuat.', 'Kamu bisa mendaftar atau masuk, tetapi itu tidak menjamin gambar tambahan.', 'Permintaan gambar ini tidak didukung di sini, jadi foto baru belum mulai dibuat.'],
+  nl: ['Het beeldtegoed is op; er is geen nieuwe foto gestart.', 'Je kunt je registreren of inloggen, maar dat garandeert geen extra afbeelding.', 'Dit afbeeldingsverzoek wordt hier niet ondersteund; er is geen nieuwe foto gestart.'],
+  pl: ['Limit obrazów został wykorzystany, więc nie rozpoczęto tworzenia nowego zdjęcia.', 'Możesz się zarejestrować lub zalogować, ale nie gwarantuje to kolejnego obrazu.', 'To żądanie obrazu nie jest tutaj obsługiwane, więc nie rozpoczęto tworzenia nowego zdjęcia.'],
+  sv: ['Bildkvoten är slut, så inget nytt foto har påbörjats.', 'Du kan registrera dig eller logga in, men det garanterar inte en till bild.', 'Den här bildförfrågan stöds inte här, så inget nytt foto har påbörjats.'],
+  no: ['Bildekvoten er brukt opp, så et nytt bilde er ikke startet.', 'Du kan registrere deg eller logge inn, men det garanterer ikke et nytt bilde.', 'Denne bildeforespørselen støttes ikke her, så et nytt bilde er ikke startet.'],
+  da: ['Billedkvoten er brugt op, så et nyt foto er ikke startet.', 'Du kan oprette en konto eller logge ind, men det garanterer ikke et ekstra billede.', 'Denne billedanmodning understøttes ikke her, så et nyt foto er ikke startet.'],
+  fi: ['Kuvakiintiö on käytetty, joten uuden kuvan luontia ei aloitettu.', 'Voit rekisteröityä tai kirjautua sisään, mutta se ei takaa uutta kuvaa.', 'Tätä kuvapyyntöä ei tueta täällä, joten uuden kuvan luontia ei aloitettu.'],
+  ru: ['Лимит изображений исчерпан, поэтому создание нового фото не началось.', 'Можно зарегистрироваться или войти, но это не гарантирует новое изображение.', 'Такой запрос изображения здесь не поддерживается, поэтому создание нового фото не началось.'],
+  uk: ['Ліміт зображень вичерпано, тому створення нового фото не почалося.', 'Можна зареєструватися або увійти, але це не гарантує нового зображення.', 'Такий запит зображення тут не підтримується, тому створення нового фото не почалося.'],
+  cs: ['Limit obrázků je vyčerpaný, takže se nová fotka nezačala vytvářet.', 'Můžeš se zaregistrovat nebo přihlásit, ale další obrázek to nezaručuje.', 'Tento požadavek na obrázek zde není podporován, takže se nová fotka nezačala vytvářet.'],
+  sk: ['Limit obrázkov je vyčerpaný, takže sa nová fotka nezačala vytvárať.', 'Môžeš sa zaregistrovať alebo prihlásiť, ale ďalší obrázok to nezaručuje.', 'Táto požiadavka na obrázok tu nie je podporovaná, takže sa nová fotka nezačala vytvárať.'],
+  ro: ['Cota de imagini este epuizată, așa că nu a început crearea unei fotografii noi.', 'Te poți înregistra sau autentifica, dar asta nu garantează încă o imagine.', 'Această cerere de imagine nu este acceptată aici, așa că nu a început crearea unei fotografii noi.'],
+  bg: ['Лимитът за изображения е изчерпан и не е започнато ново изображение.', 'Можеш да се регистрираш или да влезеш, но това не гарантира друго изображение.', 'Тази заявка за изображение не се поддържа тук и не е започнато ново изображение.'],
+  el: ['Το όριο εικόνων εξαντλήθηκε, οπότε δεν ξεκίνησε νέα φωτογραφία.', 'Μπορείς να εγγραφείς ή να συνδεθείς, αλλά αυτό δεν εγγυάται άλλη εικόνα.', 'Αυτό το αίτημα εικόνας δεν υποστηρίζεται εδώ, οπότε δεν ξεκίνησε νέα φωτογραφία.'],
+  he: ['מכסת התמונות נוצלה, ולכן לא התחילה יצירת תמונה חדשה.', 'אפשר להירשם או להתחבר, אך זה לא מבטיח תמונה נוספת.', 'בקשת התמונה הזאת אינה נתמכת כאן, ולכן לא התחילה יצירת תמונה חדשה.'],
+  th: ['โควตารูปภาพหมดแล้ว จึงยังไม่ได้เริ่มสร้างรูปใหม่', 'คุณสมัครหรือลงชื่อเข้าใช้ได้ แต่ไม่ได้รับประกันว่าจะสร้างรูปเพิ่มได้', 'ที่นี่ไม่รองรับคำขอรูปภาพนี้ จึงยังไม่ได้เริ่มสร้างรูปใหม่'],
+  vi: ['Hạn mức ảnh đã hết nên chưa bắt đầu tạo ảnh mới.', 'Bạn có thể đăng ký hoặc đăng nhập, nhưng điều đó không đảm bảo có thêm ảnh.', 'Yêu cầu ảnh này không được hỗ trợ ở đây nên chưa bắt đầu tạo ảnh mới.'],
+  ms: ['Kuota imej sudah habis, jadi foto baharu belum dimulakan.', 'Anda boleh mendaftar atau log masuk, tetapi itu tidak menjamin imej tambahan.', 'Permintaan imej ini tidak disokong di sini, jadi foto baharu belum dimulakan.'],
+  ta: ['பட வரம்பு முடிந்துவிட்டதால் புதிய படம் உருவாக்கத் தொடங்கப்படவில்லை.', 'நீங்கள் பதிவு செய்யலாம் அல்லது உள்நுழையலாம்; ஆனால் இன்னொரு படம் உறுதியில்லை.', 'இந்தப் படக் கோரிக்கை இங்கு ஆதரிக்கப்படாததால் புதிய படம் உருவாக்கத் தொடங்கப்படவில்லை.'],
+  bn: ['ছবির সীমা শেষ হয়েছে, তাই নতুন ছবি তৈরি শুরু হয়নি।', 'আপনি নিবন্ধন বা লগ ইন করতে পারেন, তবে তাতে আরেকটি ছবি নিশ্চিত নয়।', 'এখানে এই ছবির অনুরোধ সমর্থিত নয়, তাই নতুন ছবি তৈরি শুরু হয়নি।'],
+  ur: ['تصویروں کی حد پوری ہو گئی ہے، اس لیے نئی تصویر بنانا شروع نہیں ہوا۔', 'آپ رجسٹر یا سائن ان کر سکتے ہیں، لیکن اس سے مزید تصویر کی ضمانت نہیں ملتی۔', 'یہ تصویر کی درخواست یہاں معاونت یافتہ نہیں، اس لیے نئی تصویر بنانا شروع نہیں ہوا۔'],
+  fa: ['سهمیهٔ تصویر تمام شده، پس ساخت عکس جدیدی شروع نشده است.', 'می‌توانی ثبت‌نام کنی یا وارد شوی، اما این تضمینی برای تصویر دیگری نیست.', 'این درخواست تصویر اینجا پشتیبانی نمی‌شود، پس ساخت عکس جدیدی شروع نشده است.'],
+  sw: ['Kiwango cha picha kimekwisha, hivyo picha mpya haijaanza kutengenezwa.', 'Unaweza kujisajili au kuingia, lakini hilo halihakikishi picha nyingine.', 'Ombi hili la picha halitumiki hapa, hivyo picha mpya haijaanza kutengenezwa.'],
+  tl: ['Naubos na ang limit sa larawan, kaya walang bagong larawang sinimulan.', 'Maaari kang magparehistro o mag-sign in, pero hindi nito ginagarantiya ang isa pang larawan.', 'Hindi suportado rito ang kahilingang ito, kaya walang bagong larawang sinimulan.'],
+  ca: ['S’ha esgotat el límit d’imatges; no s’ha iniciat cap foto nova.', 'Pots registrar-te o iniciar sessió, però això no garanteix una altra imatge.', 'Aquesta petició d’imatge no s’admet aquí; no s’ha iniciat cap foto nova.'],
+  hr: ['Kvota slika je potrošena pa nije započeta nova fotografija.', 'Možeš se registrirati ili prijaviti, ali to ne jamči novu sliku.', 'Ovaj zahtjev za sliku ovdje nije podržan pa nije započeta nova fotografija.'],
+  sr: ['Квота слика је потрошена па није започета нова фотографија.', 'Можеш да се региструјеш или пријавиш, али то не гарантује нову слику.', 'Овај захтев за слику овде није подржан па није започета нова фотографија.'],
+  lt: ['Vaizdų limitas išnaudotas, todėl nauja nuotrauka nepradėta kurti.', 'Gali registruotis ar prisijungti, bet tai negarantuoja dar vieno vaizdo.', 'Ši vaizdo užklausa čia nepalaikoma, todėl nauja nuotrauka nepradėta kurti.'],
+  lv: ['Attēlu limits ir izlietots, tāpēc jauna fotoattēla veidošana nav sākta.', 'Vari reģistrēties vai pierakstīties, taču tas negarantē vēl vienu attēlu.', 'Šāds attēla pieprasījums šeit netiek atbalstīts, tāpēc jauna fotoattēla veidošana nav sākta.'],
+  et: ['Pildilimiit on kasutatud, seega uut fotot ei alustatud.', 'Võid registreeruda või sisse logida, kuid see ei taga uut pilti.', 'Seda pildipäringut siin ei toetata, seega uut fotot ei alustatud.'],
+};
+export function getChatImageBlockedRequestCopy(language = 'en', reason = '', guest = false) {
+  const code = normalizeCharacterLanguage(language)?.code || String(language || 'en').toLowerCase().split(/[-_]/)[0];
+  const copy = BLOCKED_IMAGE_REQUEST_COPY[code] || BLOCKED_IMAGE_REQUEST_COPY.en;
+  return reason === 'quota_exhausted' ? [copy[0], guest ? copy[1] : ''].filter(Boolean).join(' ')
+    : reason === 'disallowed_request' ? copy[2] : '';
+}
+
 // Recovery describes an existing image, never a new delivery this turn.
 const HISTORICAL_READY_COPY = {
   "en": "The previous photo is ready. I haven't sent a new photo this turn.",

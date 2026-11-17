@@ -1,8 +1,9 @@
 import { getProcessingUnavailableCopy } from "./commerce-classification-failure-service.js";
-import { getChatImageStatusCopy, getChatImageUnverifiedStatusCopy, getChatImageHistoricalReadyCopy } from "./chat-image-copy-service.js";
+import { getChatImageStatusCopy, getChatImageUnverifiedStatusCopy, getChatImageHistoricalReadyCopy, getChatImageBlockedRequestCopy } from "./chat-image-copy-service.js";
 
 const STATES = new Set(["queued", "generating", "ready", "failed"]);
 const text = (value) => String(value || "").trim();
+export const GUEST_IMAGE_QUOTA_ACCESS_CONTRACT = 'The guest image allowance is used and no new image task was created. The guest may register or sign in as an optional account next step; this does not guarantee further image quota, eligibility or successful generation. Do not imply that registration is required for ordinary chat, promise a new image, invent navigation, or replace independent answers in a mixed request with only this invitation.';
 
 // Actual media bubbles carry the file. Keep invented model-control tokens out
 // of display and speech, while preserving user quotations and normal recovery.
@@ -89,12 +90,24 @@ export async function refreshChatImageStatusContext(freshDb, context) {
 }
 
 export function toImageStatusReviewContext(context) {
-  const reason = ["active_generation", "quota_exhausted", "disallowed_request", "classification_unavailable"].includes(context?.reason) ? context.reason : "";
+  const blocked = context?.imageStatus?.currentRequest;
+  const rawReason = context?.reason || (blocked?.outcome === 'not_created' ? blocked.reason : '');
+  const reason = ["active_generation", "quota_exhausted", "disallowed_request", "classification_unavailable"].includes(rawReason) ? rawReason : "";
   const fact = context?.imageStatus || (reason ? { kind: "unknown", status: "unknown", currentTurn: false } : null);
   if (!fact || !["generated", "library", "unknown"].includes(fact.kind)) return null;
   return { kind: fact.kind, status: fact.kind !== "unknown" && STATES.has(fact.status) ? fact.status : "unknown", currentTurn: fact.currentTurn === true,
     ...(isScopedTerminalCaption(context) ? { terminalReplyOnly: true } : {}),
-    ...(reason && context?.taskCreated !== true ? { currentRequest: { outcome: "not_created", reason } } : {}) };
+    ...((reason || blocked?.outcome === 'not_created') && context?.taskCreated !== true ? { currentRequest: { outcome: "not_created", ...(reason ? { reason } : {}),
+      ...(reason === 'quota_exhausted' && (context?.guestQuotaAccess === true
+        || blocked?.guestAccess?.registrationAvailable === true && blocked.guestAccess.signInAvailable === true && blocked.guestAccess.additionalQuotaVerified === false)
+        ? { guestAccess: { registrationAvailable: true, signInAvailable: true, additionalQuotaVerified: false } } : {}) } } : {}) };
+}
+
+export function buildGuestImageQuotaAccessContract(fact) {
+  const request = fact?.currentRequest;
+  return request?.outcome === 'not_created' && request.reason === 'quota_exhausted'
+    && request.guestAccess?.registrationAvailable === true && request.guestAccess.signInAvailable === true
+    && request.guestAccess.additionalQuotaVerified === false ? GUEST_IMAGE_QUOTA_ACCESS_CONTRACT : '';
 }
 
 // Image provenance describes digital media, not a UI location or a physical act.
@@ -140,6 +153,7 @@ export function buildChatImageStatusInstruction(context) {
       : "This evidence identifies only the latest image message within the bounded conversation window. Apply its state only when the current user reference clearly matches that message. If the user means an older image or the reference is ambiguous, its status is unknown; never transfer this latest state to another request.",
     buildImageRepresentationContract(fact),
     buildCurrentImageDeliveryContract(fact),
+    buildGuestImageQuotaAccessContract(fact),
     "queued/generating means pending at the latest check; ready means the server finished, not that the user saw it; failed means no successful image; unknown means unverified. Do not invent progress, completion, retry, delivery visibility, or timing.",
     "currentTurn=false describes an earlier image, not delivery of another image. A currentRequest outcome of not_created records that no image was added this turn; never replace this outcome with the earlier image's ready state. For old-image questions, explicitly identify the prior image and do not claim browser visibility.",
     fact.terminalReplyOnly === true
@@ -153,8 +167,9 @@ export function getChatImageStatusFallbackCopy(context, language = "en") {
   const fact = toImageStatusReviewContext(context);
   if (context?.taskCreated && !fact?.currentTurn) return getChatImageUnverifiedStatusCopy(language);
   if (fact?.currentRequest?.reason === "classification_unavailable") return getProcessingUnavailableCopy(language);
-  if (["quota_exhausted", "disallowed_request"].includes(fact?.currentRequest?.reason)
-    || fact?.currentRequest?.reason === "active_generation" && !["queued", "generating"].includes(fact?.status)) return getChatImageUnverifiedStatusCopy(language);
+  if (["quota_exhausted", "disallowed_request"].includes(fact?.currentRequest?.reason))
+    return getChatImageBlockedRequestCopy(language, fact.currentRequest.reason, Boolean(buildGuestImageQuotaAccessContract(fact)));
+  if (fact?.currentRequest?.reason === "active_generation" && !["queued", "generating"].includes(fact?.status)) return getChatImageUnverifiedStatusCopy(language);
   if (fact?.status === "ready") return fact.currentTurn ? getChatImageStatusCopy({ language, status: "ready" }) : getChatImageHistoricalReadyCopy(language);
   if (["queued", "generating"].includes(fact?.status)) return getChatImageStatusCopy({ language, status: "queued" });
   return getChatImageUnverifiedStatusCopy(language, fact?.status === "failed");

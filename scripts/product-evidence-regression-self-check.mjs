@@ -94,12 +94,12 @@ await check('conditional process explanation is independent of actual order look
   const text = 'What does waiting for customs mean, and can you check my order?';
   const r = await resolveJevCommerceDecision(text, { evaluate: evaluate({ route: 'store_policy', topic: 'delivery', knowledge_scope: 'business',
     knowledge_kind: 'business_question', query_source: 'current', requirement_action: 'none', request_relation: 'none', general_explanation_kind:'reported_status_meaning' },
-    { general_explanation_evidence: text }, { answer_required: true, contact_allowed: true }) });
+    { general_explanation_evidence: 'waiting for customs' }, { answer_required: true, contact_allowed: true }) });
   const decision = { ...normalizeCommerceDecision(r.value, { userText: text }), detectionSource: 'jev' };
   const routed = await resolveCommerceSearchIntent({ userText: text, searchIntent: buildProductSearchIntent(text), siteId: 's', characterId: 'c', enrichAllTurns: true,
     classifyCommerce: async () => decision, jevDecision: { ok: true, primaryIntent: 'order_lookup', orderIntent: 'lookup', productIntent: 'none', confident: true } });
   assert.equal(routed.commerceRoute, 'store_policy');
-  assert.deepEqual(routed.generalExplanationRequest, { source: 'jev', kind:'reported_status_meaning', required: true, evidence: text });
+  assert.deepEqual(routed.generalExplanationRequest, { source: 'jev', kind:'reported_status_meaning', required: true, evidence: text, subject:'waiting for customs' });
   assert.equal(routed.generalTermExplanation, true);
   assert.equal(routed.cardAllowed, false);
   assert.equal(routed.shouldLoadProductContext, false);
@@ -123,14 +123,14 @@ await check('pure lookup and forged explanation cannot inherit explanation autho
   assert.equal(fallback.generalExplanationRequest, undefined);
 });
 await check('same-call explanation kind separates meanings from case diagnosis', async () => {
-  for(const [kind,text,required] of [
-    ['term_meaning','What does player version mean?',true],
-    ['reported_status_meaning','What does awaiting customs mean, and check my parcel?',true],
+  for(const [kind,text,required,subject] of [
+    ['term_meaning','What does player version mean?',true,'player version'],
+    ['reported_status_meaning','What does awaiting customs mean, and check my parcel?',true,'awaiting customs'],
     ['case_diagnosis','Why does this shirt cost more than that one?',false],
     ['none','Check my order',false],
   ]) {
-    const r=await resolveJevCommerceDecision(text,{evaluate:evaluate({route:'product_question',topic:'other',knowledge_scope:'business',knowledge_kind:'business_question',query_source:'current',requirement_action:'none',request_relation:'none',general_explanation_kind:kind},{general_explanation_evidence:text},{answer_required:true})});
-    assert.deepEqual(r.value.generalExplanationRequest,{kind,required,evidence:text});
+    const r=await resolveJevCommerceDecision(text,{evaluate:evaluate({route:'product_question',topic:'other',knowledge_scope:'business',knowledge_kind:'business_question',query_source:'current',requirement_action:'none',request_relation:'none',general_explanation_kind:kind},{general_explanation_evidence:subject || text},{answer_required:true})});
+    assert.deepEqual(r.value.generalExplanationRequest,{kind,required,evidence:text,...(required?{subject}:{})});
     const normalized=normalizeGeneralExplanationRequest({...r.value.generalExplanationRequest,required:!required},{userText:text});
     assert.equal(normalized.required,required,'required is derived from the selected kind, not another boolean vote');
   }
@@ -267,6 +267,82 @@ await check('owned final fullname sizing searches bypass generic guidance for bo
       assert.equal((await call(method, override)).calls, 0, `${method}: closed, unowned or read-only sizing remains guidance, not a new search`);
     }
   }
+});
+await check('admitted mixed knowledge demand preserves parallel merchandise readiness and completed empty evidence', async () => {
+  const { resolveProductSearchReadiness } = await import('../server/product-search-decision-service.js');
+  const { toNoMatchReviewContext } = await import('../server/product-candidate-context-service.js');
+  const text = 'Spain shirt please';
+  const decision = { ...normalizeCommerceDecision({ route: 'product_search', topic: 'other', confidence: 1,
+    answerRequired: false, needsLiveProductData: true, searchQuery: 'Spain', knowledgeScope: 'business',
+    replyBoundary: { salesAllowed: true, contactAllowed: true }, knowledgeRequest: { kind: 'catalogue_only', evidence: text },
+    policyKnowledgeRequest: { required: true, evidence: text, query: text },
+    productRequest: { relation: 'single', action: 'new', items: [], selectedIndex: null, selectionEvidence: text },
+    productRequirement: { action: 'new', evidence: text, updates: [
+      { field: 'requestedTeam', value: 'Spain', evidence: 'Spain' }, { field: 'requestedProductType', value: 'shirt', evidence: 'shirt' }], suspectedTerm: null },
+    commerceConstraints: { team: { value: 'Spain', role: 'product_target', evidence: 'Spain' }, edition: null },
+  }, { userText: text }), detectionSource: 'jev' };
+  const routed = await resolveCommerceSearchIntent({ userText: text, searchIntent: buildProductSearchIntent(text), enrichAllTurns: true,
+    siteId: 'mixed-shop', characterId: 'mascot_mixed', classifyCommerce: async () => decision,
+    jevDecision: { ok: true, confident: true, primaryIntent: 'product_request', productIntent: 'search', productAction: 1,
+      orderIntent: 'none', imageIntent: 'none', unsupported: false, webSearchIntent: false } });
+  assert.equal(routed.customerServiceKnowledgeRequest, true); assert.equal(routed.businessKnowledgeRequired, true);
+  assert.equal(routed.searchState, 'ready_to_search', 'a parallel knowledge purpose cannot erase an admitted merchandise lookup');
+  const { classifyCommerceIntent } = await import('../server/product-intent-classifier-service.js');
+  let fallbackCalls = 0;
+  const fallbackPrimary = { ok: false, confident: false, attempts: 2, exhausted: true, llmFallbackAllowed: true };
+  const mixedText = text + ' How long is shipping?';
+  const fallbackWire = { route: 'product_search', topic: 'delivery', confidence: .99, answerRequired: true,
+    needsLiveProductData: true, searchQuery: 'Spain shirt', knowledgeScope: 'business', knowledgeQuery: mixedText,
+    knowledgeRequest: { kind: 'business_question', evidence: mixedText },
+    replyBoundary: { salesAllowed: true, contactAllowed: true }, businessInquiry: null, humanHandoff: null,
+    promotionInquiry: null, checkoutIssue: null, candidateResponse: { action: 'none', candidateId: '', evidence: '' },
+    commerceConstraints: { team: { value: 'Spain', role: 'product_target', evidence: 'Spain' }, edition: null },
+    productRequest: { relation: 'single', action: 'new', items: [], selectedIndex: null, selectionEvidence: mixedText },
+    productRequirement: { action: 'new', evidence: mixedText, updates: [
+      { field: 'requestedTeam', value: 'Spain', evidence: 'Spain' }, { field: 'requestedProductType', value: 'shirt', evidence: 'shirt' }], suspectedTerm: null } };
+  const fallback = await resolveCommerceSearchIntent({ userText: mixedText, searchIntent: buildProductSearchIntent(mixedText), enrichAllTurns: true,
+    siteId: 'mixed-shop', characterId: 'mascot_mixed', jevDecision: fallbackPrimary,
+    classifyCommerce: (userText, options) => classifyCommerceIntent(userText, { ...options,
+      config: { apiKey: 'fixture', model: 'fixture', baseUrl: 'https://fixture.invalid/v1' },
+      resolveJevCommerce: async () => { throw Error('Primary JEV was already exhausted'); },
+      fetchImpl: async () => { fallbackCalls++; return new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(fallbackWire) } }] })); },
+    }) });
+  assert.equal(fallbackCalls, 1); assert.equal(fallback.primarySearchVerified, false);
+  assert(fallback.shouldLoadProductContext && fallback.cardAllowed && fallback.customerServiceKnowledgeRequest,
+    JSON.stringify({ route: fallback.commerceRoute, source: fallback.commerceClassificationFailure, scope: fallback.productScopeReason,
+      shouldLoad: fallback.shouldLoadProductContext, cards: fallback.cardAllowed, knowledge: fallback.customerServiceKnowledgeRequest }));
+  assert.equal(fallback.searchState, 'ready_to_search', 'the existing exhausted-JEV fallback admission needs no second primary-verification gate');
+  const fallbackProduced = await resolveGuestProductRecommendation({ execute: async () => [[{ id: 'mixed-shop', slug: 'fixture', site_status: 'active', guest_chat_enabled: 1, product_api_url: 'https://catalogue.invalid/products' }]] },
+    { guest: { site_id: 'mixed-shop', site_slug: 'fixture', mascot_character_id: 'mascot_mixed' }, userText: mixedText, precomputedSearchIntent: fallback,
+      searchProducts: async input => { assert.equal(input.searchIntent.searchState, 'ready_to_search'); return { ok: true, site: { id: 'mixed-shop' }, searchState: 'ready_to_search', searchOutcome: 'no_match', items: [] }; } });
+  const fallbackProjection = toNoMatchReviewContext(fallbackProduced.context, { searchIntent: fallbackProduced.searchIntent, siteId: 'mixed-shop', characterId: 'mascot_mixed' });
+  assert(fallbackProjection, 'a genuinely completed fallback empty query is not vetoed by a parallel knowledge obligation');
+  const { buildProductContextLayer } = await import('../server/chat-prompt-layers.js');
+  const { buildReplyReviewMessages } = await import('../server/chat-reply-review-contracts.js');
+  const character = { id: 'mascot_mixed', category_id: 'mascot', categoryId: 'mascot', site_id: 'mixed-shop' }, trustedSite = { id: 'mixed-shop' };
+  assert(buildProductContextLayer(character, fallbackProduced.context, mixedText).content.includes(JSON.stringify({ noMatchContext: fallbackProjection })));
+  const review = JSON.parse(buildReplyReviewMessages({ searchIntent: fallback, productContext: fallbackProduced.context, evidenceRequired: true,
+    characterId: character.id, siteId: trustedSite.id, catalogueOwner: { character, trustedSite } }).findLast(row => row.role === 'user').content);
+  assert.deepEqual(review.evidence.noMatchContext, fallbackProjection);
+  let sourceCalls = 0;
+  const produced = await resolveGuestProductRecommendation({ execute: async () => [[{ id: 'mixed-shop', slug: 'fixture', site_status: 'active', guest_chat_enabled: 1, product_api_url: 'https://catalogue.invalid/products' }]] },
+    { guest: { site_id: 'mixed-shop', site_slug: 'fixture', mascot_character_id: 'mascot_mixed' }, userText: text, precomputedSearchIntent: routed,
+      searchProducts: async input => { sourceCalls++; assert.equal(input.searchIntent.searchState, 'ready_to_search');
+        return { ok: true, site: { id: 'mixed-shop', slug: 'fixture' }, searchState: 'ready_to_search', searchOutcome: 'no_match', items: [] }; } });
+  assert.equal(sourceCalls, 1); assert.equal(produced.context.searchOutcome, 'no_match');
+  assert(toNoMatchReviewContext(produced.context, { searchIntent: produced.searchIntent, siteId: 'mixed-shop', characterId: 'mascot_mixed' }));
+  for (const patch of [{ commerceRoute: 'store_policy' }, { commerceRoute: 'product_question' }, { shouldLoadProductContext: false },
+    { primarySearchBlocked: true }, { cardAllowed: false }, { replyBoundary: { salesAllowed: false } }, { replyBoundary: {} },
+    { sourceErrorCode: 'timeout' }, { searchState: 'source_error' }, { searchState: 'clarification_exhausted' },
+    { commerceClassificationUnavailable: true }, { nonShoppingReason: 'declined' }, { teamConstraintUnverified: true }, { productRequestUnverified: true }]) {
+    assert.notEqual(resolveProductSearchReadiness({ ...routed, ...patch }), 'ready_to_search', 'knowledge alone never reopens a closed, unadmitted or failed product lane');
+  }
+  assert.notEqual(resolveProductSearchReadiness({ customerServiceKnowledgeRequest: true, shouldLoadProductContext: true, requestedTeam: 'Spain' }),
+    'ready_to_search', 'a lexical shouldLoad hint is not final action admission');
+  for (const patch of [{ productScopePending: true }, { scopeUnverified: true }, { customizationRequest: 'ambiguous' },
+    { correctionSuggestion: { corrected: true }, candidateSearchAllowed: false }])
+    assert.equal(resolveProductSearchReadiness({ ...routed, ...patch }), 'needs_clarification');
+  assert.equal(resolveProductSearchReadiness({ ...routed, productScopePending: true, searchState: 'clarification_exhausted' }), 'clarification_exhausted');
 });
 if (failures.length) { console.error(failures.join('\n')); process.exitCode = 1; }
 else console.log(`Product evidence regression: ${checks} checks passed (isolated contracts; no external calls).`);

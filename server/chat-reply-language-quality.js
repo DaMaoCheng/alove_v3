@@ -65,7 +65,16 @@ export function languageQualityPassed(result, { retained = false } = {}) {
 
 export function guardLanguageQualityReply(replyResult, language) {
   const text = buildLanguageQualityFallbackReply(language);
-  return { ...replyResult, text, displayText: text, speechText: text, sourceType: "system", sourceRef: "language-quality-guard",
+  return withFallbackVoiceLanguage({ ...replyResult, text, displayText: text, speechText: text, sourceType: "system", sourceRef: "language-quality-guard",
     degraded: true, degradationReason: "language_quality_unverified", answerRequired: true,
-    verifiedDiscountOffers: [], discountOfferReply: false };
+    verifiedDiscountOffers: [], discountOfferReply: false }, language);
+}
+
+// A server-written fallback cannot inherit the rejected draft's language.
+// Preserve voice identity/provider and leave accepted/missing metadata alone.
+export function withFallbackVoiceLanguage(replyResult, language) {
+  if (!replyResult?.voiceMeta) return replyResult;
+  const target = normalizeCharacterLanguage(language) || normalizeCharacterLanguage(String(language).split(/[-_]/)[0]) || normalizeCharacterLanguage('en');
+  if (replyResult.voiceMeta.languageCode === target.code && replyResult.voiceMeta.languageLabel === target.label) return replyResult;
+  return { ...replyResult, voiceMeta: { ...replyResult.voiceMeta, languageCode: target.code, languageLabel: target.label } };
 }

@@ -31,3 +31,31 @@ for (const apiMode of ['chat_completions', 'responses']) {
   assert.equal(current.content[1].type, apiMode === 'responses' ? 'input_image' : 'image_url');
 }
 console.log('repair feedback: bounded original, validated failure fragments, unknown and protocol exclusions');
+
+const noSourceLayer={id:'site_product_context',title:'Site Product Context',content:'No confirmed catalogue match was returned; use Search.'};
+const actionLayer={id:'real_action',title:'Order access',content:'Verified current order entry requires sign in.'};
+const sourcePrompt={...prompt,systemPrompt:[noSourceLayer,actionLayer].map(l=>`## ${l.title}\n${l.content}`).join('\n\n'),layers:[noSourceLayer,actionLayer],messages:[{role:'user',content:'Is shipping tracked?'},{role:'assistant',content:'The shipping policy verifies tracked shipping.'},{role:'user',content:'When will the link arrive?'}]};
+const sourceCorrection={kind:'owned_business_text',knowledgeState:'unavailable',imageStatus:null,capabilities:{orderEntry:null,feedbackActionAvailable:true}};
+const limited=appendRepairFeedback(sourcePrompt,feedback,sourceCorrection);
+assert.deepEqual(limited.messages.map(message=>message.role),sourcePrompt.messages.map(message=>message.role),'Source reduction must preserve prior answer boundaries, never join old and current USER turns as a new multi-part request');
+assert(limited.messages.filter(message=>message.role==='assistant').every(message=>message.content.includes('A prior assistant reply occurred here')&&!message.content.includes('tracked shipping')),'Historical assistant fact content is withheld, not reinstated as policy evidence');
+assert.equal(limited.messages.filter(message=>message.role==='user').length,2,'Keep all actual USER context, not just a disconnected latest question');
+assert(!limited.systemPrompt.includes(noSourceLayer.content),'No-product support recovery must not carry an unrelated product no-match instruction');
+assert(limited.systemPrompt.includes(actionLayer.content),'Real current action instructions must be retained');
+assert(limited.systemPrompt.includes('unavailable'),'The actual source failure is distinct from a completed empty search');
+for(const patch of [{knowledgeState:'verified'},{imageStatus:{kind:'generated',status:'ready',currentTurn:true}},{kind:'other'}]) {
+ const other=appendRepairFeedback(sourcePrompt,feedback,{...sourceCorrection,...patch});
+ assert.deepEqual(other.messages.slice(0,-1),sourcePrompt.messages.slice(0,-1),'Supported ordinary and mixed image rewrites keep their exact original history');
+ assert(other.systemPrompt.includes(noSourceLayer.content));
+}
+assert.deepEqual(sourcePrompt.messages,[{role:'user',content:'Is shipping tracked?'},{role:'assistant',content:'The shipping policy verifies tracked shipping.'},{role:'user',content:'When will the link arrive?'}],'Recovery does not mutate the original generation prompt');
+console.log('Owned evidence-free correction: USER/source/capability projection, intact prior-answer boundaries without assistant fact inheritance, no-product layer removal and unchanged verified/image/ordinary recovery passed');
+
+const defaultRecovery=appendRepairFeedback(sourcePrompt,feedback);
+assert.deepEqual(defaultRecovery.messages.slice(0,-1),sourcePrompt.messages.slice(0,-1),'Unscoped ordinary rewrites remain unchanged, including candidate and product context managed by their own recovery');
+const longerHistory={...sourcePrompt,messages:[{role:'assistant',content:'Opening line'},...sourcePrompt.messages.slice(0,-1),{role:'assistant',content:'A separate prior reply'},sourcePrompt.messages.at(-1)]};
+const projectedHistory=appendRepairFeedback(longerHistory,feedback,sourceCorrection);
+assert.deepEqual(projectedHistory.messages.map(message=>message.role),longerHistory.messages.map(message=>message.role));
+assert.equal(projectedHistory.messages.length,longerHistory.messages.length);
+assert(projectedHistory.messages.at(-1).content.startsWith(sourcePrompt.messages.at(-1).content));
+console.log('Source-only regeneration retains exact message role/order/count and the current USER boundary for one and multiple historical assistant replies');

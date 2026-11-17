@@ -3,6 +3,7 @@ import * as replyLog from "./ai-reply-log-service.js";
 import { applyChatImageCommercePolicy } from "./chat-image-commerce-policy-service.js";
 import { createId } from "./security.js";
 import { getChatImageStatusCopy } from "./chat-image-copy-service.js";
+import { GUEST_IMAGE_QUOTA_ACCESS_CONTRACT } from './chat-image-status-context-service.js';
 import {
   CHAT_IMAGE_STATUSES,
   hasActiveChatImageGeneration,
@@ -399,8 +400,7 @@ function buildGuestImageResult({ taskCreated = false, reason = "", trigger = nul
         ]
       : reason === CHAT_IMAGE_BLOCK_REASONS.QUOTA_EXHAUSTED
         ? [
-            "This guest has already completed the one available guest image.",
-            "Do not create or promise another image. Clearly invite the guest to register or sign in to continue with image generation.",
+            GUEST_IMAGE_QUOTA_ACCESS_CONTRACT,
             "Use the current site or conversation language and keep the invitation natural; do not mention internal quota names or implementation details.",
           ]
         : [
@@ -417,6 +417,7 @@ function buildGuestImageResult({ taskCreated = false, reason = "", trigger = nul
       reason: taskCreated ? CHAT_IMAGE_REPLY_REASONS.IMAGE_TASK_CREATED : reason,
       taskCreated,
       libraryDelivered,
+      ...(!taskCreated && reason === CHAT_IMAGE_BLOCK_REASONS.QUOTA_EXHAUSTED ? { guestQuotaAccess: true } : {}),
       trigger,
       instruction: instructions.join("\n"),
     },

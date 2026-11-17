@@ -78,10 +78,15 @@ for(const [patch,reason] of [
 ]) {
  const result=await assessSequence([{...good,...patch},good]);
  assert.equal(calls,2,'only a malformed protocol may reach the existing backup');
- assert.equal(result.reviewStatus,'valid');assert.deepEqual(result.protocolFailures,[reason]);
+ assert.equal(result.reviewStatus,'valid');assert.deepEqual(result.protocolFailures,[]);assert.deepEqual(result.protocolFailureHistory,[reason]);
 }
 const parsedBackup=await assessSequence(['{broken',good]);
-assert.equal(calls,2);assert.equal(parsedBackup.reviewStatus,'valid');assert.deepEqual(parsedBackup.protocolFailures,['invalid_json']);
+assert.equal(calls,2);assert.equal(parsedBackup.reviewStatus,'valid');assert.deepEqual(parsedBackup.protocolFailures,[]);assert.deepEqual(parsedBackup.protocolFailureHistory,['invalid_json']);
+const recoveredRefusal=await assessSequence([{...good,businessClaimAudit:[]},
+ {...good,allowed:false,businessFactsSupported:false,businessClaimAudit:ok.map(x=>({...x,supported:false,referenceIds:[]}))}]);
+assert.equal(calls,2);assert.equal(recoveredRefusal.reviewStatus,'valid');assert.equal(recoveredRefusal.allowed,false,
+ 'A protocol-recovered semantic rejection remains a rejection, never approval');
+assert.deepEqual(recoveredRefusal.protocolFailures,[]);assert.deepEqual(recoveredRefusal.protocolFailureHistory,['claim_count']);
 for(const rejected of [
  {...good,allowed:false,businessFactsSupported:false,businessClaimAudit:ok.map(x=>({...x,supported:false,referenceIds:[]}))},
  {...good,allowed:false,businessFactsSupported:false,businessClaimAudit:ok.map(x=>({...x,replyPreservesException:false}))},
@@ -105,6 +110,11 @@ assert.equal(guarded.text,buildLanguageQualityFallbackReply('en'),'protocol fail
 assert.deepEqual(terminal.reviewProtocol,{initial:['claim_count','claim_count']});
 const logged=JSON.parse(buildReplyReviewLogEvent(terminal).errorMessage);
 assert.deepEqual(logged.protocol,{initial:['claim_count','claim_count']});
+let recoveredEvent;
+await enforceReplyBoundary({replyResult:{text:'A source-reviewed reply.'},character:{category_id:'mascot'},
+ searchIntent:{commerceRoute:'store_policy',knowledgeScope:'business',commerceTopic:'support',answerRequired:true},
+ knowledgeContext:options.knowledgeContext,language:'en',assess:async()=>parsedBackup,recordReview:async event=>{recoveredEvent=event;}});
+assert.deepEqual(recoveredEvent.reviewProtocol,{initial:['invalid_json']},'Recovered protocol history remains in the existing bounded diagnostic log');
 const unsafe=buildReplyReviewLogEvent({reviewStatus:'invalid_fields',reviewProtocol:{initial:['secret-body','claim_units'],corrected:['claim_references']}});
 assert(!unsafe.errorMessage.includes('secret-body'));assert.deepEqual(JSON.parse(unsafe.errorMessage).protocol,{initial:['claim_units'],corrected:['claim_references']});
 const maxLog=buildReplyReviewLogEvent({reviewStatus:'invalid_fields',failedContracts:['boundary','language','factual','evidence','guidance','business_facts','product_scope','candidate_confirmation','image_status','guest_benefit','factual_limitation','confidence'],
@@ -215,45 +225,45 @@ const capabilityOptions = { ...complaintAuditOptions, feedbackActionAvailable: t
  searchIntent: { ...complaintAuditOptions.searchIntent, humanHandoff: { reviewReason: 'size_exchange' } } };
 for (const items of [[], [{id:'policy',content:'Shipping may take several days.'}]]) {
  const ctx = buildBusinessClaimContext({...capabilityOptions,knowledgeContext:{...capabilityOptions.knowledgeContext,items}});
- const cap = ctx.references.find(r=>r.id==='a0');
+ const cap = ctx.references.find(r=>r.id==='a0.sizeExchange');
  assert(cap, 'attached server actions need an audit reference even with policy knowledge');
  const data = JSON.parse(cap.text);
  assert.equal(data.sizeExchangeRequestAvailable,true);
- assert.equal(data.orderEntry,'login_required');
- const entries=ctx.units.map(u=>({unitId:u.id,factual:true,referenceIds:['a0'],supported:true,sourceAllowsException:false,replyPreservesException:true}));
+ assert.equal(JSON.parse(ctx.references.find(r=>r.id==='a0.orderEntry').text).orderEntry,'login_required');
+ const entries=ctx.units.map(u=>({unitId:u.id,factual:true,referenceIds:['a0.sizeExchange'],supported:true,sourceAllowsException:false,replyPreservesException:true}));
  assert.equal(validateBusinessClaimAudit(entries,ctx).valid,true);
  assert.equal(validateBusinessClaimAudit(entries.map(e=>({...e,referenceIds:[]})),ctx).valid,false);
  assert.equal(validateBusinessClaimAudit(entries.map(e=>({...e,supported:false})),ctx).accepted,false);
 }
 for (const patch of [{feedbackActionAvailable:false,orderActionState:null},{orderActionState:null,boundary:{contactAllowed:false}},{orderActionState:null,searchIntent:{...capabilityOptions.searchIntent,replyBoundary:{contactAllowed:false}}}]) {
- assert(!buildBusinessClaimContext({...capabilityOptions,...patch}).references.some(r=>r.id==='a0'), 'absent actions or contact refusal never authorize exchange');
+ assert(!buildBusinessClaimContext({...capabilityOptions,...patch}).references.some(r=>r.id==='a0.sizeExchange'), 'absent actions or contact refusal never authorize exchange');
 }
 console.log('server action audit reference checks passed');
 for (const orderActionState of ['login_required','binding_required','available']) {
  const ctx=buildBusinessClaimContext({...capabilityOptions,feedbackActionAvailable:false,orderActionState});
- const cap=JSON.parse(ctx.references.find(r=>r.id==='a0').text);
- assert.equal(cap.orderEntry,orderActionState);assert.equal(cap.sizeExchangeRequestAvailable,false);
+ const cap=JSON.parse(ctx.references.find(r=>r.id==='a0.orderEntry').text);
+ assert.equal(cap.orderEntry,orderActionState);assert(!('sizeExchangeRequestAvailable' in cap));
 }
 const {buildBusinessReviewCapability}=await import('../server/business-claim-audit-service.js');
 assert.equal(buildBusinessReviewCapability({feedbackActionAvailable:true,searchIntent:{humanHandoff:{reviewReason:'other'}}}),null);
 console.log('order-only capability and non-exchange isolation passed');
 const sizingCapabilityOptions={...options,knowledgeContext:{items:[]},sizingConversationContext:{tentative:false,latestUserMessage:'Help me choose a size.',recentConversation:[]},text:'To help choose a size, which shirt do you mean?',speechText:'To help choose a size, which shirt do you mean?'};
 const sizingCapabilityContext=buildBusinessClaimContext(sizingCapabilityOptions);
-const sizingCapabilityRef=sizingCapabilityContext.references.find(r=>r.id==='a0');
+const sizingCapabilityRef=sizingCapabilityContext.references.find(r=>r.id==='a0.sizingClarification');
 assert(sizingCapabilityRef,'sizing clarification needs a referenceable conversational capability');
 assert.equal(JSON.parse(sizingCapabilityRef.text).sizingClarificationAvailable,true);
-const sizingCapabilityAudit=sizingCapabilityContext.units.map(u=>({unitId:u.id,factual:true,referenceIds:['a0'],supported:true,sourceAllowsException:false,replyPreservesException:true}));
+const sizingCapabilityAudit=sizingCapabilityContext.units.map(u=>({unitId:u.id,factual:true,referenceIds:['a0.sizingClarification'],supported:true,sourceAllowsException:false,replyPreservesException:true}));
 assert.equal(validateBusinessClaimAudit(sizingCapabilityAudit,sizingCapabilityContext).accepted,true);
 assert.equal(validateBusinessClaimAudit(sizingCapabilityAudit.map(e=>({...e,referenceIds:[]})),sizingCapabilityContext).valid,false);
 assert.equal(validateBusinessClaimAudit(sizingCapabilityAudit.map(e=>({...e,supported:false})),sizingCapabilityContext).accepted,false);
 assert.equal(buildBusinessReviewCapability({...sizingCapabilityOptions,sizingConversationContext:null}),null);
-assert.equal(JSON.parse(sizingCapabilityRef.text).sizeExchangeRequestAvailable,false);
-assert.equal(JSON.parse(sizingCapabilityRef.text).orderEntry,null);
+assert(!('sizeExchangeRequestAvailable' in JSON.parse(sizingCapabilityRef.text)));
+assert(!('orderEntry' in JSON.parse(sizingCapabilityRef.text)));
 console.log('sizing clarification capability isolation passed');
 assert.equal(buildBusinessReviewCapability({...sizingCapabilityOptions,sizingRequired:true}),null,'resolved chart review must not gain a clarification capability');
 for (const claim of ['Size M has a 100 cm chest.','This size will fit you.','The chart is on the product page.','That size is in stock.','I already searched the products.']) {
  const ctx=buildBusinessClaimContext({...sizingCapabilityOptions,text:claim,speechText:claim});
- const refused=ctx.units.map(u=>({unitId:u.id,factual:true,referenceIds:['a0'],supported:false,sourceAllowsException:false,replyPreservesException:false}));
+ const refused=ctx.units.map(u=>({unitId:u.id,factual:true,referenceIds:['a0.sizingClarification'],supported:false,sourceAllowsException:false,replyPreservesException:false}));
  const verdict=await assessReplyBoundary({...sizingCapabilityOptions,text:claim,speechText:claim,fetchImpl:fetchImpl({allowed:false,businessFactsSupported:false,businessClaimAudit:refused})});
  assert.equal(verdict.allowed,false,'a capability reference cannot override a semantic factual refusal');
  assert.equal(verdict.businessFactsSupported,false);

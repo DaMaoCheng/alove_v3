@@ -6,7 +6,7 @@ import { buildCommerceClassificationFailureReply } from "./commerce-classificati
 import { finalizeProductCandidateState } from "./product-candidate-state-service.js";
 import { getCandidateAttributeReferenceState } from './product-candidate-reference-service.js';
 import { getCandidateConfirmationProduct } from './product-candidate-confirmation-service.js';
-import { productScopeResultLabel } from "./product-request-scope-copy.js";
+import { productScopeResultLabel, hasProductScopeResultLabel } from "./product-request-scope-copy.js";
 import { shouldSkipOrderLookupForCheckout } from "./checkout-support-guidance.js";
 import { buildProductSearchIntent, buildRecentProductContext } from "./product-intent-service.js";
 import { prepareChatIntentTurn } from "./chat-intent-turn-service.js";
@@ -323,7 +323,7 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
       ? reply.speechText || normalizedReplyText
       : resolveReplySpeechText({ ...reply, speechText: normalizedReplyText }, normalizedReplyText, prepared.text, reply.sourceType || "ai");
     const scopeLabel = productScopeResultLabel(productRecommendation.searchIntent, { languageCode: languagePreference.languageCode || "en" });
-    const scopedText = scopeLabel && !String(normalizedReplyText).startsWith(scopeLabel) && !isAiTransportFallback(reply)
+    const scopedText = scopeLabel && !hasProductScopeResultLabel(normalizedReplyText, scopeLabel) && !isAiTransportFallback(reply)
       ? `${scopeLabel}\n\n${normalizedReplyText}` : normalizedReplyText;
     const scopedReply = { ...reply, text: scopedText, displayText: scopedText,
       speechText: scopedText !== normalizedReplyText ? `${scopeLabel}\n\n${normalizedSpeechText}` : normalizedSpeechText };
@@ -340,7 +340,7 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
       if (!recoveryPrompt) return null;
       return prepareGeneratedReply(await generateChatReply({
         deferIdentityToBoundaryReview: true,
-        promptContext: appendRepairFeedback(recoveryPrompt, recovery?.repairFeedback), userText: prepared.text, logContext: generationLogContext, regeneration: true, regenerationTimeoutMs: recovery?.timeoutMs, regenerationRecordDiagnostic: recovery?.recordDiagnostic, regenerationProvider: previousReply, regenerationUseAlternateProvider: recovery?.kind === "purpose",
+        promptContext: appendRepairFeedback(recoveryPrompt, recovery?.repairFeedback, recovery?.sourceContext), userText: prepared.text, logContext: generationLogContext, regeneration: true, regenerationTimeoutMs: recovery?.timeoutMs, regenerationRecordDiagnostic: recovery?.recordDiagnostic, regenerationProvider: previousReply, regenerationUseAlternateProvider: recovery?.kind === "purpose",
       }));
     } });
   if (classificationFailureReply) reply = withChatImageReplySnapshot(reply, chatImageContext);

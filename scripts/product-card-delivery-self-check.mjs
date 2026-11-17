@@ -81,3 +81,12 @@ check(candidateRepairPrompt.includes('explicitly identify every relevant unknown
   'an actual unconfirmed candidate retains required unknown-attribute disclosure');
 check(repaired.productScopeVerified!==true && repaired.candidateEvidenceVerified!==true,'new corrective caption is not an approval or card permission');
 console.log(`product card delivery self-check passed: ${checks} deterministic checks; no DB, network or model calls`);
+
+const chooseAway = {...context,suppressedProductKeys:['shop:id:home']};
+const awayLayer = buildProductContextLayer(character,chooseAway,'2026');
+assert(awayLayer.content.includes('Current card-caption products:'),'Generation must distinguish the actual caption subject from the reference pool');
+const captionPart=awayLayer.content.split('Current card-caption products:')[1].split('Other catalogue references')[0];
+assert(captionPart.includes('Barcelona Away Shirt'));assert(!captionPart.includes('Barcelona Home Shirt'));
+assert(awayLayer.content.includes('Other catalogue references')&&awayLayer.content.includes('Barcelona Home Shirt'),'Valid comparisons retain separate verified references');
+assert(buildReplyReviewMessages({productContext:chooseAway,boundaryReviewRequired:true}).some(m=>m.role==='system'&&m.content.includes('Talking only about another old or unselected item')));
+console.log('Actual caption subjects are structurally partitioned from catalogue comparison references');

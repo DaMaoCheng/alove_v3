@@ -9,7 +9,9 @@ import { redactContactEmailsForPrompt } from './chat-prompt-utils.js';
 import { sanitizeProductAlternative, sanitizeCandidateUnknownFields } from "../shared/product-candidate-fields.js";
 import { normalizeProductAttributeEvidence } from "./product-attribute-evidence-service.js";
 import { getCandidateConfirmationProduct } from './product-candidate-confirmation-service.js';
-import { readProductCandidateState } from './product-candidate-state-service.js';
+import { readProductCandidateState, normalizeProductCandidateRequirements } from './product-candidate-state-service.js';
+import { readProductRequestState, productRequestOwnerEvidence } from './product-request-scope-service.js';
+import { hasAdmittedProductSearch } from './product-search-decision-service.js';
 
 // Canonical site mascots can be shared characters whose legacy site field is
 // different. Only the trusted current site's explicit binding grants that role.
@@ -59,15 +61,36 @@ export const PRODUCT_NO_MATCH_CONTEXT_CONTRACT = 'noMatchContext describes only 
 
 // The empty successful source and the owned USER target are separate facts.
 // Neither creates a catalogue item, identity confirmation or card permission.
+// Requested USER specifications needing interpretation are available before
+// any catalogue source exists. This projection grants no product/action facts.
+export function toUnresolvedProductRequirementContext(searchIntent = {}, { character = {}, trustedSite = null } = {}) {
+  const siteId = String(trustedSite?.id || character.site_id || character.siteId || '');
+  if (!isCurrentCatalogueOwner({ character, trustedSite, siteId }) || !['product_search', 'product_question'].includes(searchIntent.commerceRoute)
+    || searchIntent.shouldLoadProductContext !== false || searchIntent.cardAllowed !== false || searchIntent.searchState !== 'needs_clarification'
+    || searchIntent.primarySearchBlocked || searchIntent.nonShoppingReason || searchIntent.replyBoundary?.salesAllowed === false || searchIntent.commerceClassificationFailure
+    || searchIntent.commerceClassificationUnavailable || searchIntent.productCandidateInterpretationUnverified
+    || searchIntent.scopeUnverified || searchIntent.productScopePending || searchIntent.sourceErrorCode) return null;
+  const location = { siteId, characterId: character.id };
+  const state = readProductCandidateState([{ senderType: 'character', productCandidateState: searchIntent.productCandidateState }], location);
+  if (state?.status !== 'active' || (!state.unresolvedRequirements?.length && searchIntent.productCandidateInterpretationReason !== 'missing_current_update')
+    || JSON.stringify(state.requirements) !== JSON.stringify(normalizeProductCandidateRequirements(searchIntent))) return null;
+  if (state.owner === 'selected' || searchIntent.productRequestState != null) {
+    const scope = readProductRequestState([{ senderType: 'character', productRequestState: searchIntent.productRequestState }], location);
+    if (state.owner === 'selected' ? scope?.status !== 'selected' || scope.selectedIndex !== state.selectedIndex || productRequestOwnerEvidence(scope) !== state.ownerEvidence
+      : scope?.status !== 'cleared') return null;
+  }
+  return { targetEvidence: state.targetEvidence, requirements: state.requirements, unresolvedRequirements: state.unresolvedRequirements || [],
+    ...(searchIntent.productCandidateInterpretationReason === 'missing_current_update' ? { currentUpdateMissing: true } : {}) };
+}
+
 export function toNoMatchReviewContext(productContext, { searchIntent, characterId = '', siteId = '' } = {}) {
   const intent = searchIntent || productContext?.searchIntent;
   // This is wording evidence after a completed search, never action permission.
-  // Preserve the strong-primary path; an uncertain primary may already have
-  // allowed the existing commerce fallback to execute an owned pure lookup.
-  const commerceOwned = value => value?.businessKnowledgeRequired === false && value.primarySearchBlocked === false
-    && Number.isFinite(value.commerceConfidence) && value.commerceConfidence >= .8 && value.commerceConfidence <= 1;
+  // Preserve legacy primary provenance. A completed lookup admitted by the
+  // existing fallback has the same source truth, independent of its optional
+  // classification score or concurrent knowledge purpose.
   const searchEvidenceVerified = intent?.primarySearchVerified === true && productContext?.searchIntent?.primarySearchVerified === true
-    || commerceOwned(intent) && commerceOwned(productContext?.searchIntent);
+    || hasAdmittedProductSearch(intent) && hasAdmittedProductSearch(productContext?.searchIntent);
   if (!intent || !characterId || !siteId || productContext?.siteId !== siteId || productContext?.sourceType !== 'product_api'
     || !['site-product-no-match', 'guest-site-product-no-match'].includes(productContext.sourceRef)
     || productContext.searchOutcome !== 'no_match' || !Array.isArray(productContext.products) || productContext.products.length
@@ -81,11 +104,35 @@ export function toNoMatchReviewContext(productContext, { searchIntent, character
     || intent.primarySearchBlocked || intent.shouldLoadProductContext !== true
     || intent.cardAllowed !== true || productContext.cardAllowed !== true || intent.nonShoppingReason || intent.sourceErrorCode
     || intent.commerceClassificationFailure || intent.commerceClassificationUnavailable || intent.productCandidateInterpretationUnverified
-    || intent.teamConstraintUnverified || intent.scopeUnverified || intent.productScopePending || intent.productRequestState
+    || intent.teamConstraintUnverified || intent.scopeUnverified || intent.productScopePending || intent.productRequestUnverified
     || intent.businessInquiry || intent.humanHandoff || intent.checkoutIssue || intent.promotionInquiry || intent.discountExplanationRequired) return null;
   const location = { siteId: productContext.siteId, characterId };
   const read = value => readProductCandidateState([{ senderType: 'character', productCandidateState: value }], location);
   const state = read(intent.productCandidateState), contextState = read(productContext.searchIntent?.productCandidateState);
+  if (intent.productRequestState || productContext.searchIntent?.productRequestState) {
+    const sourceIntent = productContext.searchIntent;
+    const scope = readProductRequestState([{ senderType: 'character', productRequestState: intent.productRequestState }], location);
+    const sourceScope = readProductRequestState([{ senderType: 'character', productRequestState: sourceIntent.productRequestState }], location);
+    if (scope?.status !== 'selected' || sourceScope?.status !== 'selected' || scope.selectedIndex !== sourceScope.selectedIndex
+      || productRequestOwnerEvidence(scope) !== productRequestOwnerEvidence(sourceScope) || JSON.stringify(scope) !== JSON.stringify(sourceScope)
+      || sourceIntent.scopeUnverified || sourceIntent.productScopePending || sourceIntent.productRequestUnverified
+      || sourceIntent.cardAllowed !== true || sourceIntent.shouldLoadProductContext !== true
+      || JSON.stringify(normalizeProductCandidateRequirements(intent)) !== JSON.stringify(normalizeProductCandidateRequirements(sourceIntent))) return null;
+    // A selected USER scope can execute a real lookup without an identity-
+    // candidate state. If either side has a candidate, both must prove the same
+    // selected target; it cannot be discarded to bypass its stricter boundary.
+    if (intent.productCandidateState != null || sourceIntent.productCandidateState != null) {
+      const bothCleared = state?.status === 'cleared' && contextState?.status === 'cleared' && JSON.stringify(state) === JSON.stringify(contextState);
+      if (!bothCleared && (state?.status !== 'active' || state.owner !== 'selected' || state.selectedIndex !== scope.selectedIndex
+        || state.ownerEvidence !== productRequestOwnerEvidence(scope) || state.suspectedTerm
+        || state.proposal && state.proposal.status !== 'rejected' || JSON.stringify(state) !== JSON.stringify(contextState)
+        || JSON.stringify(state.requirements) !== JSON.stringify(normalizeProductCandidateRequirements(intent)))) return null;
+    }
+    const item = scope.items[scope.selectedIndex];
+    return { searchOutcome: 'no_match', requirements: normalizeProductCandidateRequirements(intent),
+      userConditionEvidence: [...new Set([item.evidence, item.sharedEvidence, ...(item.updates || []), ...(state?.requestedConditionEvidence || [])]
+        .filter(Boolean))].map(redactContactEmailsForPrompt), rejectedCandidate: state?.proposal?.status === 'rejected' };
+  }
   if (state?.status !== 'active' || state.owner !== 'single' || state.suspectedTerm
     || state.proposal && state.proposal.status !== 'rejected' || JSON.stringify(state) !== JSON.stringify(contextState)
     || JSON.stringify(state.requirements) !== JSON.stringify(read({ ...state, requirements: intent })?.requirements)) return null;

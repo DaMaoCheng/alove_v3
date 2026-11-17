@@ -142,6 +142,14 @@ export function productScopeResultLabel(searchIntent = {}, { languageCode = "en"
     ? `${copyFor(languageCode)[3]}: “${items[index]}”` : "";
 }
 
+export function hasProductScopeResultLabel(replyText, canonicalLabel) {
+  // Compare the complete server label only; leave both the label and reply
+  // untouched. A different target/specification remains visible to review.
+  const normalized = value => String(value || '').replace(/\s+/gu, ' ').trim().toLowerCase();
+  const label = normalized(canonicalLabel);
+  return Boolean(label && normalized(replyText).startsWith(label));
+}
+
 export function buildProductScopeUnverifiedResultCopy(searchIntent = {}, { languageCode = "en" } = {}) {
   return searchIntent.scopeUnverified === true || searchIntent.productScopePending === true
     || ["pending", "selected"].includes(searchIntent.productRequestState?.status) ? copyFor(languageCode)[4] : "";

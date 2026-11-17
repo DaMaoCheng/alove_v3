@@ -80,10 +80,20 @@ export function mergeProductRequirement(current = {}, recent = {}, { reuseRecent
   return merged;
 }
 
+// Read only final routing permissions; this never grants or recomputes them.
+export function hasAdmittedProductSearch(intent = {}) {
+  return intent.commerceRoute === 'product_search' && intent.shouldLoadProductContext === true
+    && intent.primarySearchBlocked === false && intent.cardAllowed === true
+    && intent.replyBoundary?.salesAllowed === true && !intent.nonShoppingReason && !intent.sourceErrorCode
+    && ![PRODUCT_SEARCH_STATE.SOURCE_ERROR, PRODUCT_SEARCH_STATE.CLARIFICATION_EXHAUSTED].includes(intent.searchState) && !intent.commerceClassificationFailure
+    && !intent.commerceClassificationUnavailable && !intent.productCandidateInterpretationUnverified && !intent.unresolvedProductReference
+    && !intent.teamConstraintUnverified && !intent.productRequestUnverified && !hasPendingProductRequest(intent);
+}
+
 export function resolveProductSearchReadiness(intent = {}) {
   if (hasPendingProductRequest(intent)) return intent.searchState === PRODUCT_SEARCH_STATE.CLARIFICATION_EXHAUSTED
     ? PRODUCT_SEARCH_STATE.CLARIFICATION_EXHAUSTED : PRODUCT_SEARCH_STATE.NEEDS_CLARIFICATION;
-  if (intent.customerServiceKnowledgeRequest) return PRODUCT_SEARCH_STATE.NOT_PRODUCT;
+  if (intent.customerServiceKnowledgeRequest && !hasAdmittedProductSearch(intent)) return PRODUCT_SEARCH_STATE.NOT_PRODUCT;
   if (!intent.shouldLoadProductContext) return PRODUCT_SEARCH_STATE.NOT_PRODUCT;
   if (intent.correctionSuggestion?.corrected && intent.candidateSearchAllowed !== true) return PRODUCT_SEARCH_STATE.NEEDS_CLARIFICATION;
   if (safeString(intent.customizationRequest) === "ambiguous") return PRODUCT_SEARCH_STATE.NEEDS_CLARIFICATION;

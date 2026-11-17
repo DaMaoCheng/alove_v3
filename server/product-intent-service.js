@@ -564,7 +564,10 @@ export function filterProductsByIntent(products = [], searchIntent = {}, { allow
     candidates = candidates.filter((product) => requestedVariants.some((variant) => productMatchesVariant(product, variant)));
   }
   if (requestedProductType) {
-    candidates = candidates.filter((product) => productMatchesProductType(product, requestedProductType));
+    candidates = candidates.filter((product) => productMatchesProductType(product, requestedProductType, {
+      compositeRequested: requestedFeatures.includes('full_kit'),
+      poloRequested: (searchIntent.requestedKeywords || []).some(keyword => /\bpolo\b/.test(normalizeLooseText(keyword))),
+    }));
   }
   if (requestedAudience) {
     candidates = candidates.filter((product) => productMatchesAudience(product, requestedAudience));
@@ -946,7 +949,7 @@ function isSizingMeasurementToken(token = "") {
 // must agree without depending on the team or the conversation language.
 const EXPLICIT_SHIRT_GARMENT_PATTERN = /\b(?:shirts?|jerseys?|trikot|fussballtrikot|fußballtrikot|voetbalshirt|camisetas?|mez|mezek)\b|球衣|队服/;
 const SHIRT_GARMENT_PATTERN = new RegExp(`${EXPLICIT_SHIRT_GARMENT_PATTERN.source}|\\b(?:kits?|strips?|equipacion(?:es)?)\\b`);
-const NON_SHIRT_GARMENT_PATTERN = /\b(?:shorts?|pants|trousers|jacket|windbreaker|socks?|nadrag|rovidnadrag|zokni|kabat)\b|短裤|长裤|夹克/;
+const NON_SHIRT_GARMENT_PATTERN = /\b(?:polos?|shorts?|pants|trousers|jacket|windbreaker|socks?|nadrag|rovidnadrag|zokni|kabat)\b|短裤|长裤|夹克/;
 
 function extractRequestedProductType(text = "") {
   const value = normalizeLooseText(text);
@@ -1133,24 +1136,25 @@ export function productMatchesVariant(product = {}, variant = "") {
   });
 }
 
-// Narrow evidence gate for automatic alternatives; ordinary catalogue matching stays unchanged.
-export function hasExplicitProductTypeEvidence(product = {}, productType = "") {
+// Automatic alternatives require a literal shirt noun; ordinary matching also
+// accepts the catalogue's existing single-kit wording under the same exclusions.
+export function hasExplicitProductTypeEvidence(product = {}, productType = "", { allowKitTitle = false } = {}) {
   if (productType !== "shirt") return productMatchesProductType(product, productType);
   const title = normalizeLooseText([product.name, product.title].filter(Boolean).join(" "));
-  return EXPLICIT_SHIRT_GARMENT_PATTERN.test(title) && !NON_SHIRT_GARMENT_PATTERN.test(title)
+  // Sleeve length modifies the shirt; it is not the separate shorts garment.
+  const garmentTitle = title.replace(/\b(?:short|long)\s*sleeve(?:d|s)?\b/g, ' ');
+  return (allowKitTitle ? SHIRT_GARMENT_PATTERN : EXPLICIT_SHIRT_GARMENT_PATTERN).test(title) && !NON_SHIRT_GARMENT_PATTERN.test(garmentTitle)
     && !/\b(?:sets?|conjunto|miniconjunto|complete kit|full kit)\b|套装|整套|全套/.test(title);
 }
 
-function productMatchesProductType(product = {}, productType = "") {
+function productMatchesProductType(product = {}, productType = "", { compositeRequested = false, poloRequested = false } = {}) {
   const normalizedType = safeString(productType).toLowerCase();
   if (!normalizedType) return false;
   const text = productSearchText(product);
   if (normalizedType === "shirt") {
-    const title = normalizeLooseText([product.name, product.title, product.subtitle].filter(Boolean).join(" "));
-    const isNonShirtGarment = NON_SHIRT_GARMENT_PATTERN.test(title);
-    const isExplicitShirt = EXPLICIT_SHIRT_GARMENT_PATTERN.test(title);
-    if (isNonShirtGarment && !isExplicitShirt) return false;
-    return SHIRT_GARMENT_PATTERN.test(text);
+    if (compositeRequested) return SHIRT_GARMENT_PATTERN.test(text);
+    if (poloRequested) return /\bpolo\b/.test(normalizeLooseText(product.name || product.title || ''));
+    return hasExplicitProductTypeEvidence(product, normalizedType, { allowKitTitle: true });
   }
   if (normalizedType === "top") return /\b(?:top|tee|t shirt|training)\b|短袖|上衣|训练服/.test(text);
   if (normalizedType === "merch") return /\bmerch(?:andise)?\b|周边/.test(text);
@@ -1161,8 +1165,25 @@ function productMatchesColor(product = {}, color = "") {
   const normalizedColor = safeString(color).toLowerCase();
   if (!normalizedColor) return false;
   const aliases = COLOR_ALIASES.find(([canonical]) => canonical === normalizedColor)?.[1] || [normalizedColor];
-  const text = productSearchText(product);
-  return aliases.some((alias) => includesLoosePhrase(text, alias));
+  // Brand/team identity in an unrestricted title or category is not colour
+  // evidence. Prefer explicit source attributes or an actual trailing colour
+  // value; query-derived subtitle/tag must not prove their own search filter.
+  const attributes = [product.color, product.colour, ...(Array.isArray(product.colors) ? product.colors : []), ...(Array.isArray(product.features) ? product.features.filter(value => COLOR_ALIASES.some(([, aliases]) => aliases.includes(normalizeLooseText(value)))) : [])].filter(value => typeof value === 'string');
+  const allColors = COLOR_ALIASES.flatMap(([, values]) => values).map(value => normalizeLooseText(value));
+  const garmentHead = new RegExp(`(?:\\b(?:football|soccer)\\s+)?(?:${SHIRT_GARMENT_PATTERN.source})`, 'g');
+  const colourValues = [product.name, product.title, product.summary].filter(value => typeof value === 'string').flatMap(value => {
+    const normalized = normalizeLooseText(value);
+    // A colour immediately modifying the garment noun is also explicit, e.g.
+    // "Black Football Shirt". Identity words separating it from that noun do
+    // not become colour evidence merely because they occur in the same title.
+    const regions = [normalized, ...[...normalized.matchAll(garmentHead)].map(match => normalized.slice(0, match.index).trim())];
+    return regions.flatMap(region => {
+      const words = region.split(/\s+/), tail = [];
+      while (words.length && allColors.includes(words.at(-1))) tail.unshift(words.pop());
+      return tail.length ? [tail.join(' ')] : [];
+    });
+  });
+  return [...attributes, ...colourValues].some(value => aliases.some(alias => includesLoosePhrase(normalizeLooseText(value), alias)));
 }
 
 function productMatchesFeature(product = {}, feature = "") {

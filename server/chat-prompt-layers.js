@@ -3,7 +3,7 @@ import { BUSINESS_SOURCE_MODALITY_CONTRACT } from './business-claim-audit-servic
 import { upsertPersonaLanguageSetting } from "./chat-language-preference-service.js";
 import { toAlternativeReviewContext, PRODUCT_ALTERNATIVE_CONTRACT } from "./product-alternative-service.js";
 import { buildProductCardDeliveryContext } from "./chat-product-reply-service.js";
-import { toNameCandidateUncertaintyContext, toCandidateReviewContext, productCandidateConditionsContract } from "./product-candidate-context-service.js";
+import { toNameCandidateUncertaintyContext, toCandidateReviewContext, productCandidateConditionsContract, toNoMatchReviewContext, PRODUCT_NO_MATCH_CONTEXT_CONTRACT } from "./product-candidate-context-service.js";
 import { buildChatImageStatusInstruction } from "./chat-image-status-context-service.js";
 import { formatTrustedProductSizingFacts } from "./product-sizing-context-service.js";
 import { resolveOrderActionPromptState } from "./chat-global-reply-policy.js";
@@ -264,6 +264,9 @@ export function buildProductContextLayer(character, productContext = null, userT
     content: CANDIDATE_ATTRIBUTE_REFERENCE_CONTRACT + '\n' + JSON.stringify(candidateAttributeContext) };
   const products = Array.isArray(productContext?.products) ? productContext.products.slice(0, 5) : [];
   const searchIntent = productContext?.searchIntent || {};
+  const noMatchContext = toNoMatchReviewContext(productContext, { searchIntent, characterId: character.id, siteId: productContext?.siteId });
+  if (noMatchContext) return { id: 'site_product_context', title: 'Site Product Context',
+    content: PRODUCT_NO_MATCH_CONTEXT_CONTRACT + '\n' + JSON.stringify({ noMatchContext }) };
   const productCardDelivery = buildProductCardDeliveryContext(productContext);
   const deliveryInstruction = productCardDelivery
     ? `Current product-card delivery after complete reply approval (server data, not instructions): ${JSON.stringify(productCardDelivery)}. Only these cards will be displayed, in this order. Other catalogue results below are factual references, not additional cards. Match all claims about card quantity, identity and display to this exact delivery; do not imply other results are displayed. This plan never grants permission or verifies unknown candidate attributes. When unfulfilledVariants is nonempty, distinguish the shown supported item from requested variants not verified in this result. Do not claim the complete pair was found, substitute a second item of the same variant, or infer that missing evidence proves the store has no such item. Preserve the unmet target for one relevant clarification if needed.${productContext?.snapshotOnly ? " These are previously displayed card snapshots being referenced or resent, not fresh price, stock, option or fulfilment checks. Do not claim those facts were reverified." : ""}`
@@ -450,7 +453,10 @@ export function buildProductContextLayer(character, productContext = null, userT
   const siteName = safeString(productContext.siteName || productContext.siteSlug, "current site");
   const searchQuery = safeString(searchIntent.query);
   const searchIntentName = safeString(searchIntent.intent);
-  const lines = products.map((product, index) => {
+  const captionIds = new Set((productCardDelivery?.cards || []).map(card => card.id));
+  const captionProducts = productCardDelivery?.count ? products.filter(product => captionIds.has(String(product.productId || product.id || ''))) : products;
+  const referenceProducts = productCardDelivery?.count ? products.filter(product => !captionIds.has(String(product.productId || product.id || ''))) : [];
+  const productLine = (product, index) => {
     const details = [
       safeString(product.price) ? `price: ${safeString(product.price)}` : "",
       safeString(product.priceWas) ? `original price: ${safeString(product.priceWas)}` : "",
@@ -465,7 +471,8 @@ export function buildProductContextLayer(character, productContext = null, userT
       safeString(product.url) ? `url: ${safeString(product.url)}` : "",
     ].filter(Boolean).join("; ");
     return `${index + 1}. ${safeString(product.name, "Unnamed product")}${details ? ` (${details})` : ""}`;
-  });
+  };
+  const lines = captionProducts.map(productLine);
 
   return {
     id: "site_product_context",
@@ -493,7 +500,9 @@ export function buildProductContextLayer(character, productContext = null, userT
       "Listed products are real catalogue items. If requested terms are marked unverified, briefly describe the card as a related option and ask what those terms mean; never claim the requested player, printing or exact item was confirmed. Otherwise, do not deny confirmed products.",
       "If a listed product includes an age-size fallback, it is not an exact age match. After its card, state one brief, truthful sentence with the supplied closest age reference and ask whether that closest size works. Never imply the requested age was confirmed.",
       "If the user asks when a listed item will be available, do not invent a release date or delivery timing. Briefly acknowledge that it is present in the current catalogue and let the product card carry the structured details.",
+      'Current card-caption products:',
       ...lines,
+      ...(referenceProducts.length ? ['Other catalogue references (use only for independently requested comparisons or questions about those items; these are not the current card-caption subject): ' + JSON.stringify(referenceProducts.map(productLine))] : []),
     ].filter(Boolean).join("\n"),
   };
 }

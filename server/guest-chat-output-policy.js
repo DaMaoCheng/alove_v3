@@ -5,7 +5,7 @@ import { resolveProductSizingGuidanceReply } from "./product-sizing-guidance-ser
 import { isTrackingReference } from "./chat-feedback-action-service.js";
 import { buildGuestProductReplyCopy, buildUnconfirmedProductStateReply, buildGuestProductTonePrefix, resolveGuestProductReplyLanguage } from "./guest-product-reply-copy.js";
 import { isDiscountPolicyExplanation, hasUnauthorizedDiscountPolicyClaim } from "./discount-policy-explanation-service.js";
-import { getChatImageStatusCopy } from "./chat-image-copy-service.js";
+import { getChatImageStatusCopy, getChatImageBlockedRequestCopy } from "./chat-image-copy-service.js";
 import { toImageStatusReviewContext, getChatImageStatusFallbackCopy } from "./chat-image-status-context-service.js";
 import { getGuestBenefitReviewContext, isGuestBenefitReplyReviewed, isControlledGuestBenefitCopy, buildGuestBenefitFallback } from "./guest-benefit-guidance-service.js";
 import { hasPendingProductRequest } from "./product-request-scope-service.js";
@@ -150,10 +150,10 @@ export function normalizeGuestReplyText({ text = "", product = null, productRequ
       : "I’m still working on the current image — it’ll appear here when it’s ready.";
   }
   if (!imageTaskCreated && imageReason === "quota_exhausted") {
-    return "That guest image has already been used. Create an account to keep making images.";
+    return getChatImageBlockedRequestCopy(languageCode || 'en', imageReason, true);
   }
   if (!imageTaskCreated && imageReason === "disallowed_request") {
-    return "I can help with the same character-photo requests available in chat, but I can’t create that image request.";
+    return getChatImageBlockedRequestCopy(languageCode || 'en', imageReason);
   }
   if (isTrackingReference(userText) && !hasCheckoutIssue(productSearchIntent || {}) && !resolveOrderActionPromptState(orderActionCandidate)) {
     return buildGuestTrackingUnavailableReply({ languageCode, userText });

@@ -23,9 +23,21 @@ function containsLiteralIdentity(quoted, term) {
 
 export const PRODUCT_CANDIDATE_CONTRACT = `productRequirement and candidateResponse interpret only the CURRENT user message, in any language. Quote exact continuous current substrings for evidence. Requirement new establishes one current merchandise target; continue refines the existing single target or selected prior multiple item, including asking for its link; cancel withdraws it; none is unrelated. Never merge independent targets. Only with no active server target, priorTargetEvidence may quote an exact prior USER substring identifying one target; otherwise empty. Never derive user requirements from assistant text/cards. Updates MUST include every current explicit specification change/removal, never inherited conditions. Return at most one update per field, combining all CURRENT values for an array field in that single update. Do not output unchanged historical fields, absent specifications or placeholder updates. A field not explicitly specified or removed in the CURRENT message must be omitted entirely; an unspecified size does not mean requestedSizes:[]; an existing target does not excuse omitting a current revision. A normalized searchQuery is only a retrieval hint: do not expand a user-provided name with an unstated first name, or infer an unstated edition, team or suspected typo. Preserve the supplied identity terms rather than completing them. For current explicit player/person names or unresolved catalogue identity terms, include requestedKeywords as one nonempty array update quoting the literal current USER name/phrase exactly, including any explicitly supplied first and last names; omit grammar, shopping verbs, teams already represented elsewhere, inferred expansions and translations. The evidence must contain every supplied term verbatim. For this requestedKeywords update, identityType is player for a football player name, team for a club/national team name, and unknown for another or ambiguous catalogue term. It classifies only that literal quoted term; never expand names or infer an unstated affiliation. A name labelled player cannot simultaneously establish a same-span requestedTeam/commerceConstraints.team, even if its literal words occur in the message. On a size-only continuation omit this update so the original names remain. Never output an empty requestedKeywords array; omitted identity terms are not evidence that an existing name was removed. A player or person name is not a team: never put a player name in requestedTeam or commerceConstraints.team; keep it as the original user identity terms without inventing a club or national team. Keep an explicitly requested historical single year as that year; do not infer an adjacent full season from it. A child described as a girl or boy in any language uses requestedAudience kids, never adult women; child sex alone does not establish a separate catalogue gender. Numeric catalogue child sizes use requestedSizes only when the user identifies them as a size, never from a jersey printing number, age, year or measurement. A response to a size question refines the current original target without accepting a proposed substitute or clearing other requirements. Use schema canonical values (shirt/top/merch are garment types, never titles). Retro is a requestedVariants style, never requestedEdition or commerceConstraints.edition; fan/player describe edition; empty values require explicit removal evidence. Only an explicit USER request for neither name nor number means printing:none, not customization. Omitting printing information is not a request for an unprinted item; do not emit a requestedPrinting update for that omission. A named player alone never implies printing:none. suspectedTerm preserves a potentially mistyped catalogue term verbatim, never substitutes guessed spelling. candidateResponse confirm/reject requires the active DISPLAYED proposal's exact candidateId and current assent/refusal evidence; a request after rejecting another item does not confirm it. Product display, link, comparison and specification requests alone are not identity assent: use candidateResponse none unless a distinct current evidence span affirmatively identifies the displayed item as the intended item. Entity confirmation never relaxes unknown attributes or promotion eligibility. For every single-target turn, including continuation, productRequest is single/new/items:[]/selectedIndex:null; select/continue in productRequest are reserved for prior multiple scope.`;
 
+export function normalizeUnresolvedProductRequirements(value, userText = null) {
+  if (!Array.isArray(value) || value.length > 2) return null;
+  const seen = new Set(), result = [];
+  for (const row of value) {
+    const quoted = object(row) && string(row.evidence, 240);
+    if (!quoted || !['requestedColor', 'requestedSeason'].includes(row.field) || seen.has(row.field)
+      || userText !== null && !String(userText).includes(quoted)) return null;
+    seen.add(row.field); result.push({ field: row.field, evidence: quoted });
+  }
+  return result;
+}
+
 export function normalizeProductRequirementDecision(value, { userText = '' } = {}) {
   if (!object(value) || !['new', 'continue', 'cancel', 'none'].includes(value.action)) return null;
-  if (value.action === 'none') return { action: 'none', evidence: '', updates: [], suspectedTerm: null };
+  if (value.action === 'none') return value.unresolvedRequirements?.length ? null : { action: 'none', evidence: '', updates: [], suspectedTerm: null };
   // A continuation can be grounded in an independently exact typed revision.
   // Do not repair/reinterpret the model's punctuation or any update quotation.
   const quoted = evidence(value.evidence, userText) || (value.action === 'continue' && Array.isArray(value.updates)
@@ -56,13 +68,15 @@ export function normalizeProductRequirementDecision(value, { userText = '' } = {
     seen.add(update.field);
     updates.push({ field: update.field, value: next, evidence: evidence(update.evidence, userText) });
   }
+  const unresolvedRequirements = value.unresolvedRequirements === undefined ? [] : normalizeUnresolvedProductRequirements(value.unresolvedRequirements, userText);
+  if (!unresolvedRequirements || unresolvedRequirements.some(row => updates.some(update => update.field === row.field))) return null;
   let suspectedTerm = null;
   if (value.suspectedTerm != null) {
     const term = string(value.suspectedTerm.value, 80), quotedTerm = evidence(value.suspectedTerm.evidence, userText);
     if (!term || !quotedTerm || !quotedTerm.includes(term)) return null;
     suspectedTerm = { value: term, evidence: quotedTerm };
   }
-  return { action: value.action, evidence: quoted, updates, suspectedTerm, priorTargetEvidence: string(value.priorTargetEvidence, 1200) };
+  return { action: value.action, evidence: quoted, updates, suspectedTerm, ...(unresolvedRequirements.length ? { unresolvedRequirements } : {}), priorTargetEvidence: string(value.priorTargetEvidence, 1200) };
 }
 
 export function normalizeCandidateResponse(value, { userText = '' } = {}) {
@@ -81,6 +95,7 @@ function requirements(value = {}) {
     requestedEdition: edition === 'conflict' || PRODUCT_REQUIREMENT_SCALAR_VALUES.requestedEdition.includes(edition) ? edition : '',
     requestedPrinting: PRODUCT_REQUIREMENT_SCALAR_VALUES.requestedPrinting.includes(value.requestedPrinting) ? value.requestedPrinting : '' };
 }
+export { requirements as normalizeProductCandidateRequirements };
 
 export function parseCurrentProductRequirement(userText) {
   const current = buildProductSearchIntent(userText);
@@ -190,6 +205,8 @@ function validState(value) {
   if (value.status === 'cleared') return { version: 1, status: 'cleared', siteId: value.siteId, characterId: value.characterId };
   if (!['single', 'selected'].includes(value.owner) || !string(value.targetEvidence, 1200) || !object(value.requirements)) return null;
   if (value.owner === 'selected' && (!Number.isInteger(value.selectedIndex) || !string(value.ownerEvidence, 2400))) return null;
+  const unresolvedRequirements = value.unresolvedRequirements === undefined ? [] : normalizeUnresolvedProductRequirements(value.unresolvedRequirements);
+  if (!unresolvedRequirements) return null;
   const proposal = value.proposal;
   if (value.suspectedTerm != null && (!object(value.suspectedTerm) || !string(value.suspectedTerm.value, 80) || !string(value.suspectedTerm.evidence))) return null;
   if (proposal != null && (!object(proposal) || !['displayed', 'confirmed', 'rejected'].includes(proposal.status)
@@ -198,6 +215,7 @@ function validState(value) {
     owner: value.owner, ...(value.owner === 'selected' ? { selectedIndex: value.selectedIndex, ownerEvidence: value.ownerEvidence } : {}),
     targetEvidence: value.targetEvidence,
     requestedConditionEvidence: conditionEvidence(value.requestedConditionEvidence, [value.targetEvidence]), requirements: requirements(value.requirements), suspectedTerm: value.suspectedTerm || null,
+    ...(unresolvedRequirements.length ? { unresolvedRequirements } : {}),
     proposal: proposal ? { status: proposal.status, candidateId: proposal.candidateId, name: proposal.name, reply: proposal.reply,
       ...(string(proposal.confirmationEvidence) ? { confirmationEvidence: string(proposal.confirmationEvidence) } : {}) } : null };
 }
@@ -239,6 +257,20 @@ export function applyProductCandidateState(intent = {}, decision = {}, { userTex
     intent = { ...intent, ...requirements(current) };
     decision = { ...decision, candidateResponse: { action: 'none', evidence: '', candidateId: '' } };
   }
+  if (decision.confident && delta?.action === 'none' && previous?.status === 'active' && previous.owner === 'single'
+    && newScope.valid && newScope.relation === 'single' && newScope.action === 'new'
+    && intent.primarySearchVerified === true && intent.commerceRoute === 'product_search' && intent.shouldLoadProductContext === true
+    && intent.replyBoundary?.salesAllowed !== false && !intent.nonShoppingReason && !intent.explicitProductTrigger
+    && !hasPendingProductRequest(intent) && !intent.teamConstraintUnverified
+    && !decision.referencedProductId && !decision.referencedProductIds?.length
+    && (!decision.candidateResponse || decision.candidateResponse.action === 'none')) {
+    // The same turn asks for a search but supplies no requirement transition.
+    // Keep the proven owner unchanged and clarify; none is not cancellation
+    // and cannot silently apply lexical specifications or authorize a query.
+    return { ...intent, ...previous.requirements, productCandidateState: previous,
+      shouldLoadProductContext: false, cardAllowed: false, candidateSearchAllowed: false, searchState: 'needs_clarification',
+      productCandidateInterpretationReason: 'missing_current_update' };
+  }
   if (!decision.confident || !delta || delta.action === 'none') {
     if (!delta && decision.candidateDecisionRequired && intent.shouldLoadProductContext) {
       return { ...intent, productCandidateInterpretationUnverified: true };
@@ -279,13 +311,24 @@ export function applyProductCandidateState(intent = {}, decision = {}, { userTex
   // specification-only revision of the owned target must not erase its other
   // USER conditions merely because the redundant action label says `new`.
   delta = normalizeTargetTransition(delta, previous, decision, current, { sameOwner, recentMessages, siteId, characterId, userText });
-  if (delta.action === 'continue' && !sameOwner && !selected) return decision.candidateDecisionRequired
-    ? { ...intent, productCandidateInterpretationUnverified: true } : intent;
+  if (delta.action === 'continue' && !sameOwner && !selected) {
+    const priorQuoteValid = !delta.priorTargetEvidence || recentMessages.slice(-12).some(row => (row.senderType || row.sender_type) === 'user'
+      && String(row.text || row.text_content || '').includes(delta.priorTargetEvidence));
+    return decision.candidateDecisionRequired ? { ...intent, productCandidateInterpretationUnverified: true,
+      ...(priorQuoteValid ? { productCandidateInterpretationReason: 'missing_prior_target' } : {}) } : intent;
+  }
   if (!string(String(siteId), 160) || !string(String(characterId), 160)) return intent;
   // Continuing keeps server-validated user requirements. A new target never
   // inherits an old one merely because the current lexical parser lacks fields.
   const next = reviseRequirements(delta.action === 'continue' && sameOwner ? previous.requirements : intent, delta, current);
+  const unresolvedRequirements = [
+    ...(delta.action === 'continue' && sameOwner ? previous.unresolvedRequirements || [] : [])
+      .filter(row => !delta.updates.some(update => update.field === row.field)
+        && !delta.unresolvedRequirements?.some(update => update.field === row.field)),
+    ...(delta.unresolvedRequirements || []),
+  ];
   const state = { version: 1, status: 'active', siteId: String(siteId), characterId: String(characterId),
+    ...(unresolvedRequirements.length ? { unresolvedRequirements } : {}),
     owner: selected ? 'selected' : 'single', ...(selected ? { selectedIndex: scope.selectedIndex, ownerEvidence } : {}),
     targetEvidence: delta.action === 'continue' && sameOwner ? previous.targetEvidence : delta.evidence,
     requestedConditionEvidence: conditionEvidence(delta.action === 'continue' && sameOwner ? previous.requestedConditionEvidence : [],
@@ -293,6 +336,8 @@ export function applyProductCandidateState(intent = {}, decision = {}, { userTex
         ...(scope.items[scope.selectedIndex].updates || [])] : []), delta.evidence]),
     requirements: next, suspectedTerm: delta.suspectedTerm || (delta.action === 'continue' && sameOwner ? previous.suspectedTerm : null),
     proposal: delta.action === 'continue' && sameOwner ? previous.proposal : null };
+  if (unresolvedRequirements.length) return { ...intent, ...next, productCandidateState: { ...state, proposal: null },
+    shouldLoadProductContext: false, cardAllowed: false, candidateSearchAllowed: false, searchState: 'needs_clarification' };
   if (state.suspectedTerm) next.requestedKeywords = [...new Set([...next.requestedKeywords, state.suspectedTerm.value.toLowerCase()])];
   const changed = !sameOwner || JSON.stringify(next) !== JSON.stringify(previous.requirements)
     || JSON.stringify(state.suspectedTerm) !== JSON.stringify(previous.suspectedTerm);

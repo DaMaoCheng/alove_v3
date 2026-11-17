@@ -132,7 +132,10 @@ export function normalizePolicyKnowledgeRequest(value, { userText = '', recentMe
   if (!evidence || !current.includes(evidence)) return null;
   if (!value.required) return current === evidence && query === '' ? { required: false, evidence, query: '' } : null;
   const userTexts = [current, ...recentMessages.filter(row => (row.senderType || row.sender_type) === 'user').map(row => String(row.text || row.text_content || ''))];
-  return query && userTexts.some(text => text.includes(query)) ? { required: true, evidence, query } : null;
+  if (!query || !userTexts.some(text => text.includes(query))) return null;
+  if (value.contextQuery !== undefined && (typeof value.contextQuery !== 'string' || !value.contextQuery.trim() || value.contextQuery.length > 240
+    || !userTexts.slice(1).some(text => text.includes(value.contextQuery.trim())))) return null;
+  return { required: true, evidence, query, ...(value.contextQuery ? { contextQuery: value.contextQuery.trim() } : {}) };
 }
 
 export function normalizeGeneralExplanationRequest(value, { userText = '' } = {}) {
@@ -145,7 +148,10 @@ export function normalizeGeneralExplanationRequest(value, { userText = '' } = {}
   if (!evidence || !current.includes(evidence) || !hasKind && !required && evidence !== current) return null;
   // The selected purpose determines permission; legacy missing-kind records stay
   // compatible. Provenance is assigned only after a successful JEV decision.
-  return { ...(hasKind ? {kind:value.kind} : {}), required, evidence };
+  if (Object.hasOwn(value, 'subject') && (typeof value.subject !== 'string' || value.subject.length > 160
+    || value.subject.trim() && !current.includes(value.subject.trim()))) return null;
+  return { ...(hasKind ? {kind:value.kind} : {}), required, evidence,
+    ...(Object.hasOwn(value, 'subject') ? { subject: value.subject.trim() } : {}) };
 }
 
 const normalizeLooseTextForTeamQuote = value => String(value || '').normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim();

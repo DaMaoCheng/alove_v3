@@ -213,8 +213,16 @@ function normalizeClassifierResult(parsed = {}, { text = "", verifyCharacterTarg
   // (colloquial pronouns and elliptical requests often have no distinct span).
   // Borrowing a prior outfit's subject still requires scoped USER provenance.
   const inheritedActor = actorEvidence && !normalizeText(text).toLowerCase().includes(actorEvidence.toLowerCase());
+  // Type selection does not own the visual action again. A newly generated
+  // continuation may borrow the same verified USER subject as a library photo;
+  // this proves identity only, never an old outfit or a new action.
+  const establishedFollowupActor = establishedImageIntent && followupContext && visualAction
+    && groundedAction && groundedEvidence && appearance?.previousSubject === 'character'
+    && actorEvidence.length >= 2
+    && [followupContext.requestText, ...(followupContext.priorRequestTexts || [])]
+      .some(request => normalizeText(request).toLowerCase().includes(actorEvidence.toLowerCase()));
   const establishedTarget = establishedImageIntent && parsed.requestKind === 'character_image'
-    && parsed.imageSubject === 'character' && (!inheritedActor || groundedFollowupActor || priorActor);
+    && parsed.imageSubject === 'character' && (!inheritedActor || groundedFollowupActor || priorActor || establishedFollowupActor);
   const hasIntent = validConfidence && parsed.hasIntent === true
     && (unsupported || (roleIntent && (establishedTarget || (!establishedImageIntent && ((!verifyCharacterTarget && !followupContext) || groundedTarget)))));
   const result = {

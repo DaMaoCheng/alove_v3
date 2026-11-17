@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { SUPPORTED_CHARACTER_LANGUAGES } from "../shared/language-library.js";
-import { buildProductRequestScopeCopy, productScopeResultLabel, buildProductScopeUnverifiedResultCopy, buildProductClarificationFallbackReply } from "../server/product-request-scope-copy.js";
+import { buildProductRequestScopeCopy, productScopeResultLabel, hasProductScopeResultLabel, buildProductScopeUnverifiedResultCopy, buildProductClarificationFallbackReply } from "../server/product-request-scope-copy.js";
 
 const items = [{ evidence: "first original item", sharedEvidence: "shared size" }, { evidence: "second original item" }];
 const pending = { productScopePending: true, productRequestState: { status: "pending", items, selectedIndex: null, clarificationCount: 1 } };
@@ -63,6 +63,18 @@ const originalCopyOutputs = SUPPORTED_CHARACTER_LANGUAGES.map(({ code }) => {
 });
 check(createHash("sha256").update(JSON.stringify(originalCopyOutputs)).digest("hex") === "108e7233bd2aff138e31fb9065f50dbe34c308f0fd74a16fd25c38c04b881df6", "all 43 original pending/exhausted/unverified/selected/result outputs stay byte-for-byte unchanged");
 check(buildProductClarificationFallbackReply("unknown") === buildProductClarificationFallbackReply("en"), "purpose unknown language retains original English fallback policy");
+const canonical = 'Artículo que estamos revisando: “club player mora para niño”';
+for (const existing of [canonical, canonical.replace('mora', 'Mora'), canonical.toUpperCase(),
+  canonical.replaceAll(' ', '  '), '\n  ' + canonical]) {
+  const reply = existing + '\n\nNo matching result in this search.';
+  check(hasProductScopeResultLabel(reply, canonical), 'the same complete server label is idempotent under case and whitespace variations');
+}
+for (const other of [canonical.replace('mora', 'other player'), canonical.replace('niño', 'adulto'),
+  canonical.replace('”', ' manga larga”'), canonical.replace('Artículo que estamos revisando', 'Otro artículo'),
+  'No result. ' + canonical]) {
+  check(!hasProductScopeResultLabel(other + '\n\nReply.', canonical), 'a different or non-leading label remains visible for the original scope review');
+}
+check(!hasProductScopeResultLabel('Reply.', '') && !hasProductScopeResultLabel(null, canonical), 'empty labels and replies do not suppress server decoration');
 check(buildProductClarificationFallbackReply("es-MX") === buildProductClarificationFallbackReply("es"), "purpose locale resolves through existing language normalization");
 check(!/Barcelona|Miami|search|stock|price|start with|first item/i.test(buildProductClarificationFallbackReply("en")), "purpose copy grants no search or forced target selection");
 console.log(`Product request scope copy self-check passed (${checks} assertions; ${SUPPORTED_CHARACTER_LANGUAGES.length} languages, no DB/network/models)`);

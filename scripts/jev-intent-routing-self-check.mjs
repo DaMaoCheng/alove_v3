@@ -14,6 +14,22 @@ const { classifyProductIntent } = await import("../server/product-intent-classif
 const { classifyOrderLookup } = await import("../server/chat-order-intent-service.js");
 const { resolveRecentImageConversationContext } = await import("../server/chat-image-conversation-context-service.js");
 
+const merchandiseRoutes = buildQuestions().route.criteria;
+assert(merchandiseRoutes.daily_chat.includes('A current name, choice, assent or specification that continues the USER merchandise task in productContext.requestScope or active productContext.targetEvidence is not a disconnected mention.'),
+  'The disconnected-mention exclusion must cover the same owned single/multiple USER task continuations as product_request');
+assert(merchandiseRoutes.product_request.includes('productContext.requestScope or active productContext.targetEvidence'));
+
+// Current text must be bound in every action question, independently of an
+// older shopping task. This is wire grounding, not a mocked semantic verdict.
+for (const current of ['Tournament 2028', 'Hello', 'Stop shopping']) {
+  const contextual = buildQuestions({}, { recentConversation: [{ role: 'user', text: 'Old merchandise request' }, { role: 'assistant', text: 'An old shopping suggestion' }] }, current);
+  for (const key of ['route', 'product_request', 'product_action']) {
+    assert(contextual[key].instructions.startsWith('Classify this CURRENT USER text only'), 'Every main action question must bind the current source at its head');
+    assert(contextual[key].instructions.includes(JSON.stringify(current)));
+    assert(!contextual[key].instructions.includes('Old merchandise request'));
+  }
+}
+
 const mockPayload = {
   model: "jev-1.13.0",
   answers: {
@@ -31,10 +47,14 @@ for (const [key, q] of Object.entries(buildQuestions())) {
   if (!mockPayload.answers[key]) mockPayload.answers[key] = { choice: Object.hasOwn(q.criteria, 'no') ? 'no' : Object.keys(q.criteria)[0], confidence: .3 };
 }
 
-const mockFetch = async () => new Response(JSON.stringify(mockPayload), {
-  status: 200,
-  headers: { "Content-Type": "application/json" },
-});
+const mockFetch = async (_url, options) => {
+  const wire = JSON.parse(options.body);
+  for (const key of ['route', 'product_request', 'product_action']) {
+    assert(wire.questions[key].instructions.startsWith('Classify this CURRENT USER text only'));
+    assert(wire.questions[key].instructions.includes(JSON.stringify(wire.state.message)), 'The actual classifier wire packet binds the real current USER text');
+  }
+  return new Response(JSON.stringify(mockPayload), { status: 200, headers: { "Content-Type": "application/json" } });
+};
 
 const mocked = await classifyJevIntent({
   userText: "找一件球衣，然后穿上给我看看",

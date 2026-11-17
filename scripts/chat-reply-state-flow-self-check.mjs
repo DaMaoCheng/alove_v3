@@ -192,7 +192,7 @@ async function runStateChecks() {
   stubs["product-sizing-copy.js"] = { buildProductSizingFallback: () => "Sizing unavailable." };
   stubs["support-guidance-copy.js"] = { buildSupportGuidanceUnavailableCopy: () => "Información no verificada." };
   stubs["guest-product-reply-copy.js"] = { buildGuestProductReplyCopy: () => "Not verified.", buildGuestProductSourceErrorReply: () => "Unavailable.", buildUnconfirmedProductStateReply: () => "Not verified.", buildGuestProductTonePrefix: () => "", resolveGuestProductReplyLanguage: () => "es" };
-  stubs["chat-image-copy-service.js"] = { getChatImageStatusCopy: ({ status }) => status === "ready" ? "La imagen está lista." : "La imagen está pendiente.", getChatImageHistoricalReadyCopy: () => "La foto anterior está lista. No he enviado una nueva en este turno.", getChatImageUnverifiedStatusCopy: (_lang, failed) => failed ? "La imagen falló." : "No puedo confirmar el estado." };
+  stubs["chat-image-copy-service.js"] = { getChatImageStatusCopy: ({ status }) => status === "ready" ? "La imagen está lista." : "La imagen está pendiente.", getChatImageHistoricalReadyCopy: () => "La foto anterior está lista. No he enviado una nueva en este turno.", getChatImageUnverifiedStatusCopy: (_lang, failed) => failed ? "La imagen falló." : "No puedo confirmar el estado.", getChatImageBlockedRequestCopy: (_lang, reason) => reason === 'quota_exhausted' ? 'Se ha agotado el cupo de imágenes.' : 'Esta solicitud de imagen no se admite aquí.' };
   stubs["chat-feedback-action-service.js"].isTrackingReference = () => false;
   stubs["product-followup-sanitizer.js"].normalizeProductFollowupReply = ({ text }) => text;
   stubs["ai-reply-service.js"].generateChatReply = async (options) => {
@@ -364,6 +364,30 @@ async function runStateChecks() {
     const text = fixture.inserted.find(m => m.contentType === "text")?.text || "";
     check(!text.includes("está disponible") && text.includes("Barcelona"), entry + " failed selected scope safely identifies only current item");
     check(fixture.speech.every(t => t === text), entry + " failed selected scope speech and display agree");
+  }
+  const { productScopeResultLabel } = await import('../server/product-request-scope-copy.js');
+  for (const entry of ['guest', 'member', 'voice']) for (const variation of ['exact', 'case', 'space', 'different']) {
+    const selectedState = { ...scopeState, status: 'selected', selectedIndex: 1 };
+    const intent = { commerceRoute: 'product_question', productRequestState: selectedState, shouldLoadProductContext: false, cardAllowed: false,
+      answerRequired: true, knowledgeScope: 'business', replyBoundary: { salesAllowed: true, contactAllowed: true } };
+    const label = productScopeResultLabel(intent, { languageCode: 'es' });
+    const existingLabel = variation === 'case' ? label.replace('Barcelona', 'BARCELONA')
+      : variation === 'space' ? label.replaceAll(' ', '  ') : variation === 'different' ? label.replace('blue', 'red') : label;
+    const body = existingLabel + '\n\nSeguimos con lo que me dijiste.';
+    reset({ image: false, userText: 'seguimos', body, commerceIntent: intent,
+      verdict: { allowed: variation !== 'different', confidence: .99, boundarySupported: true, evidenceSupported: true,
+        guidanceSupported: true, businessFactsSupported: true, productScopeSupported: variation !== 'different' } });
+    character.profile.language = 'es';
+    const text = await replyForEntry(entry);
+    const packet = JSON.parse(fixture.reviews[0].messages.at(-1).content);
+    if (variation === 'different') {
+      check(packet.proposedResponse.startsWith(label + '\n\n') && packet.proposedResponse.includes(existingLabel), entry + ' preserves a genuinely different label for scope rejection');
+      check(text !== body, entry + ' does not turn a wrong-scope label into an approved answer');
+    } else {
+      check(packet.proposedResponse === body, entry + ' real preparation does not duplicate an equivalent complete scope label (' + variation + ')');
+      check(text === body, entry + ' preserves original model wording and whitespace after complete review');
+    }
+    check(fixture.inserted.every(row => row.contentType !== 'product'), entry + ' label formatting never creates a card');
   }
   for (const entry of ["guest", "member", "voice"]) {
     reset();

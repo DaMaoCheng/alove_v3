@@ -502,12 +502,12 @@ assert.equal(isGroundedCommerceRepairEligible({ ...complaintOnly, feedbackAction
 for (const changed of [
  { trustedSite: { id: 'foreign' } }, { groundedRepairAttempted: true }, { orderActionCandidate: orderPolicy.orderActionCandidate },
  { knowledgeContext: { ...complaintOnly.knowledgeContext, items: [{ id: 'unsupported' }] } },
- { searchIntent: { ...complaintOnly.searchIntent, unresolvedUserComplaint: false } },
  { searchIntent: { ...complaintOnly.searchIntent, promotionInquiry: { kind: 'benefit_request' } } },
  { searchIntent: { ...complaintOnly.searchIntent, shouldLoadProductContext: true } },
  { searchIntent: { ...complaintOnly.searchIntent, replyBoundary: { contactAllowed: false } }, feedbackActionCandidate: { kind: 'feedback' } },
  { chatImageContext: { taskCreated: true } }, { factualContext: { required: true } },
 ]) assert.equal(isGroundedCommerceRepairEligible({ ...complaintOnly, ...changed }), false, 'unowned complaint, action, request for benefit or denied contact cannot use correction');
+assert.equal(isGroundedCommerceRepairEligible({ ...complaintOnly, searchIntent: { ...complaintOnly.searchIntent, unresolvedUserComplaint: false } }),true,'Noncomplaint empty promotion policy may now recover honest wording under the existing policy contracts');
 console.log('Unanswered complaint eligibility retained; standalone generation removed');
 
 const complaintEmptyDirectory = { ...complaintOnly, knowledgeContext: { ...complaintOnly.knowledgeContext, strategy: 'business_no_relevant_section', selectionDiagnostics: { stage: 'directory', outcome: 'empty', counts: { selected: 0 } } } };

@@ -1,6 +1,7 @@
 import { isGeneralCommerceExplanation, hasGeneralCommerceDefinitionPermission, GENERAL_COMMERCE_EXPLANATION_CONTRACT } from "./business-claim-audit-service.js";
 import { SITE_TRUST_SAFETY_CONTRACT } from "./site-trust-safety-policy.js";
 import { nameCandidateIdentityContext } from './product-name-candidate-service.js';
+import { toUnresolvedProductRequirementContext } from './product-candidate-context-service.js';
 import { resolveDisplayedProductReferences } from './product-displayed-reference-service.js';
 import { applyProductRequestScope, readProductRequestState, normalizeProductRequest, hasPendingProductRequest } from "./product-request-scope-service.js";
 import { buildClosedProductClarificationContext, buildProductClarificationContext, productClarificationContext, PRODUCT_CLARIFICATION_CONTRACT } from "./chat-reply-purpose-service.js";
@@ -366,7 +367,7 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
     ...(policyKnowledgeRequest ? { policyKnowledgeRequest: { ...policyKnowledgeRequest, source: 'jev' }, businessKnowledgeRequired: policyKnowledgeRequest.required } : {}),
     shouldLoadProductContext: Boolean(shouldSearch),
     knowledgeScope,
-    knowledgeQuery: policyKnowledgeRequest ? policyKnowledgeRequest.query : typeof decision.knowledgeQuery === "string" ? decision.knowledgeQuery.trim().slice(0, 240) : "",
+    knowledgeQuery: policyKnowledgeRequest ? [policyKnowledgeRequest.query, policyKnowledgeRequest.contextQuery ? `Prior USER context (not verified facts): ${JSON.stringify(policyKnowledgeRequest.contextQuery)}` : ''].filter(Boolean).join('\n').slice(0, 240) : typeof decision.knowledgeQuery === "string" ? decision.knowledgeQuery.trim().slice(0, 240) : "",
     answerRequired,
     unresolvedUserComplaint: Boolean(complaintEvidence),
     siteTrustOnly: Boolean(siteTrustOnly),
@@ -487,6 +488,25 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
       hasRetainedProduct: ['pending', 'selected'].includes(request?.status) || candidate?.status === 'active'
         || ['pending', 'selected'].includes(searchIntent.productRequestState?.status) || searchIntent.productCandidateState?.status === 'active' });
     const cleared = clearProductRoutingState(result, { recentMessages, siteId, characterId });
+    const noScope = normalizeProductRequest(decision.productRequest, { userText, confidence: decision.productRequestConfidence ?? decision.confidence });
+    const pausedClarification = jevDecision?.source === 'jev' && jevDecision.primaryIntent === 'daily_chat'
+      && jevDecision.productIntent === 'none' && jevDecision.productAction === 0 && jevDecision.imageIntent === 'none'
+      && jevDecision.orderIntent === 'none' && jevDecision.webSearchIntent === false && jevDecision.unsupported === false
+      && decision.candidateDecisionRequired === true && decision.boundaryVerified === true
+      && decision.route === 'chat' && decision.topic === 'other' && decision.declaredLiveProductData === false
+      && decision.replyBoundary?.salesAllowed === true && !deterministicNonShopping && !explicitTrigger
+      && normalizeProductRequirementDecision(decision.productRequirement, { userText })?.action === 'none'
+      && noScope.valid && noScope.relation === 'none' && noScope.action === 'new'
+      && decision.candidateResponse?.action === 'none' && !decision.referencedProductId && !decision.referencedProductIds?.length
+      && !result.customerServiceKnowledgeRequest && !result.businessInquiry && !result.humanHandoff && !result.checkoutIssue && !result.promotionInquiry
+      && !result.commerceClassificationFailure && !result.commerceClassificationUnavailable && !result.teamConstraintUnverified
+      && !result.scopeUnverified && !result.productScopePending && !result.sourceErrorCode
+      && candidate?.status === 'active' && candidate.owner === 'single' && candidate.unresolvedRequirements?.length > 0 && candidate.proposal === null
+      && (request?.status === 'cleared' || !recentMessages.some(row => Object.hasOwn(row || {}, 'productRequestState')));
+    // No current merchandise action is not a cancellation vote. Retain only
+    // the unfinished USER conditions as private history; all current actions,
+    // source permissions and reply purposes remain the cleared chat result.
+    if (pausedClarification) return { ...cleared, productCandidateState: candidate };
     return clarification ? { ...cleared, replyBoundaryReason: 'product_action_closed', replyClarificationContext: clarification } : cleared;
   }
   const candidateIntent = applyProductCandidateState(scope(result), decision, { userText, recentMessages, siteId, characterId, currentRequirement });
@@ -518,12 +538,37 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
   if (candidateSizingUpdate) return candidateSizingUpdate;
   const candidateAttributeReference = preserveCandidateAttributeReference(candidateIntent, decision, { siteId, characterId, recentMessages });
   if (candidateAttributeReference) return candidateAttributeReference;
+  if (candidateIntent.productCandidateInterpretationReason === 'missing_prior_target') {
+    // A valid exact USER update can lack its owned target after a clipped or
+    // previously action-closed turn. That is missing context, not a supplier
+    // protocol failure; ask naturally without recovering or searching a target.
+    const clarification = buildProductClarificationContext({ decision, jevDecision, searchIntent: candidateIntent, userText, recentMessages });
+    if (clarification) {
+      const { productCandidateInterpretationReason: ignoredReason, productCandidateInterpretationUnverified: ignoredUnverified, ...currentIntent } = candidateIntent;
+      const knowledgeScope = resolveCommerceKnowledgeScope(candidateIntent);
+      return { ...clearProductRoutingState(currentIntent, { recentMessages, siteId, characterId }),
+        commerceRoute: 'unclear', shouldLoadProductContext: false, cardAllowed: false, candidateSearchAllowed: false,
+        needsLiveProductData: false, scopeUnverified: true, productScopePending: false, searchState: 'needs_clarification',
+        replyTopicHint: 'product_selection', replyBoundaryReason: 'classification_uncertain', replyClarificationContext: clarification,
+        replyBoundary: { ...candidateIntent.replyBoundary, salesAllowed: false }, boundaryRequired: true,
+        knowledgeScope: knowledgeScope === 'business' ? 'business' : 'general',
+        commerceClassificationFailure: '', commerceClassificationUnavailable: false };
+    }
+  }
   return candidateIntent.productCandidateInterpretationUnverified
     ? unavailableProductInterpretation(candidateIntent, "missing_fields", { recentMessages, siteId, characterId }) : candidateIntent;
 }
 
 // This layer only applies to semantically identified product/store questions.
 export function applyCommerceQuestionPromptPolicy(promptContext = {}, searchIntent = {}, sizingOptions = {}) {
+  const unresolved = toUnresolvedProductRequirementContext(searchIntent, sizingOptions);
+  if (unresolved) {
+    const layer = { id: 'product_requirement_clarification', title: 'Merchandise Requirement Clarification',
+      content: PRODUCT_CLARIFICATION_CONTRACT + '\nUSER requirement context: ' + JSON.stringify(unresolved) };
+    promptContext = { ...promptContext, systemPrompt: `${String(promptContext.systemPrompt || '').trim()}\n\n## ${layer.title}\n${layer.content}`,
+      layers: [...(promptContext.layers || []), layer] };
+  }
+
   const childProductSizingContext = buildChildProductSizingContext({ ...sizingOptions, searchIntent });
   const explainGeneralProcess = isGeneralCommerceExplanation(searchIntent)
     || hasGeneralCommerceDefinitionPermission({ ...sizingOptions, searchIntent });
@@ -538,6 +583,7 @@ export function applyCommerceQuestionPromptPolicy(promptContext = {}, searchInte
   if (!searchIntent.answerRequired && !["product_question", "store_policy"].includes(searchIntent.commerceRoute) && !tentativeSizing && !childProductSizingContext && searchIntent.businessKnowledgeRequired !== false) return promptContext;
   const content = [
     explainGeneralProcess ? GENERAL_COMMERCE_EXPLANATION_CONTRACT : '',
+    explainGeneralProcess && searchIntent.generalExplanationRequest?.subject ? 'Only this exact USER term/status has definition permission: ' + JSON.stringify(searchIntent.generalExplanationRequest.subject) : '',
     searchIntent.siteTrustOnly === true ? "The USER asks whether the current store is legitimate or safe to buy from. Distinguish the accessible AI chat platform and character from the associated store or merchant: this chat being accessible or the AI role existing cannot establish the store identity, registration, legitimacy, payment security, fulfilment, reviews or fraud risk. Answer the actual store-trust question. Use only current verified store-specific evidence for such claims; otherwise acknowledge uncertainty and offer general independent checks without asserting those checks have passed. Do not guarantee safety or infer fraud. " + SITE_TRUST_SAFETY_CONTRACT : "",
     childProductSizingContext ? `${CHILD_PRODUCT_SIZING_CONTRACT}\n${JSON.stringify({ childProductSizingContext })}` : "",
     searchIntent.childSizingUpdateOnly ? "This turn only supplies requested USER sizing information. Acknowledge it without a new search, stock claim, chart measurements or new question. Retain the original merchandise requirements; no alternative has been accepted merely by supplying a size." : searchIntent.catalogueOnlyKnowledge === true ? "This is solely a catalogue lookup, not an independent store-policy question. Acknowledge the USER's requirements as their request, never as verified attributes or availability. Use only the actual supplied search outcome and catalogue evidence; no knowledge search was requested." : "",

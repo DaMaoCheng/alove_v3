@@ -10,7 +10,7 @@ const fetchImpl = async (_url, request) => {
   answers.route = { choice: 'product_request', confidence: .95 }; answers.product_action = { choice: 'yes', confidence: .3 };
   return new Response(JSON.stringify({ answers }));
 };
-const productContext = { targetEvidence: 'Busco una camiseta del Real Madrid sin número',
+const productContext = { status: 'active', needsClarification: false, targetEvidence: 'Busco una camiseta del Real Madrid sin número',
   requirements: { requestedTeam: 'Real Madrid', requestedProductType: 'shirt', requestedPrinting: 'none' },
   displayedCandidate: { name: 'Madrid Fan Jersey', question: '¿Es esta la camiseta que buscas?' } };
 await classifyJevIntent({ userText: 'Sí, esa', conversationContext: { productContext }, configOverride, fetchImpl, forceRefresh: true });
@@ -31,6 +31,39 @@ const card = { senderType: 'character', characterId: location.characterId, conte
 const last = { senderType: 'character', characterId: location.characterId, productCandidateState: state };
 const rows = [card, last];
 assert.deepEqual(buildChatProductRoutingContext(rows, location), productContext);
+const unresolvedRows = [{ ...last, productCandidateState: { ...state, proposal: null,
+  unresolvedRequirements: [{ field: 'requestedColor', evidence: 'an exact user shade' }] } }];
+assert.equal(normalizeChatProductRoutingContext(state).needsClarification, false,
+  'The existing public normalizer accepts a stored active state with no derived clarification property');
+assert.equal(normalizeChatProductRoutingContext(unresolvedRows[0].productCandidateState).needsClarification, true,
+  'A stored active state derives clarification only from its actual unresolved fields');
+const waitingContext = buildChatProductRoutingContext(unresolvedRows, location);
+assert.equal(waitingContext.status, 'active', 'Actual owned task lifecycle must survive the finite main-JEV projection');
+assert.equal(waitingContext.needsClarification, true, 'Only actual unresolved USER requirements establish pending clarification');
+assert.equal(waitingContext.displayedCandidate, undefined);
+assert.equal(normalizeChatProductRoutingContext({ ...waitingContext, status: 'cleared' }), null);
+assert.equal(normalizeChatProductRoutingContext({ ...waitingContext, needsClarification: false }), null);
+assert.equal(normalizeChatProductRoutingContext({ ...productContext, needsClarification: true }), null);
+assert.equal(normalizeChatProductRoutingContext({ ...waitingContext, status: undefined }), null);
+assert.equal(buildChatProductRoutingContext(unresolvedRows, { ...location, siteId: 'foreign' }), null);
+assert.equal(buildChatProductRoutingContext([{ ...unresolvedRows[0], senderType: 'user' }], location), null);
+assert.equal(buildChatProductRoutingContext([{ ...unresolvedRows[0], productCandidateState: {
+  ...unresolvedRows[0].productCandidateState, status: 'cleared' } }], location), null);
+const { status: unusedStatus, needsClarification: unusedClarification, ...legacyContext } = productContext;
+assert.deepEqual(normalizeChatProductRoutingContext(legacyContext), legacyContext, 'Existing bounded contexts without lifecycle remain compatible');
+let waitingForward;
+const waitingTurn = await prepareChatIntentTurn({ execute: async () => [[]] }, { ...location, session: { id: 'waiting-session' },
+  recentMessages: unresolvedRows, character: { id: location.characterId, category_id: 'mascot' },
+  userText: 'a follow-up specification', userDisplayOrder: 100, commerceForImageOnly: true,
+  classify: async options => { waitingForward = options; return { ok: true, confident: true, primaryIntent: 'daily_chat', productIntent: 'none' }; },
+  classifyImage: async () => ({ hasIntent: false, allowed: false }) });
+assert.deepEqual(waitingForward.conversationContext.productContext, waitingContext);
+assert.notEqual(waitingForward.conversationContext.hasRecentProductImage, true, 'A waiting USER task is not a catalogue image source');
+assert.equal(waitingTurn.decision.primaryIntent, 'daily_chat', 'Projected pending clarification never overrides this turn main route');
+await classifyJevIntent({ userText: 'a follow-up specification', conversationContext: waitingForward.conversationContext,
+  configOverride, fetchImpl, forceRefresh: true });
+assert.deepEqual(bodies.at(-1).state.conversation_context.productContext, waitingContext,
+  'The actual orchestration and main API body must keep the same lifecycle projection without a route override');
 assert.equal(buildChatProductRoutingContext([card, { ...last, productCandidateState: { ...state, status: 'cleared' } }], location), null);
 assert.equal(buildChatProductRoutingContext([card, { ...last, productCandidateState: { broken: true } }], location), null);
 assert.equal(buildChatProductRoutingContext([card, { ...last, senderType: 'user' }], location), null);
@@ -96,3 +129,33 @@ await prepareChatIntentTurn({ execute: async sql => {
 assert.equal(historyReads, 1, 'JEV and commerce must reuse one same-order history read');
 assert.equal(imageReads, 1);
 console.log('chat product routing context self-check passed: actual displayed question, finite target, site/owner/cleared boundaries, both caches, unchanged current message; no network/DB/model calls');
+
+// A pending USER multi-target request exists before any catalogue candidate.
+const pendingScope = { ...scope, status: 'pending', selectedIndex: null };
+const pendingRows = [{ senderType: 'character', productRequestState: pendingScope }];
+const pendingContext = buildChatProductRoutingContext(pendingRows, location);
+assert(pendingContext?.requestScope, 'Main JEV needs the actual owned pending USER request set before any candidate exists');
+assert.equal(pendingContext.requestScope.status, 'pending');
+assert.equal(pendingContext.requestScope.selectedIndex, null);
+assert.deepEqual(pendingContext.requestScope.items, items.map(({evidence, sharedEvidence}) => ({evidence, sharedEvidence})));
+assert.equal(pendingContext.displayedCandidate, undefined);
+assert.equal(pendingContext.requirements, undefined, 'A pending set is not a selected product requirement');
+assert.equal(buildChatProductRoutingContext(pendingRows, {...location, siteId:'foreign'}), null);
+assert.equal(buildChatProductRoutingContext([{...pendingRows[0],senderType:'user'}], location), null);
+assert.equal(buildChatProductRoutingContext([{...pendingRows[0],productRequestState:{...pendingScope,status:'cleared',items:[],clarificationCount:0}}], location), null);
+assert.equal(normalizeChatProductRoutingContext({requestScope:{status:'pending',items:[{evidence:'only one',sharedEvidence:''}],selectedIndex:null}}), null);
+let selectedForward;
+await prepareChatIntentTurn(db, {...location, session:{id:'pending-session'}, character:{id:location.characterId,category_id:'mascot'},
+ userText:'the first club',userDisplayOrder:100,recentMessages:pendingRows, commerceForImageOnly:true,
+ classify:async options=>{selectedForward=options;return{ok:true,primaryIntent:'daily_chat',productIntent:'none'};},
+ classifyImage:async()=>({hasIntent:false,allowed:false})});
+assert.deepEqual(selectedForward.conversationContext.productContext, pendingContext);
+assert.notEqual(selectedForward.conversationContext.hasRecentProductImage, true, 'Pending USER targets do not prove an image exists');
+const routeOptions=buildQuestions({}, {productContext:pendingContext});
+assert(routeOptions.route.criteria.product_request.includes('requestScope'), 'Main route must distinguish pending task selection from an isolated noun');
+assert(routeOptions.product_action.instructions.includes('requestScope'));
+for (const route of ['daily_chat','new_image','order_lookup']) {
+ const out=(await import('../server/jev-intent-service.js')).normalizeJevResponse({answers:{route:{choice:route,confidence:.1},product_action:{choice:'yes',confidence:.1}}},{},{productContext:pendingContext});
+ assert.equal(out.productIntent,'none','Pending context never overrides an unrelated main route');
+}
+console.log('Pending owned USER scope reaches main JEV without catalogue/image evidence or an automatic route override');

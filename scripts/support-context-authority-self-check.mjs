@@ -1,0 +1,32 @@
+import assert from 'node:assert/strict';
+process.env.AIOVE_PROVIDER_LOG_WRITE_ENABLED='false';
+const {buildChatReplyPrompt}=await import('../server/chat-prompt-service.js');
+const {buildBusinessClaimContext,validateBusinessClaimAudit}=await import('../server/business-claim-audit-service.js');
+const {buildCommerceJevPacket,resolveJevCommerceDecision}=await import('../server/jev-commerce-decision-service.js');
+const character={id:'guide',category_id:'mascot',site_id:'shop'},trustedSite={id:'shop'};
+const prompt=buildChatReplyPrompt({character,trustedSite,userText:'What does the access notice mean?'});
+assert(prompt.layers.some(l=>l.id==='platform_access'),'Actual generation has a shared platform fact source rather than needing merchant policy');
+const {PLATFORM_CHAT_ACCESS_FACTS,AGE_GATE_MAX_AGE_SECONDS}=await import('../shared/platform-access-policy.js');
+const gate=await import('../src/features/age-gate/age-gate.js');
+assert.equal(AGE_GATE_MAX_AGE_SECONDS,604800);assert.equal(gate.AGE_GATE_MAX_AGE_SECONDS,604800);
+assert(gate.shouldRequireAgeGate('/shop/chat'));assert(!gate.shouldRequireAgeGate('/admin'));assert(!gate.shouldRequireAgeGate('/creator/x'));
+assert.equal(PLATFORM_CHAT_ACCESS_FACTS.minimumAge,18);assert(!JSON.stringify(PLATFORM_CHAT_ACCESS_FACTS).includes('/admin'));
+const searchIntent={commerceRoute:'store_policy',knowledgeScope:'business',answerRequired:true,policyKnowledgeRequest:{source:'jev',required:true,evidence:'What does the access notice mean?'},replyBoundary:{salesAllowed:false,contactAllowed:true}};
+const options={businessFactsRequired:true,text:'This platform asks visitors to confirm they are 18 or older.',userText:'What does the access notice mean?',searchIntent,catalogueOwner:{character,trustedSite},knowledgeContext:{ok:true,businessOwner:{siteId:'shop',characterId:'guide'},strategy:'business_no_verified_answer',customerServiceIntent:true,items:[]}};
+const c=buildBusinessClaimContext(options);const cap=c.references.find(r=>r.id==='a0.platformAccess');assert(cap);assert.equal(JSON.parse(cap.text).platformAccess.minimumAge,18);
+const entry={unitId:'u0',roles:['capability'],referenceIds:['a0.platformAccess'],relationEvidence:[],factual:true,supported:true,sourceAllowsException:false,replyPreservesException:false};
+assert(validateBusinessClaimAudit([entry],c).accepted);
+assert(!validateBusinessClaimAudit([{...entry,roles:['store_policy']}],c).accepted,'UI capability cannot prove merchant policy or shipping timing');
+for(const userText of ['What should I do now?','Et maintenant ?','然后呢？']){
+ const recentMessages=[{senderType:'user',text:'My package is marked delivered but it has not arrived.'},{senderType:'character',text:'Assistant text is not policy evidence.'}];
+ const p=buildCommerceJevPacket(userText,{recentMessages});assert(p.questions.policy_required.instructions.includes('reusing policy'),'Policy purpose explicitly includes reusing policy in a contextual continuation');
+ let calls=0;const result=await resolveJevCommerceDecision(userText,{recentMessages,evaluate:async({questions})=>{calls++;const answers={};for(const[k,q]of Object.entries(questions)){const pick=k==='route'?'store_policy':k==='knowledge_scope'?'business':k==='knowledge_kind'?'business_question':k==='policy_required'?'yes':k==='policy_evidence'?'e0':k==='query_source'?'prior0':q.criteria.none?'none':q.criteria.no?'no':q.criteria.absent?'absent':Object.keys(q.criteria)[0];answers[k]={choice:pick,confidence:.1};}return{ok:true,answers};}});
+ assert(calls<=2,'Existing bounded JEV packet batching is unchanged');assert(result.value.policyKnowledgeRequest.required);assert.equal(result.value.policyKnowledgeRequest.query,userText);assert.equal(result.value.policyKnowledgeRequest.contextQuery,recentMessages[0].text,'Prior USER hint accompanies rather than replaces the current question');assert(result.value.knowledgeQuery.includes(userText));assert(result.value.knowledgeQuery.includes('My package'));assert(!result.value.knowledgeQuery.includes('Assistant text'));
+}
+const {normalizePolicyKnowledgeRequest}=await import('../server/product-intent-classifier-service.js');
+const current='Then what?',prior='The package says delivered but I have not received it.';
+const good={required:true,evidence:current,query:current,contextQuery:prior};
+assert.deepEqual(normalizePolicyKnowledgeRequest(good,{userText:current,recentMessages:[{senderType:'user',text:prior}]}),good);
+assert.equal(normalizePolicyKnowledgeRequest(good,{userText:current,recentMessages:[{senderType:'character',text:prior}]}),null,'Assistant wording never authorizes a policy retrieval context');
+assert.equal(normalizePolicyKnowledgeRequest({...good,contextQuery:'invented issue'},{userText:current,recentMessages:[{senderType:'user',text:prior}]}),null);
+console.log('Support continuation policy intent, shared UI source, unchanged access behavior, bounded evidence and merchant-claim rejection passed (no models/DB/network)');

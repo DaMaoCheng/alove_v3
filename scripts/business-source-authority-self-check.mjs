@@ -27,19 +27,19 @@ const business={businessFactsRequired:true,text:'The image is generating.',userT
   searchIntent:{commerceRoute:'store_policy',knowledgeScope:'business',answerRequired:true,policyKnowledgeRequest:{source:'jev',required:true,evidence:'explain my points',query:'points'}},
   knowledgeContext:{ok:true,customerServiceIntent:true,evidenceSchemaVersion:1,businessOwner:{siteId:'shop',characterId:'guide'},items:[policy]}};
 const imageAudit=buildBusinessClaimContext({...business,imageStatusContext:{kind:'generated',status:'generating',currentTurn:true}});
-assert(imageAudit.references.some(r=>r.id==='a0' && JSON.parse(r.text).imageStatus?.status==='generating'),'Existing image state receives bounded capability authority in the mixed business audit');
-assert(validateBusinessClaimAudit([entry(['capability'],['a0'])],imageAudit).accepted);
+assert(imageAudit.references.some(r=>r.id==='a0.imageStatus' && JSON.parse(r.text).imageStatus?.status==='generating'),'Existing image state receives bounded capability authority in the mixed business audit');
+assert(validateBusinessClaimAudit([entry(['capability'],['a0.imageStatus'])],imageAudit).accepted);
 assert(!validateBusinessClaimAudit([entry(['capability'],[],{factual:false})],imageAudit).accepted,'A nonfactual capability label cannot bypass citations');
-assert(!validateBusinessClaimAudit([entry(['store_policy'],['a0'])],imageAudit).accepted,'Image task state cannot support store policy');
+assert(!validateBusinessClaimAudit([entry(['store_policy'],['a0.imageStatus'])],imageAudit).accepted,'Image task state cannot support store policy');
 const feedbackAudit=buildBusinessClaimContext({...business,feedbackActionAvailable:true,knowledgeContext:{ok:true,strategy:'not_requested',customerServiceIntent:false,items:[]},searchIntent:{...business.searchIntent,policyKnowledgeRequest:{source:'jev',required:false,evidence:'explain my points',query:''}}});
-assert(feedbackAudit.references.some(r=>r.id==='a0' && JSON.parse(r.text).feedbackActionAvailable===true),'A real attached feedback entry does not require a knowledge hit');
-assert(validateBusinessClaimAudit([entry(['capability'],['a0'])],feedbackAudit).accepted);
-assert(!validateBusinessClaimAudit([entry(['feedback_submission'],['a0'])],feedbackAudit).accepted,'Entry availability does not prove a saved submission');
-assert(!buildBusinessClaimContext({...business,feedbackActionAvailable:true,boundary:{contactAllowed:false}}).references.some(r=>r.kind==='capability'),'Contact boundary still forbids feedback invitations');
+assert(feedbackAudit.references.some(r=>r.id==='a0.feedback' && JSON.parse(r.text).feedbackActionAvailable===true),'A real attached feedback entry does not require a knowledge hit');
+assert(validateBusinessClaimAudit([entry(['capability'],['a0.feedback'])],feedbackAudit).accepted);
+assert(!validateBusinessClaimAudit([entry(['feedback_submission'],['a0.feedback'])],feedbackAudit).accepted,'Entry availability does not prove a saved submission');
+assert(!buildBusinessClaimContext({...business,feedbackActionAvailable:true,boundary:{contactAllowed:false}}).references.some(r=>r.kind==='capability'&&JSON.parse(r.text).feedbackActionAvailable===true),'Contact boundary still forbids feedback invitations, independent of read-only platform facts');
 console.log('Mixed image and no-policy feedback bounded capabilities passed');
 const noPolicy={...business,knowledgeContext:{ok:true,strategy:'not_requested',customerServiceIntent:false,items:[]},searchIntent:{...business.searchIntent,policyKnowledgeRequest:{source:'jev',required:false,evidence:'explain my points',query:''}}};
 const imageWithoutPolicy=buildBusinessClaimContext({...noPolicy,imageStatusContext:{kind:'generated',status:'generating',currentTurn:true}});
-assert(imageWithoutPolicy?.references.some(r=>r.id==='a0'),'Mixed no-policy/image turns keep their existing owned typed audit');
+assert(imageWithoutPolicy?.references.some(r=>r.id==='a0.imageStatus'),'Mixed no-policy/image turns keep their existing owned typed audit');
 const safety=buildBusinessClaimContext({...noPolicy,text:'Check independent reviews before deciding.',searchIntent:{...noPolicy.searchIntent,siteTrustOnly:true}});
 assert(businessClaimAuditSchema(safety).items.properties.roles.items.enum.includes('general_guidance'),'A site-trust answer has a bounded general-guidance role');
 assert(safety.references.some(r=>r.id==='g0' && r.kind==='general_guidance'));
@@ -69,16 +69,16 @@ console.log('Independent whole-turn definition permission and live-order separat
 
 const mixedText='The image is generating. Redeem from the personal center.';
 const mixedAudit=buildBusinessClaimContext({...business,text:mixedText,imageStatusContext:{kind:'generated',status:'generating',currentTurn:true}});
-assert(validateBusinessClaimAudit([entry(['capability'],['a0']),entry(['store_policy'],['k0.s0'],{unitId:'u1'})],mixedAudit).accepted,'The same audit can keep the image acknowledgement and independent supported policy answer');
-assert(!validateBusinessClaimAudit([entry(['capability'],['k0.s0']),entry(['store_policy'],['a0'],{unitId:'u1'})],mixedAudit).accepted,'Mixed reply sources cannot be interchanged');
+assert(validateBusinessClaimAudit([entry(['capability'],['a0.imageStatus']),entry(['store_policy'],['k0.s0'],{unitId:'u1'})],mixedAudit).accepted,'The same audit can keep the image acknowledgement and independent supported policy answer');
+assert(!validateBusinessClaimAudit([entry(['capability'],['k0.s0']),entry(['store_policy'],['a0.imageStatus'],{unitId:'u1'})],mixedAudit).accepted,'Mixed reply sources cannot be interchanged');
 for(const state of ['queued','generating','ready','failed','unknown']){
  const context=buildBusinessClaimContext({...business,imageStatusContext:{kind:'generated',status:state,currentTurn:false},feedbackActionAvailable:true});
- const capability=JSON.parse(context.references.find(r=>r.id==='a0').text);
+ const capability=JSON.parse(context.references.find(r=>r.id==='a0.imageStatus').text);
  assert.equal(capability.imageStatus.status,state);assert.equal(capability.imageStatus.currentTurn,false);
  assert(!('clothing' in capability.imageStatus));
 }
 const unavailableImage=buildBusinessClaimContext({...business,imageStatusContext:{kind:'generated',status:'ready',currentTurn:false,currentRequest:{outcome:'not_created'}}});
-assert.equal(JSON.parse(unavailableImage.references.find(r=>r.id==='a0').text).imageStatus.currentRequest.outcome,'not_created');
+assert.equal(JSON.parse(unavailableImage.references.find(r=>r.id==='a0.imageStatus').text).imageStatus.currentRequest.outcome,'not_created');
 console.log('Complete mixed response, source separation and bounded image-state projection passed');
 const catalogueWithForeignPolicy=buildBusinessClaimContext({...base,knowledgeContext:{ok:true,customerServiceIntent:true,businessOwner:{siteId:'foreign',characterId:'guide'},items:[policy]}});
 assert(catalogueWithForeignPolicy.references.some(r=>r.kind==='catalogue'),'A foreign policy result cannot suppress the separately verified current catalogue');

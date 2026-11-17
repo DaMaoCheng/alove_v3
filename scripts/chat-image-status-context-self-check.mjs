@@ -3,7 +3,7 @@ process.env.AIOVE_PROVIDER_LOG_WRITE_ENABLED = 'false';
 globalThis.fetch = async () => { throw new Error('Network forbidden in isolated check'); };
 const { resolveChatImageStatusContext, refreshChatImageStatusContext, toImageStatusReviewContext, getChatImageStatusFallbackCopy, buildCurrentImageDeliveryContract, buildImageRepresentationContract } = await import('../server/chat-image-status-context-service.js');
 const { buildChatImageContextLayer } = await import('../server/chat-prompt-layers.js');
-const { getChatImageHistoricalReadyCopy, getChatImageStatusCopy } = await import('../server/chat-image-copy-service.js');
+const { getChatImageHistoricalReadyCopy, getChatImageStatusCopy, getChatImageUnverifiedStatusCopy } = await import('../server/chat-image-copy-service.js');
 const currentDelivery = { kind: "library", status: "ready", currentTurn: true };
 const deliveryContract = buildCurrentImageDeliveryContract(currentDelivery);
 assert(deliveryContract.includes("chat image message"), "a source asset delivered this turn is a real new chat message");
@@ -99,6 +99,49 @@ assert.deepEqual(toImageStatusReviewContext(unavailableRequest).currentRequest,{
 assert.equal(getChatImageStatusFallbackCopy(unavailableRequest,'en'),"I couldn't process your request right now. Please try again later.",'an uncreated request is not an unknown image task');
 assert.match(getChatImageStatusFallbackCopy(unavailableRequest,'es'),/solicitud/, 'uncreated request uses the active language');
 assert.match(buildChatImageContextLayer(context).content,/ordinary unrelated chat/);
+const guestQuotaContext = { ...quota, guestQuotaAccess: true };
+const guestQuotaFact = toImageStatusReviewContext(guestQuotaContext);
+assert.notEqual(getChatImageStatusFallbackCopy(guestQuotaContext, 'en'), "I can't confirm the image status right now.",
+  'an authoritative quota block is not an unknown image state');
+assert.match(getChatImageStatusFallbackCopy(guestQuotaContext, 'en'), /register or sign in/);
+assert.doesNotMatch(getChatImageStatusFallbackCopy(quota, 'en'), /register|sign in/,
+  'member or unknown-scope quota cannot acquire guest account suggestions');
+assert.notEqual(getChatImageStatusFallbackCopy({ reason: 'disallowed_request', taskCreated: false }, 'en'),
+  "I can't confirm the image status right now.", 'a denied uncreated request is a known denial');
+assert.deepEqual(guestQuotaFact.currentRequest.guestAccess,
+  { registrationAvailable: true, signInAvailable: true, additionalQuotaVerified: false },
+  'only the server-owned guest quota path can establish an optional account next step');
+assert.deepEqual(toImageStatusReviewContext({ imageStatus: guestQuotaFact }), guestQuotaFact,
+  'normalizing the authoritative image fact again must not drop blocked reason or guest access');
+assert.deepEqual(toImageStatusReviewContext({ imageStatus: { kind: 'unknown', status: 'unknown', currentTurn: false, currentRequest: { outcome: 'not_created' } } }).currentRequest,
+  { outcome: 'not_created' }, 'legacy uncreated facts retain their outcome without inventing a reason or guest advice');
+const guestQuotaPrompt = buildChatImageContextLayer(guestQuotaContext).content;
+const guestQuotaReview = buildReplyReviewMessages({ boundaryReviewRequired: true, imageStatusContext: guestQuotaFact });
+assert(guestQuotaPrompt.includes('may register or sign in'));
+assert(guestQuotaReview.some(row => row.content.includes('may register or sign in')),
+  'generation and review share the conditional guest account advice contract');
+const { buildBusinessReviewCapability } = await import('../server/business-claim-audit-service.js');
+const guestCapability = buildBusinessReviewCapability({ imageStatusContext: guestQuotaFact,
+  catalogueOwner: { character: { id: 'image-guide', category_id: 'mascot' }, trustedSite: { id: 'image-shop' } } });
+assert.deepEqual(guestCapability.imageStatus, guestQuotaFact,
+  'claim proof retains the same guest access and exact current blocked reason as image review');
+assert(guestQuotaPrompt.includes('does not guarantee further image quota'));
+const { normalizeGuestReplyText } = await import('../server/guest-chat-output-policy.js');
+assert.equal(normalizeGuestReplyText({ imageReason: 'quota_exhausted', languageCode: 'es' }), getChatImageStatusFallbackCopy(guestQuotaContext, 'es'),
+  'legacy guest normalization reuses the same reason and language copy');
+for (const { code } of SUPPORTED_CHARACTER_LANGUAGES) {
+  for (const blocked of [guestQuotaContext, quota, { reason: 'disallowed_request', taskCreated: false }]) {
+    const copy = getChatImageStatusFallbackCopy(blocked, code);
+    assert(copy && copy !== getChatImageUnverifiedStatusCopy(code));
+    if (code !== 'en') assert.notEqual(copy, getChatImageStatusFallbackCopy(blocked, 'en'), 'known blocks use the active supported language');
+  }
+}
+for (const input of [quota, { ...quota, taskCreated: true, guestQuotaAccess: true },
+  { ...quota, reason: 'classification_unavailable', guestQuotaAccess: true },
+  { imageStatus: currentDelivery, guestQuotaAccess: true }]) {
+  assert(!toImageStatusReviewContext(input)?.currentRequest?.guestAccess,
+    'member quota, accepted images and non-quota failures do not acquire guest account advice');
+}
 assert.match(buildChatImageContextLayer(failed).content,/failed/);
 assert.match(buildChatImageContextLayer({taskCreated:true,taskFailed:true,instruction:'Failed.'}).content,/ultimately failed/);
 const unreadable=await resolveChatImageStatusContext({execute:async()=>{throw Error('offline');}}, {session,character:{id:'character-a'},userDisplayOrder:100});
