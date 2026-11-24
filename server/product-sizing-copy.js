@@ -13,10 +13,41 @@ const UNVERIFIED = Object.freeze({
   lt: "Čia negaliu patvirtinti šios prekės matmenų.", lv: "Šeit nevaru apstiprināt šīs preces izmērus.", et: "Ma ei saa siin selle toote mõõtmeid kinnitada.",
 });
 
+// Translate interface labels only. Source cells and explicit units remain
+// byte-for-byte quotations; an unfamiliar heading is never guessed.
+const CHART_LABEL_KEYS = ['Size Chart', 'Size', 'Age ref', 'Height', 'Weight', 'Length', 'Chest', 'Shorts Length'];
+const CHART_LABELS = Object.freeze({
+  en: CHART_LABEL_KEYS,
+  es: ['Tabla de tallas', 'Talla', 'Edad de referencia', 'Estatura', 'Peso', 'Largo', 'Pecho', 'Largo del pantalón corto'],
+  zh: ['尺码表', '尺码', '参考年龄', '身高', '体重', '衣长', '胸围', '短裤长度'],
+  fr: ['Guide des tailles', 'Taille', 'Âge indicatif', 'Taille corporelle', 'Poids', 'Longueur', 'Poitrine', 'Longueur du short'],
+  de: ['Größentabelle', 'Größe', 'Richtalter', 'Körpergröße', 'Gewicht', 'Länge', 'Brust', 'Shortslänge'],
+  it: ['Tabella taglie', 'Taglia', 'Età indicativa', 'Altezza', 'Peso', 'Lunghezza', 'Torace', 'Lunghezza pantaloncini'],
+  pt: ['Tabela de tamanhos', 'Tamanho', 'Idade de referência', 'Altura', 'Peso', 'Comprimento', 'Peito', 'Comprimento dos calções'],
+  hu: ['Mérettáblázat', 'Méret', 'Tájékoztató életkor', 'Magasság', 'Testsúly', 'Hossz', 'Mellbőség', 'Rövidnadrág hossza'],
+  tr: ['Beden tablosu', 'Beden', 'Referans yaş', 'Boy', 'Kilo', 'Uzunluk', 'Göğüs', 'Şort uzunluğu'],
+  ar: ['جدول المقاسات', 'المقاس', 'العمر المرجعي', 'الطول', 'الوزن', 'طول القطعة', 'الصدر', 'طول الشورت'],
+});
+
 // A controlled replacement quotes only the bounded source table. It adds no
 // unit, conversion, body-size rule or fit promise when generation cannot pass review.
-export function buildProductSizingFallback(product = {}, language = "en") {
+export function buildProductSizingFallback(product = {}, language = "en", { userText = '', recentUserMessages = [] } = {}) {
   const chart = product.sizeChartResolved === true ? sanitizeProductSizingChart(product.sizeChart) : null;
   if (!chart) return UNVERIFIED[language] || UNVERIFIED.en;
-  return [chart.title, chart.unit || "", chart.columns.join(" | "), ...chart.rows.map((row) => row.join(" | "))].filter(Boolean).join("\n");
+  let rows = chart.rows;
+  // Quote rows corresponding to literal USER numbers only. No age-to-size
+  // mapping, unit assumption, numeric interpolation or fit recommendation.
+  if (/\d/.test(userText)) {
+    const sizeIndex = chart.columns.findIndex(column => /^size$/i.test(column.trim()));
+    const currentNumbers = new Set(String(userText).match(/\b\d+(?:[.,]\d+)?\b/g) || []);
+    const ranges = new Set([String(userText), ...recentUserMessages.filter(value => typeof value === 'string').slice(-4)]
+      .flatMap(value => value.match(/\b\d+(?:[.,]\d+)?\s*[-–]\s*\d+(?:[.,]\d+)?\b/g) || [])
+      .map(value => value.replace(/\s/g, '').replace(/–/g, '-')));
+    const matching = chart.rows.filter(row => sizeIndex >= 0 && currentNumbers.has(row[sizeIndex])
+      || row.some(cell => ranges.has(String(cell).replace(/\s/g, '').replace(/–/g, '-'))));
+    if (matching.length) rows = matching;
+  }
+  const labels = CHART_LABELS[String(language).toLowerCase().split(/[-_]/)[0]];
+  const label = value => { const index = CHART_LABEL_KEYS.findIndex(key => key.toLowerCase() === String(value).trim().toLowerCase()); return labels && index >= 0 ? labels[index] : value; };
+  return [label(chart.title), chart.unit || "", chart.columns.map(label).join(" | "), ...rows.map((row) => row.join(" | "))].filter(Boolean).join("\n");
 }

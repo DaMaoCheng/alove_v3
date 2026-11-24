@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { closeDbPool, getDbPool } from "../server/db.js";
 import { addGuestExternalSourceContextColumnIfMissing } from "../server/db-column-migrations.js";
 import { saveAdminExternalEmbed } from "../server/external-embed-service.js";
@@ -160,16 +160,35 @@ try {
         id, public_id, site_id, external_origin, embed_status, launcher_image_url, show_badge,
         desktop_right_px, desktop_bottom_px, mobile_right_px, mobile_bottom_px,
         accent_color, surface_color, text_color, corner_radius_px, title, show_beta, beta_text,
-        title_rich_text, description, description_rich_text, cta_text, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        title_rich_text, description, description_rich_text, cta_text, promotion_draft_json, promotion_published_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [backup.id, backup.public_id, backup.site_id, backup.external_origin, backup.embed_status, backup.launcher_image_url,
         backup.show_badge, backup.desktop_right_px, backup.desktop_bottom_px, backup.mobile_right_px, backup.mobile_bottom_px,
         backup.accent_color, backup.surface_color, backup.text_color, backup.corner_radius_px, backup.title, backup.show_beta,
         backup.beta_text, backup.title_rich_text, backup.description, backup.description_rich_text, backup.cta_text,
+        jsonRestoreValue(backup.promotion_draft_json), jsonRestoreValue(backup.promotion_published_json),
         backup.created_at, backup.updated_at]
     );
+    const [[restoredPromotion]] = await db.execute(
+      "SELECT promotion_draft_json, promotion_published_json FROM site_external_embeds WHERE site_id = ?", [siteId]
+    );
+    for (const key of ["promotion_draft_json", "promotion_published_json"]) {
+      assert.equal(jsonFingerprint(restoredPromotion?.[key]), jsonFingerprint(backup[key]), "Self-check restore must preserve " + key);
+    }
   }
   await closeDbPool();
 }
 
 console.info("[external-embed-http-self-check] passed");
+
+// mysql2 may return JSON as an object, a JSON string, or NULL. Restore without
+// double-encoding, and compare hashes so assertion errors never dump campaign data.
+function jsonRestoreValue(value) {
+  return value == null ? null : typeof value === "string" ? value : JSON.stringify(value);
+}
+function jsonFingerprint(value) {
+  const parsed = typeof value === "string" ? JSON.parse(value) : value ?? null;
+  const canonical = item => Array.isArray(item) ? item.map(canonical)
+    : item && typeof item === "object" ? Object.fromEntries(Object.keys(item).sort().map(key => [key, canonical(item[key])])) : item;
+  return createHash("sha256").update(JSON.stringify(canonical(parsed))).digest("hex");
+}

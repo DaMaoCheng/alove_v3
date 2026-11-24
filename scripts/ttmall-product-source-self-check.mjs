@@ -27,6 +27,7 @@ let tokenCalls = 0;
 let forceUnauthorized = false;
 let sizeChartCalls = 0;
 let ageDetailCalls = 0;
+let detailResponses = [];
 try {
   resetTtmallProductSourceCachesForTests();
   dns.lookup = async (hostname, options = {}) => {
@@ -52,6 +53,7 @@ try {
       assert.equal(options.headers.Authorization, undefined, "TTMall token bootstrap must not send a stored secret");
       return jsonResponse({ data: buildTestJwt({ websiteId: requestUrl.pathname.split("/").at(-1) }) });
     }
+    if (requestUrl.pathname === '/v1/product/101' && detailResponses.length) return detailResponses.shift();
     assert.match(options.headers.Authorization || "", /^Bearer /, "TTMall reads should use the temporary service token");
     if (requestUrl.pathname === "/v1/website") {
       if (decodeTestJwt(options.headers.Authorization).websiteId === "5") {
@@ -170,6 +172,7 @@ try {
   assert.equal(resolvedProduct?.sizeChartResolved, true, "direct detail resolution should mark the size-chart lookup complete even when the source has no chart");
   assert.equal(sizeChartCalls, 1, "only direct product detail resolution should fetch the size chart");
 
+
   const ageProducts = await fetchProductSummary(source, {
     query: "Kids age search",
     requestedAgeRange: "1-2 years",
@@ -230,6 +233,29 @@ try {
     /public http\/https host/,
     "TTMall storefront origins returned by the upstream API must pass the same public-host guard",
   );
+  const detailCount = () => requests.filter(request => request.url.pathname === '/v1/product/101').length;
+  let detailBaseline = detailCount();
+  detailResponses = [jsonResponse({ code: 200, data: {} })];
+  assert.equal((await fetchTtmallProductById(source, '101', { throwOnError: true, retryEmptyDetail: true })).id, '101');
+  assert.equal(detailCount() - detailBaseline, 2, 'one empty detail retries only the same exact ID once');
+  detailBaseline = detailCount();
+  detailResponses = [jsonResponse({ code: 200, data: {} }), jsonResponse({ code: 200, data: {} })];
+  await assert.rejects(fetchTtmallProductById(source, '101', { throwOnError: true, retryEmptyDetail: true }), error => error.code === 'source_internal');
+  assert.equal(detailCount() - detailBaseline, 2, 'two empty details are a source error, never no-match or a third attempt');
+  for (const status of [404, 403]) {
+    detailBaseline = detailCount(); detailResponses = [jsonResponse({ code: status, data: {} }, status)];
+    await assert.rejects(fetchTtmallProductById(source, '101', { throwOnError: true, retryEmptyDetail: true }), new RegExp('HTTP ' + status));
+    assert.equal(detailCount() - detailBaseline, 1, 'explicit missing/auth errors do not enter empty-detail retry');
+  }
+  detailBaseline = detailCount();
+  detailResponses = [jsonResponse({ code: 401, data: {} }, 401), jsonResponse({ code: 401, data: {} }, 401)];
+  await assert.rejects(fetchTtmallProductById(source, '101', { throwOnError: true, retryEmptyDetail: true }), /HTTP 401/);
+  assert.equal(detailCount() - detailBaseline, 2, 'existing one token-refresh retry remains bounded; no extra empty retry follows auth failure');
+  detailBaseline = detailCount(); detailResponses = [jsonResponse({ code: 200, data: {} })];
+  assert.equal(await fetchTtmallProductById(source, '101', { throwOnError: true }), null, 'legacy callers retain their original empty-result contract');
+  assert.equal(detailCount() - detailBaseline, 1);
+  detailResponses = [];
+
 } finally {
   globalThis.fetch = originalFetch;
   dns.lookup = originalLookup;

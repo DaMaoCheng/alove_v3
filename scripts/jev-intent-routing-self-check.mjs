@@ -312,3 +312,24 @@ if (!process.argv.includes("--real")) {
 
 console.log(`jev intent routing self-check passed${process.argv.includes("--real") ? " (real)" : ""}`);
 process.exit(0);
+
+// Same-call presale evidence is a read-only purpose, never personal-order access.
+for (const route of ['order_lookup', 'unsupported_request', 'daily_chat']) {
+  const input = 'If I buy a shirt, where would delivery arrive?';
+  const result = normalizeJevResponse({ answers: { route: { choice: route, confidence: .43 },
+    order_request_kind: { choice: 'presale', confidence: .98 }, order_evidence_source: { choice: 'current', confidence: .98 },
+  } }, { canLookupOrder: false }, {}, input);
+  assert.equal(result.orderIntent, 'none');
+  assert.equal(result.orderRequestKind, 'presale');
+  assert.equal(result.primaryIntent, 'daily_chat');
+  assert.equal(await classifyOrderLookup(input, { jevDecision: result }), false);
+}
+for (const kind of ['existing', 'continuation']) {
+  const input = 'Please check my existing order and explain the delivery policy.';
+  const prior = kind === 'continuation' ? { recentConversation: [{ role: 'user', text: 'Please check my existing order.' }] } : {};
+  const result = normalizeJevResponse({ answers: { route: { choice: 'daily_chat', confidence: .98 },
+    order_request_kind: { choice: kind, confidence: .98 }, order_evidence_source: { choice: kind === 'existing' ? 'current' : 'prior0', confidence: .98 },
+  } }, { canLookupOrder: true }, prior, input);
+  assert.equal(result.orderIntent, 'lookup', 'separate real-order lookup survives an independent policy question');
+}
+assert(Object.hasOwn(buildQuestions().order_request_kind.criteria, 'presale'));

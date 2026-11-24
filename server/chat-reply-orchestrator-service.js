@@ -1,3 +1,4 @@
+import { planProductRequestBatch, isPlannedProductBatchStep, bindGeneratedProductBatch, readGeneratedProductBatch, resolveProductBatchStepIntent } from './product-request-batch-service.js';
 import { shouldRecheckBusinessKnowledge } from './business-knowledge-selection-service.js';
 import { registerChatImageInitialReplyForDb } from "./chat-image-failure-reply-job-service.js";
 import { resolveFeedbackConversationHistory, attachFeedbackSubmissionContext, applyFeedbackSubmissionPrompt, isSubmittedFeedbackFollowup } from './chat-feedback-submission-service.js';
@@ -64,6 +65,7 @@ export async function buildCharacterReplyGenerationForDb(db, {
   voiceMetaFallback = null,
   intentTurn = null,
   orderLookupSiteSlug = "",
+  productBatchStep = null,
 }) {
   intentTurn ||= await prepareChatIntentTurn(db, { session, character: promptCharacter, userText, userId });
   const userContext = await buildUserPromptContext(db, {
@@ -78,9 +80,23 @@ export async function buildCharacterReplyGenerationForDb(db, {
     character: promptCharacter, siteId: commerceSite?.id || '', userId, beforeDisplayOrder: userDisplayOrder });
   const commerceRecentMessages = feedbackHistory?.entries?.length
     ? [...recentMessages, ...feedbackHistory.entries].sort((a, b) => Number(a.displayOrder || 0) - Number(b.displayOrder || 0)) : recentMessages;
-  let commerceSearchIntent = await (intentTurn.resolveCommerce?.bind(intentTurn) || resolveCommerceSearchIntent)({ userText, recentMessages: commerceRecentMessages,
+  let commerceSearchIntent = (isPlannedProductBatchStep(productBatchStep) ? await resolveProductBatchStepIntent(productBatchStep, (text, scopeHistory) => resolveCommerceSearchIntent({ userText: text, recentMessages: scopeHistory, searchIntent: buildProductSearchIntent(text), enrichAllTurns: true, jevDecision: intentTurn.decision, siteId: commerceSite?.id || '', characterId: characterId || promptCharacter.id })) : null) || await (intentTurn.resolveCommerce?.bind(intentTurn) || resolveCommerceSearchIntent)({ userText, recentMessages: commerceRecentMessages,
     searchIntent: buildProductSearchIntent(userText, productTrigger, { recentProductContext: buildRecentProductContext(recentMessages) }),
     logContext, enrichAllTurns: true, explicitTrigger: Boolean(productTrigger), jevDecision: intentTurn.decision, siteId: commerceSite?.id || "", siteSlug: commerceSite?.slug || "", characterId: characterId || promptCharacter.id });
+  if (!isPlannedProductBatchStep(productBatchStep) && !productTrigger && !chatImageContext && !visionInputs.length) {
+    const batch = planProductRequestBatch(commerceSearchIntent, { userText, siteId: commerceSite?.id || '',
+      characterId: characterId || promptCharacter.id, jevDecision: intentTurn.decision });
+    if (batch) {
+      const generations = [];
+      for (const step of batch) {
+        const generation = await buildCharacterReplyGenerationForDb(db, { promptCharacter, session, userId, characterId,
+          userText: step.userText, recentMessages, userDisplayOrder, logContext, voiceMetaFallback, intentTurn,
+          orderLookupSiteSlug, productBatchStep: step });
+        generations.push({ ...generation, userText: step.userText });
+      }
+      return bindGeneratedProductBatch(generations[0], generations);
+    }
+  }
   const productStartedAt = Date.now();
   let productContext = suppressRepeatedProductCards((!hasPendingProductRequest(commerceSearchIntent) && !commerceSearchIntent.productRequestState && productContextOverride) || await buildChatProductRecommendationContext(db, {
     character: promptCharacter,
@@ -270,6 +286,18 @@ export async function persistCharacterReplyForDb(db, {
   replyTriggerMessageId = "",
   replyVoicePayloadBuilder,
 }) {
+  const batch = readGeneratedProductBatch(replyResult);
+  if (batch) {
+    let response;
+    const items = [];
+    for (const generation of batch) {
+      response = await persistCharacterReplyForDb(db, { character, languageCode, session, userId, characterId,
+        userText: generation.userText, productContext: generation.productContext, replyResult: generation.replyResult,
+        feedbackAction: generation.feedbackAction, replyTriggerMessageId, replyVoicePayloadBuilder });
+      items.push(...response.items);
+    }
+    return { ...response, items };
+  }
   const nextOrder = await getNextMessageOrder(db, session.id);
   const selectedProducts = selectProductsForReply(productContext, replyResult);
   const selectedProduct = selectedProducts[0] || null;

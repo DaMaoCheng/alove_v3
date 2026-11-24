@@ -114,3 +114,25 @@ check(resolveChatFeedbackActionCandidate({ ...identityArgs, userText: 'Can I spe
 check(resolveChatFeedbackActionCandidate({ ...identityArgs, userText: 'track my parcel', searchIntent: { ...generalTrackingIntent, commerceRoute: 'store_policy', knowledgeScope: 'business' } })?.kind === 'feedback', "real unavailable tracking still offers existing help");
 
 console.log(`Guest benefit/feedback self-check passed (${checks} assertions; pure functions, no DB/network/models)`);
+
+const { normalizeCommerceAssistance } = await import('../server/product-intent-classifier-service.js');
+for (const current of ['Can this store personalize shirts?', 'Please close my account.']) {
+ const assistance=normalizeCommerceAssistance({confidence:.95,humanHandoff:{explicitRequest:false,businessReviewRequired:false,reviewReason:'service_request',evidence:current}},{userText:current});
+ const intent={commerceRoute:'chat',commerceTopic:'other',commerceConfidence:.95,knowledgeScope:'business',businessKnowledgeRequired:true,
+  policyKnowledgeRequest:{source:'jev',required:true,evidence:current,query:current},replyBoundary:{salesAllowed:false,contactAllowed:true},...assistance};
+ const knowledge={ok:true,items:[],strategy:'business_no_relevant_section'};
+ const args={character,userText:current,searchIntent:intent,knowledgeContext:knowledge};
+ check(resolveChatFeedbackActionCandidate(args)?.reason==='service_review','actual same-turn service purpose plus missing knowledge exposes the existing form');
+ for (const overrides of [
+  {searchIntent:{...intent,humanHandoff:null}},
+  {searchIntent:{...intent,humanHandoff:{...intent.humanHandoff,evidence:'older unrelated request'}}},
+  {searchIntent:{...intent,replyBoundary:{contactAllowed:false}}},
+  {searchIntent:{...intent,businessKnowledgeRequired:false}},
+  {searchIntent:{...intent,policyKnowledgeRequest:{...intent.policyKnowledgeRequest,source:'untrusted'}}},
+  {knowledgeContext:{...knowledge,items:[{text:'A verified service answer'}]}},
+  {knowledgeContext:{...knowledge,strategy:'business_selection_unavailable'}},
+  {knowledgeContext:{...knowledge,ok:false}},
+  {knowledgeContext:{...knowledge,feedbackSubmission:{relation:'submitted_followup'}}},
+ ]) check(resolveChatFeedbackActionCandidate({...args,...overrides})===null,'normal answers, refusal, absent/old purpose, untrusted proof and unavailable retrieval do not manufacture a service handoff');
+}
+console.log('Scoped service feedback controls passed');

@@ -96,3 +96,24 @@ function isWithinDirectory(filePath = "", directory = "") {
   const normalizedDir = resolve(directory);
   return normalizedFile === normalizedDir || normalizedFile.startsWith(`${normalizedDir}${sep}`);
 }
+
+// Reuse an actual recent attachment only for an independently classified visual
+// inspection continuation. Ownership is established by this exact session join.
+export async function collectGuestInspectionVisionInputs(db, { sessionId = '', guestSessionId = '', characterId = '',
+  beforeDisplayOrder = 0, recentMessages = [], jevDecision = null, collect = collectVisionInputsForAttachments } = {}) {
+  if (jevDecision?.ok !== true || jevDecision.imageIntent !== 'image_inspection'
+    || !sessionId || !guestSessionId || !characterId || !(Number(beforeDisplayOrder) > 0)) return [];
+  const recentUsers = recentMessages.filter(row => (row.senderType || row.sender_type) === 'user'
+    && Number(row.displayOrder || row.display_order) > 0 && Number(row.displayOrder || row.display_order) < Number(beforeDisplayOrder)).slice(-3);
+  if (!recentUsers.length) return [];
+  const after = Math.min(...recentUsers.map(row => Number(row.displayOrder || row.display_order)));
+  const [rows] = await db.execute(`SELECT m.product_payload_json
+    FROM chat_messages m JOIN chat_sessions s ON s.id = m.session_id
+    WHERE m.session_id = ? AND s.guest_session_id = ? AND m.character_id = ?
+      AND m.sender_type = 'user' AND m.content_type = 'attachment'
+      AND m.display_order >= ? AND m.display_order < ?
+    ORDER BY m.display_order DESC, m.sent_at DESC LIMIT 1`,
+    [sessionId, guestSessionId, characterId, after, Number(beforeDisplayOrder)]);
+  const attachment = rows?.length ? parseJsonValue(rows[0].product_payload_json, null) : null;
+  return attachment?.kind === 'image' ? collect([attachment]) : [];
+}

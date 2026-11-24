@@ -1,3 +1,5 @@
+import { bindAdminExternalPromotion } from "./admin-external-promotion-controller.js";
+import { externalPromotionMountHtml } from "./admin-external-promotion-template.js";
 import { listAdminExternalEmbeds, saveAdminExternalEmbed } from "../../services/admin-external-embed-service.js";
 import { bindDropdowns } from "../shared-ui/dropdown.js";
 import { showToast } from "../shared-ui/toast.js";
@@ -11,11 +13,15 @@ export function bindAdminExternalEmbeds(shell) {
   let items = [];
   let selectedSiteId = "";
   let previewMode = "desktop";
+  const promotionDrafts = new Map();
+  let disposePromotion = () => {};
 
   const render = () => {
-    host.innerHTML = adminExternalEmbedsEditorHtml({ items, selectedSiteId, previewMode });
+    disposePromotion();
+    host.innerHTML = adminExternalEmbedsEditorHtml({ items, selectedSiteId, previewMode }) + (items.length ? externalPromotionMountHtml() : "");
     const form = host.querySelector("[data-external-embed-form]");
     const selectedItem = items.find((item) => item.siteId === selectedSiteId) || items[0] || {};
+    disposePromotion = bindAdminExternalPromotion(host.querySelector("[data-external-promotion-host]"), selectedItem, promotionDrafts);
     bindDropdowns(host);
     bindAdminExternalEmbedAvatarControls(host, {
       fallbackImageUrl: selectedItem.mascotAvatarUrl || "",

@@ -99,7 +99,8 @@ export function normalizeCommerceAssistance(value = {}, { userText = "", recentM
   const explicitRequest = Boolean(handoffEvidence && value?.humanHandoff?.explicitRequest === true);
   const businessReviewRequired = Boolean(handoffEvidence && businessInquiry && value?.humanHandoff?.businessReviewRequired === true && BUSINESS_REVIEW_REASONS.has(value?.humanHandoff?.reviewReason));
   const sizeExchange = Boolean(handoffEvidence && value?.humanHandoff?.reviewReason === "size_exchange");
-  const humanHandoff = explicitRequest || businessReviewRequired || sizeExchange ? { explicitRequest, businessReviewRequired, reviewReason: sizeExchange ? "size_exchange" : businessReviewRequired ? value.humanHandoff.reviewReason : "none", evidence: handoffEvidence } : null;
+  const serviceRequest = Boolean(handoffEvidence && value?.humanHandoff?.reviewReason === "service_request");
+  const humanHandoff = explicitRequest || businessReviewRequired || sizeExchange || serviceRequest ? { explicitRequest, businessReviewRequired, reviewReason: sizeExchange ? "size_exchange" : serviceRequest ? "service_request" : businessReviewRequired ? value.humanHandoff.reviewReason : "none", evidence: handoffEvidence } : null;
   const promotionEvidence = confident ? evidence(value?.promotionInquiry?.evidence) : "";
   const promotionInquiry = promotionEvidence && ["policy", "benefit_request"].includes(value?.promotionInquiry?.kind)
     ? { kind: value.promotionInquiry.kind, evidence: promotionEvidence } : null;

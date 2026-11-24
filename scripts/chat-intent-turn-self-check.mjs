@@ -67,6 +67,28 @@ const source = core.toString();
 // Reverse ONLY these exact deltas before checking the original immutable baseline;
 // every unrelated route, question, threshold and normalization rule stays protected.
 let baselineSource = source;
+
+// Explicitly reviewed 2026-11-24 deltas are tested before restoring only their
+// exact source for the older immutable region hashes. Keep all other rules.
+const { buildQuestions: buildCurrentQuestions, normalizeJevResponse: normalizeCurrentDecision } = await import('../server/jev-intent-service.js');
+const currentQuestions = buildCurrentQuestions();
+assert.deepEqual(Object.keys(currentQuestions.order_request_kind.criteria), ['none', 'presale', 'existing', 'continuation', 'unclear']);
+assert(currentQuestions.order_request_kind.instructions.includes('planned, conditional or future purchase'));
+assert(currentQuestions.order_request_kind.instructions.includes('preserve it when mixed with policy or other requests'));
+assert(currentQuestions.image_inspection.instructions.includes('recent USER context'));
+assert(currentQuestions.image_inspection.instructions.includes('unrelated topic, social acknowledgement, a different product search, a new-image generation request or a try-on request'));
+for (const route of ['order_lookup', 'unsupported_request']) {
+  const decision = normalizeCurrentDecision({answers:{route:{choice:route,confidence:.8},
+    order_request_kind:{choice:'presale',confidence:.9},order_evidence_source:{choice:'current',confidence:.9}}});
+  assert.equal(decision.primaryIntent,'daily_chat');
+  assert.equal(decision.orderIntent,'none');
+  assert.equal(decision.orderRequestKind,'presale');
+}
+const currentInspectionDelta = "    image_inspection: {\n      type: \"noul\",\n      instructions: \"Is the user asking the system to inspect or describe an image they provided, or continuing that same unresolved visual task by clarifying the image's source, meaning or visible details? Use recent USER context to resolve a short continuation. A clarification of an already supplied screenshot still inspects that same image. Choose no for an unrelated topic, social acknowledgement, a different product search, a new-image generation request or a try-on request. Prior assistant claims alone do not establish a user-supplied image.\",\n    },\n";
+const priorInspectionQuestion = "    image_inspection: {\n      type: \"noul\",\n      instructions: \"Is the user asking the system to inspect or describe an image they provided?\",\n    },\n";
+assert.equal(baselineSource.split(currentInspectionDelta).length - 1, 1, 'only the exact approved inspection continuation definition can be restored');
+baselineSource = baselineSource.replace(currentInspectionDelta, priorInspectionQuestion);
+
 const currentContinuationExclusion = 'A current name, choice, assent or specification that continues the USER merchandise task in productContext.requestScope or active productContext.targetEvidence is not a disconnected mention.';
 const priorContinuationExclusion = 'A name that selects or refines an existing USER requestScope is not a disconnected mention.';
 assert.equal(baselineSource.split(currentContinuationExclusion).length - 1, 1, 'single/multiple continuation exclusion must occur exactly once');

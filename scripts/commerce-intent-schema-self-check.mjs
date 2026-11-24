@@ -61,6 +61,11 @@ const legacySizes = legacyFormat.json_schema.schema.properties.productRequiremen
 const originalSizeLabels = ['5XL','4XL','3XL','2XL','XXL','XL','XXS','XS','S','M','L'];
 assert.deepEqual(legacySizes, [...originalSizeLabels, ...CHILD_PRODUCT_SIZE_LABELS]);
 legacySizes.splice(0, legacySizes.length, ...originalSizeLabels);
+// Scoped service review is an intentional additive enum extension, not a
+// rewrite of any earlier wire field. Check its exact extension then restore it.
+const reviewReasons = legacyFormat.json_schema.schema.properties.humanHandoff.anyOf[0].properties.reviewReason.enum;
+assert.deepEqual(reviewReasons, ['quotation','negotiation','contract','commercial_terms','service_request','none']);
+reviewReasons.splice(reviewReasons.indexOf('service_request'), 1);
 assert.equal(createHash('sha256').update(JSON.stringify(legacyFormat)).digest('hex'),
   '813384b5c1520ce72cd1ca1cf3035edea5bc81b95d240c2fea2699bd303be20f',
   'Shared finite values must retain the complete pre-refactor wire contract');

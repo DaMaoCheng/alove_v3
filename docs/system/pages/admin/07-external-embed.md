@@ -1,6 +1,6 @@
 # 后台：站外嵌入
 
-状态：`Current / Local verified`。本页只完成本地实现与接口链路自检，尚未部署服务器或更新 GitHub。
+状态：`Current / Deployed`。2026-11-23礼盒已部署，PJ、BS、CF、GG活动已启用；商城需安装各站独立代码后展示。本轮未做GitHub同步。
 
 ## 1. 页面身份
 
@@ -41,3 +41,21 @@
 - 后端：`server/external-embed-service.js`、`admin-external-embed-routes.js`、`public-external-embed-routes.js`。
 - 数据与静态资源：`server/db-bootstrap-external-embed-tables.js`、`embed/v1.js`。
 - 接口：`GET/PUT /api/admin/external-embeds`、`GET /api/embed/config?embed=<publicId>`。
+
+## 5. 独立活动礼盒（2026-11-23，已发布）
+
+- 同页选择 PJ 后，点击“活动礼盒 ↓”。新增区域独立维护图标、活动图片、自动避让及桌面/手机偏移；原聊天头像入口保持不变。
+- 礼盒间歇轻晃，点击后以动画展开静态活动图，关闭时反向收起。弹窗只含图片及关闭控件，不添加营销按钮。图片按原比例显示；尊重系统减少动态效果设置。
+- PC（宽度大于640px）使用与头像卡片相同的角落展开方式：图片宽度至多340px，优先在礼盒上方右对齐；上方空间不足则放到旁边并限制在视口内。PC无全屏遮罩、不阻断页面操作；点击外侧关闭，Esc和关闭键返回礼盒焦点。手机保留居中遮罩展示。
+- 当前运营约定（用户于2026-11-23指定）：后续站点共用同一礼盒图标和动效，只替换展开图片。PJ、BS、CF与GG均引用 `/assets/promotions/pj-gift.svg`；该文件名虽含PJ，但它是当前共用图标，不按站点另做副本。图片先压缩为原比例透明WebP，再按站点精确Origin发布；不改原头像配置。
+- GG当前允许域名（2026-11-23用户更新）：`https://www.gogoalshop.ru`，已替换旧.se来源。public ID和安装代码保持，旧.se新请求不再获准；实际新商城礼盒与图片已验证。
+- BS最新按用户截图恢复到回顶按钮上方：`autoAvoid=true`，PC右12/最小下24，手机右13/最小下24。复用现有悬浮控件避让，实际商品页回顶控件为最高候选，礼盒位于其上方12px，PC居中、手机各宽度中心差小于5px；无回顶或其他更高控件出现时仍按通用避让计算，并非绑定某个站点选择器。PC/手机不再采用原固定64/66位置；其他站配置不变，安装代码不用换。
+- 当前renderer版本 `2026-11-23-mobile-toolbar-20261123165006`：固定角落模式新增移动底栏安全避让，必须有实际可见且位于视口内的操作控件；空壳/隐藏/离屏/侧边悬浮元素不触发。无新配置项、站点路径硬编码或轮询，原自动避让模式保持。
+- GG初次配置时没有site_url或embed行，域名由用户明确提供为 `https://www.gogoalshop.se`。只创建带该Origin的最小embed行并发布活动，聊天状态仍draft；未填充站点表的site_url、未开启游客或角色。不要把GG活动已发布误解为其聊天挂件已发布。
+- 可在右侧切换桌面/手机真实 iframe 预览，或打开独立测试页。公开演示入口 `/embed/pj-promotion-demo.html` 只展示随代码提供的 PJ 素材，不读取已保存草稿。
+- 上传复用原活动图上传接口（最大 3MB），不做头像裁剪。保存草稿不改变线上内容；发布会原子保存并发布当前可见配置；停用只清除已发布活动，保留草稿。
+- 独立活动安装代码使用 `/embed/promotion.js`；原 `/embed/v1.js` 不变。活动与聊天共享站点的外站 Origin 配置，活动发布不要求聊天挂件同时发布。
+- 自动避让仅在当前文档及开放 Shadow DOM 中检查悬浮组件的可见边界，以及 iframe 外框，不读取聊天、订单或商品内容、不上传页面数据。封闭 Shadow DOM、透明全屏 iframe 等特殊组件可能需要手动偏移；下偏移允许 0–640px，最终受视口限制。
+- 管理接口：`GET/PUT /api/admin/external-embeds/promotion`；公开接口：`GET /api/embed/promotion?embed=<publicId>`，仅向精确匹配 Origin 返回已发布配置。
+- 新模块：`server/external-promotion-service.js`、`admin-external-promotion-controller.js`、`admin-external-promotion-template.js`、`src/services/admin-external-promotion-service.js`、`embed/promotion-widget.js`。新增两列可空 JSON 保存草稿和发布快照；无自动启用或 seed 覆盖。
+- release `2026-11-23-pj-gift-widget-20261123113741` 已上线，PJ正式活动已启用。411完整门禁、1810部署文件及动态元数据、线上浏览器16项通过；浏览器使用PJ Origin隔离容器和真实线上脚本/接口/图片，不代表已修改商城页面。原聊天字段和其他站点配置保持。

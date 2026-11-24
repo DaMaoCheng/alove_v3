@@ -116,3 +116,19 @@ for (const [name, historyText, checkoutProblem] of [
  assert.equal(result.text === candidate, !checkoutProblem, name + ': existing true-reject/false-review gate remains');
 }
 console.log('unclear checkout current/recent USER evidence and preserved auxiliary gates passed');
+
+// Verified fallback changes headings only; it must never repair source cells,
+// infer missing units or silently invent a localized table for an unknown chart.
+const sourceChart = { sizeChartResolved: true, sizeChart: { title: 'Size Chart', unit: '', columns: ['Size', 'Age ref', 'Height', 'Custom source heading'], rows: [['28', '14-15', '150-160', 'source wording']] } };
+const spanishChart = buildProductSizingFallback(sourceChart, 'es-MX');
+assert(spanishChart.startsWith('Tabla de tallas'));
+assert(spanishChart.includes('Talla | Edad de referencia | Estatura | Custom source heading'));
+assert(spanishChart.includes('28 | 14-15 | 150-160 | source wording'));
+assert(!spanishChart.includes('cm'), 'no unit guessed for a unitless source');
+assert(buildProductSizingFallback(sourceChart, 'en').includes('Size | Age ref | Height'));
+console.log('Localized sizing fallback preserves exact source cells, unknown headings and missing units.');
+const boundedChart={sizeChartResolved:true,sizeChart:{title:'Size Chart',unit:'',columns:['Size','Height'],rows:[['16','90-100'],['18','100-110'],['28','150-160']]}};
+const bounded=buildProductSizingFallback(boundedChart,'es',{userText:'Does size 14 or 16 work?',recentUserMessages:['Height 150-160']});
+assert(bounded.includes('16 | 90-100'));assert(bounded.includes('28 | 150-160'));assert(!bounded.includes('18 | 100-110'));assert(!bounded.includes('cm'));
+assert(buildProductSizingFallback(boundedChart,'es',{userText:'Show the whole table'}).includes('18 | 100-110'));
+console.log('Sizing fallback quotes only literal USER-related rows when numeric evidence exists, without fit claims, interpolation or inferred units.');

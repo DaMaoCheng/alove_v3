@@ -1,3 +1,4 @@
+import { createProductSourceError, PRODUCT_SOURCE_ERROR_CODE } from './product-source-error-service.js';
 import { SERVER_CONFIG } from "./config.js";
 import { normalizeCurrency } from "./product-normalizer.js";
 import { filterProductsByIntent } from "./product-intent-service.js";
@@ -96,6 +97,7 @@ export async function fetchTtmallProducts(sourceValue, searchIntent = {}, {
 
 export async function fetchTtmallProductById(sourceValue, productIdValue = "", {
   currency = "",
+  retryEmptyDetail = false,
   timeoutMs = SERVER_CONFIG.productApi.timeoutMs,
   throwOnError = false,
 } = {}) {
@@ -105,8 +107,16 @@ export async function fetchTtmallProductById(sourceValue, productIdValue = "", {
   try {
     await assertSafeProductSourceFetchUrl(source.apiBaseUrl);
     const website = await fetchTtmallWebsite(source, { timeoutMs });
-    const product = await hydrateTtmallProduct(source, { product_id: productId }, { currency, website, timeoutMs, requireDetail: true });
-    return product?.name ? product : null;
+    const attempts = retryEmptyDetail === true ? 2 : 1;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const product = await hydrateTtmallProduct(source, { product_id: productId }, { currency, website, timeoutMs, requireDetail: true });
+      if (product?.name) return product;
+      if (!retryEmptyDetail) return null;
+      // Only an empty successful exact-ID detail is retried. HTTP/auth/network
+      // errors leave through the existing catch; no other product is queried.
+      console.warn('[aiove] exact product source returned empty detail', { provider: 'ttmall', attempt: attempt + 1 });
+    }
+    throw createProductSourceError(PRODUCT_SOURCE_ERROR_CODE.SOURCE_INTERNAL, { provider: 'ttmall' });
   } catch (error) {
     console.warn("[aiove] TTMall product detail failed", { name: safeErrorName(error) });
     if (throwOnError) throw error;

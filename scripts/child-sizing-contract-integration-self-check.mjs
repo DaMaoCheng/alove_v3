@@ -118,3 +118,28 @@ const explicitSearch=await resolveCommerceSearchIntent({userText:sizeText,siteId
 assert.equal(explicitSearch.childSizingUpdateOnly,true,'a coarse primary search vote cannot override an explicit Commerce no-live sizing update');
 const actualNewSearch=await resolveCommerceSearchIntent({userText:sizeText,siteId:'shop',characterId:'guide',recentMessages:sizeHistory,searchIntent:buildProductSearchIntent(sizeText),jevDecision:{ok:true,confident:true,primaryIntent:'product_request',productIntent:'search',productAction:1,imageIntent:'none',orderIntent:'none',webSearchIntent:false},classifyCommerce:async()=>({...updateDecision,declaredLiveProductData:true,needsLiveProductData:true,knowledgeRequest:{kind:'catalogue_only',evidence:sizeText}})});
 assert.equal(actualNewSearch.childSizingUpdateOnly,false,'a Commerce-authorized live catalogue search is not converted into a size acknowledgment');
+// A final rejected rewrite must retain a verified chart's literal source row.
+const { applyProductCandidateState } = await import('../server/product-candidate-state-service.js');
+const { hasChildSizingCorrectionContext } = await import('../server/chat-grounded-reply-repair-service.js');
+const sourceUser = 'kids size 150-160';
+const sourceIntent = applyProductCandidateState({ commerceRoute: 'product_question', commerceTopic: 'sizing', requestedAudience: 'kids', requestedSizes: ['28'],
+  cardAllowed: false, shouldLoadProductContext: false, needsLiveProductData: false }, {
+  confident: true, confidence: 1, productRequirement: { action: 'new', evidence: sourceUser,
+    updates: [{ field: 'requestedAudience', value: 'kids', evidence: 'kids' }, { field: 'requestedSizes', value: ['28'], evidence: '150-160' }] },
+}, { userText: sourceUser, siteId: 'chart-shop', characterId: 'chart-mascot' });
+const chartOptions = { userText: sourceUser, language: 'es', searchIntent: sourceIntent,
+  character: { id: 'chart-mascot', categoryId: 'mascot', site_id: 'chart-shop' }, trustedSite: { id: 'chart-shop', identity_mascot_character_id: 'chart-mascot' },
+  productContext: { siteId: 'chart-shop', sourceType: 'product_api', sourceRef: 'guest-current-product-sizing-context', cardAllowed: false,
+    sizingProduct: { id: 'verified-chart', siteId: 'chart-shop', sizeChartResolved: true,
+      sizeChart: { title: 'Size Chart', columns: ['Size', 'Height'], rows: [['28', '150-160']] } } },
+  factualContext: { required: false, searched: false, items: [], asOfUtc: '2026-11-24T00:00:00Z' },
+  replyResult: { text: 'Unsupported fit guarantee', speechText: 'Unsupported fit guarantee' },
+  assess: async () => ({ allowed: false, confidence: 1, guidanceSupported: false, businessFactsSupported: false }),
+  repairGroundedReply: async () => null, repairLanguageReply: async () => null, recordReview: async () => {},
+};
+assert(hasChildSizingCorrectionContext(chartOptions));
+const chartFallback = await enforceReplyBoundary(chartOptions);
+assert.match(chartFallback.text, /150-160/);
+assert.match(chartFallback.text, /28/);
+assert.doesNotMatch(chartFallback.text, /Guaranteed|Inténtalo de nuevo|CM/);
+console.log('Rejected child-size rewrite retains bounded verified source values without fit or unit invention.');

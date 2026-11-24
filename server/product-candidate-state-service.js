@@ -205,6 +205,7 @@ function validState(value) {
   if (value.status === 'cleared') return { version: 1, status: 'cleared', siteId: value.siteId, characterId: value.characterId };
   if (!['single', 'selected'].includes(value.owner) || !string(value.targetEvidence, 1200) || !object(value.requirements)) return null;
   if (value.owner === 'selected' && (!Number.isInteger(value.selectedIndex) || !string(value.ownerEvidence, 2400))) return null;
+  if (value.sourceProductId !== undefined && !/^\d{1,20}$/.test(value.sourceProductId)) return null;
   const unresolvedRequirements = value.unresolvedRequirements === undefined ? [] : normalizeUnresolvedProductRequirements(value.unresolvedRequirements);
   if (!unresolvedRequirements) return null;
   const proposal = value.proposal;
@@ -213,6 +214,7 @@ function validState(value) {
     || !string(proposal.candidateId, 160) || !string(proposal.name, 240) || !string(proposal.reply, 2000))) return null;
   return { version: 1, status: 'active', siteId: value.siteId, characterId: value.characterId,
     owner: value.owner, ...(value.owner === 'selected' ? { selectedIndex: value.selectedIndex, ownerEvidence: value.ownerEvidence } : {}),
+    ...(value.sourceProductId ? { sourceProductId: value.sourceProductId } : {}),
     targetEvidence: value.targetEvidence,
     requestedConditionEvidence: conditionEvidence(value.requestedConditionEvidence, [value.targetEvidence]), requirements: requirements(value.requirements), suspectedTerm: value.suspectedTerm || null,
     ...(unresolvedRequirements.length ? { unresolvedRequirements } : {}),
@@ -330,6 +332,7 @@ export function applyProductCandidateState(intent = {}, decision = {}, { userTex
   const state = { version: 1, status: 'active', siteId: String(siteId), characterId: String(characterId),
     ...(unresolvedRequirements.length ? { unresolvedRequirements } : {}),
     owner: selected ? 'selected' : 'single', ...(selected ? { selectedIndex: scope.selectedIndex, ownerEvidence } : {}),
+    ...(delta.action === 'continue' && sameOwner && previous.sourceProductId ? { sourceProductId: previous.sourceProductId } : {}),
     targetEvidence: delta.action === 'continue' && sameOwner ? previous.targetEvidence : delta.evidence,
     requestedConditionEvidence: conditionEvidence(delta.action === 'continue' && sameOwner ? previous.requestedConditionEvidence : [],
       [...(selected ? [scope.items[scope.selectedIndex].evidence, scope.items[scope.selectedIndex].sharedEvidence,

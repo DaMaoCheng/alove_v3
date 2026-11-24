@@ -179,3 +179,88 @@ assert(mistakenHistory.value.knowledgeQuery.startsWith(selfContained), 'even a m
 const longQuestion = 'Please explain delivery timing and conditions. '.repeat(12);
 const longHint = await resolveJevCommerceDecision(longQuestion, {recentMessages:[{senderType:'user',text:priorComplaint}],evaluate:priorFixture.evaluate});
 assert.equal(longHint.value.knowledgeQuery,longQuestion.trim().slice(0,240), 'bounded hint retains current question first; full current message is independently supplied to retrieval');
+
+// Exercise the actual commerce normalization and guest capability boundary;
+// fixture semantic selections test protocol/permissions, not real model accuracy.
+globalThis.fetch = async () => { throw Error('External calls forbidden in policy regressions'); };
+const { buildGuestBenefitContext } = await import('../server/guest-benefit-guidance-service.js');
+const presaleText = 'Where would my future purchase be delivered?';
+const presaleFixture = evaluator({route:'store_policy', topic:'delivery'}, {policy_required:.99}, .98,
+  {policy_evidence:presaleText});
+const presaleDecision = await classifyCommerceIntent(presaleText, {resolveJevCommerce:(t,o)=>resolveJevCommerceDecision(t,{...o,evaluate:presaleFixture.evaluate})});
+const presaleIntent = await resolveCommerceSearchIntent({ userText:presaleText, searchIntent:buildProductSearchIntent(presaleText),
+  classifyCommerce:async()=>presaleDecision, jevDecision:{ok:true,confident:true,primaryIntent:'daily_chat',orderIntent:'none',imageIntent:'none',productIntent:'none'} });
+assert.equal(presaleIntent.businessKnowledgeRequired,true,'read-only delivery policy request retains knowledge independently of order access');
+for (const kind of ['policy','benefit_request']) {
+  const text='I expect the advertised offer to apply to my basket.';
+  const fixture=evaluator({route:'store_policy',topic:'price',promotion_kind:kind},{policy_required:.99},.98,
+    {promotion_evidence:text,policy_evidence:text});
+  const decision=await classifyCommerceIntent(text,{resolveJevCommerce:(t,o)=>resolveJevCommerceDecision(t,{...o,evaluate:fixture.evaluate})});
+  const intent=await resolveCommerceSearchIntent({userText:text,searchIntent:buildProductSearchIntent(text),classifyCommerce:async()=>decision,
+    jevDecision:{ok:true,confident:true,primaryIntent:'daily_chat',orderIntent:'none',imageIntent:'none',productIntent:'none'}});
+  assert.equal(intent.promotionInquiry.kind,kind);
+  assert.equal(Boolean(buildGuestBenefitContext({searchIntent:intent,userText:text,isGuest:true})),kind==='benefit_request',
+    'policy interpretation never becomes issuance/login permission; genuine issuance retains its guard');
+}
+
+// Complete kits are USER targets, not independent shirt/shorts duplicates.
+const kitText = 'Spain shirt and shorts kit and Barcelona green kit';
+const kitPacket = buildCommerceJevPacket(kitText);
+const kitToken = (value, boundary) => 't' + kitPacket.productTokens.findIndex(token =>
+  boundary === 'start' ? token.start === kitText.indexOf(value) : token.end === kitText.indexOf(value) + value.length);
+const kits = evaluator({ route: 'product_search', knowledge_kind: 'catalogue_only', requirement_action: 'none', request_relation: 'multiple', request_action: 'new', item_count: 'two',
+  item_0_start: kitToken('Spain', 'start'), item_0_end: kitToken('Spain shirt and shorts kit', 'end'),
+  item_1_start: kitToken('Barcelona', 'start'), item_1_end: kitToken('Barcelona green kit', 'end') });
+const kitDecision = await resolveJevCommerceDecision(kitText, { evaluate: kits.evaluate });
+assert.equal(kitDecision.ok, true);
+assert.equal(kitDecision.value.productRequest.items.length, 2);
+assert.equal(kitDecision.value.productRequest.items[0].evidence, 'Spain shirt and shorts kit');
+assert.equal(kitDecision.value.productRequest.items[1].evidence, 'Barcelona green kit');
+const { normalizeProductRequest } = await import('../server/product-request-scope-service.js');
+assert.equal(normalizeProductRequest(kitDecision.value.productRequest, { userText: kitText, confidence: .99 }).valid, true);
+const childDetail = 'male national team football kit';
+const childHistory = singleHistory.map(row => row.productCandidateState ? { ...row, productCandidateState: { ...singleTarget,
+  requirements: { ...singleTarget.requirements, requestedAudience: 'kids' } } } : row);
+const detail = evaluator({ route: 'product_question', topic: 'sizing', requirement_action: 'continue', request_relation: 'single', request_action: 'new', requestedAudience: 'absent' });
+const detailResult = await resolveJevCommerceDecision(childDetail, { ...singleLocation, recentMessages: childHistory, evaluate: detail.evaluate });
+assert.equal(detailResult.value.productRequirement.action, 'continue');
+assert.equal(detailResult.value.productRequirement.updates.some(update => update.field === 'requestedAudience'), false,
+  'a team gender detail with no wearer update must not manufacture an adult requirement');
+const { applyCommerceQuestionPromptPolicy } = await import('../server/commerce-routing-service.js');
+const scopePrompt = applyCommerceQuestionPromptPolicy({ systemPrompt: 'fixture', layers: [] }, { commerceRoute: 'product_search', scopeUnverified: true, productScopePending: true });
+assert(scopePrompt.layers.some(layer => layer.id === 'product_scope_selection'));
+for (const patch of [{ commerceRoute: 'chat' }, { customerServiceKnowledgeRequest: true }, { promotionInquiry: { kind: 'policy' } }, { nonShoppingReason: 'user_refusal' }]) {
+  const prompt = applyCommerceQuestionPromptPolicy({ systemPrompt: 'fixture', layers: [] }, { commerceRoute: 'product_search', scopeUnverified: true, ...patch });
+  assert(!prompt.layers.some(layer => layer.id === 'product_scope_selection'), 'scope selection must not hijack independent business/refusal/chat turns');
+}
+console.log('Kit target evidence, child detail continuation and pure-scope prompt boundaries passed; real-model interpretation requires separate page acceptance.');
+
+for (const text of ['Can this store personalize shirts?', 'Please close my account.']) {
+ const fixture=evaluator({route:'chat',topic:'other',review_reason:'service_request'},{policy_required:.99},.98,
+  {human_evidence:text,policy_evidence:text});
+ const decision=await classifyCommerceIntent(text,{resolveJevCommerce:(t,o)=>resolveJevCommerceDecision(t,{...o,evaluate:fixture.evaluate})});
+ assert.equal(decision.humanHandoff.reviewReason,'service_request','same-call service purpose survives existing normalization');
+ assert.equal(decision.humanHandoff.explicitRequest,false,'service assistance does not invent an explicit human request');
+ assert.equal(decision.humanHandoff.businessReviewRequired,false,'service assistance does not invent a business negotiation');
+}
+
+// The all-target projection quotes an actual prior USER condition separately
+// from the current scope-wide instruction; assistant wording cannot supply it.
+const kitItems = normalizeProductRequest(kitDecision.value.productRequest, { userText: kitText, confidence: .99 }).items;
+const kitState = { version:1,status:'selected',siteId:'all-site',characterId:'all-character',items:kitItems,selectedIndex:1,clarificationCount:1,originalUserText:kitText };
+const allHistory=[{senderType:'user',text:'name and number printing'},{senderType:'character',productRequestState:kitState,text:'Which items?'}];
+const allCurrent='On both kits';
+const allPacket=buildCommerceJevPacket(allCurrent,{siteId:'all-site',characterId:'all-character',recentMessages:allHistory});
+const allCondition='c'+allPacket.sharedConditions.indexOf('name and number printing');
+const allFixture=evaluator({route:'product_search',knowledge_kind:'catalogue_only',requirement_action:'none',request_relation:'multiple',request_action:'continue',selected_index:'all',shared_condition_0:allCondition});
+const allProjected=await resolveJevCommerceDecision(allCurrent,{siteId:'all-site',characterId:'all-character',recentMessages:allHistory,evaluate:allFixture.evaluate});
+assert.equal(allProjected.value.productRequest.allTargets,true);assert.deepEqual(allProjected.value.productRequest.sharedUpdates,['name and number printing']);
+assert(!allPacket.sharedConditions.includes('Which items?'));
+console.log('All-target JEV projection retains the explicit current instruction and exact prior USER condition, excluding assistant-only wording.');
+const selectedSpan=kitItems[0].text;
+const selectedHistory=[{senderType:'character',productRequestState:{...kitState,selectedIndex:0}}];
+const selectedFixture=evaluator({route:'product_search',knowledge_kind:'catalogue_only',requirement_action:'none',request_relation:'multiple',request_action:'continue',selected_index:'i0',requestedProductType:'shirt'}, {}, .99, {e_requestedProductType:'shirt'});
+const selectedProjection=await resolveJevCommerceDecision(selectedSpan,{siteId:'all-site',characterId:'all-character',recentMessages:selectedHistory,evaluate:selectedFixture.evaluate});
+assert.equal(selectedProjection.value.productRequirement.action,'continue');
+assert(selectedProjection.value.productRequirement.updates.some(update=>update.field==='requestedProductType'&&update.value==='shirt'));
+console.log('Exact selected-target JEV shirt attributes survive the coarse multiple-owner none action.');

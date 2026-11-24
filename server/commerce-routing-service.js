@@ -347,6 +347,7 @@ export async function resolveCommerceSearchIntent({ userText = "", recentMessage
     nonShoppingReason: deterministicNonShopping || decision.route === "chat" ? searchIntent.nonShoppingReason : "",
     commerceRoute,
     productRequirementAction: decision.productRequirementAction || decision.productRequirement?.action || '',
+    productRequestRelation: decision.productRequest?.relation || '',
     referencedProductIds: [],
     replyTopicHint: "", replyClarificationContext: null,
     commerceTopic: assistance.humanHandoff?.reviewReason === "size_exchange" && decision.topic === "sizing" ? "returns" : decision.topic,
@@ -565,6 +566,17 @@ export function applyCommerceQuestionPromptPolicy(promptContext = {}, searchInte
   if (unresolved) {
     const layer = { id: 'product_requirement_clarification', title: 'Merchandise Requirement Clarification',
       content: PRODUCT_CLARIFICATION_CONTRACT + '\nUSER requirement context: ' + JSON.stringify(unresolved) };
+    promptContext = { ...promptContext, systemPrompt: `${String(promptContext.systemPrompt || '').trim()}\n\n## ${layer.title}\n${layer.content}`,
+      layers: [...(promptContext.layers || []), layer] };
+  }
+
+  // Unverified item grouping is not a failed catalogue lookup. Resolve one
+  // target before asking for incidental sizes or promising a later answer.
+  if (hasPendingProductRequest(searchIntent) && searchIntent.commerceRoute === 'product_search'
+    && !searchIntent.nonShoppingReason && !searchIntent.customerServiceKnowledgeRequest
+    && !searchIntent.businessInquiry && !searchIntent.humanHandoff && !searchIntent.checkoutIssue && !searchIntent.promotionInquiry) {
+    const layer = { id: 'product_scope_selection', title: 'Current Merchandise Scope', content:
+      'The merchandise targets are not yet independently resolved. No catalogue lookup has occurred. Acknowledge the USER shopping purpose and ask which ONE complete item or kit to check first, referring only to USER-stated targets. A kit and its components stay together. Preserve the other requested targets; do not silently pick the first, merge their conditions or treat a quantity as separate identities. Do not spend this turn collecting age or size while the target selection is unresolved. Do not claim that the catalogue is inaccessible, that no match exists, that an order/request has been recorded, or that you will return later or contact the user. If the CURRENT USER supplies an actual selection, its server-validated state, not this instruction, determines permissions. Independent questions keep their existing evidence and action rules.' };
     promptContext = { ...promptContext, systemPrompt: `${String(promptContext.systemPrompt || '').trim()}\n\n## ${layer.title}\n${layer.content}`,
       layers: [...(promptContext.layers || []), layer] };
   }

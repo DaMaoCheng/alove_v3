@@ -42,6 +42,7 @@ function validState(value) {
     if (!Array.isArray(value.items) || value.items.length || value.selectedIndex !== null || value.clarificationCount !== 0) return null;
     return { version: 1, status: 'cleared', siteId, characterId, items: [], selectedIndex: null, clarificationCount: 0 };
   }
+  if (value.selectionSource !== undefined && value.selectionSource !== 'batch') return null;
   const originalUserText = value.originalUserText === undefined ? '' : text(value.originalUserText, 4000);
   if (value.originalUserText !== undefined && !originalUserText) return null;
   const items = normalizeItems(value.items);
@@ -50,6 +51,7 @@ function validState(value) {
     && (!item.sharedEvidence || originalUserText.includes(redactContactEmailsForPrompt(item.sharedEvidence))))) return null;
   if (value.status === 'selected' ? !indexValid(value.selectedIndex, items) : value.selectedIndex !== null) return null;
   return { version: 1, status: value.status, siteId, characterId, items, selectedIndex: value.selectedIndex, clarificationCount: value.clarificationCount,
+    ...(value.selectionSource === 'batch' ? { selectionSource: 'batch' } : {}),
     ...(originalUserText ? { originalUserText: redactContactEmailsForPrompt(originalUserText) } : {}) };
 }
 
@@ -65,9 +67,16 @@ export function normalizeProductRequest(value, { userText = '', confidence, prev
     if (!previous || previous.status === 'cleared' || !selectionEvidence) return invalid('selection_without_scope');
     // Continuing an unresolved set is not selection: retain its server-owned
     // targets while the existing pending gate keeps every search/card disabled.
-    if (value.action === 'continue' && value.selectedIndex === null && previous.status === 'pending') {
+    if (value.action === 'continue' && value.selectedIndex === null && previous.status === 'pending' && value.allTargets !== true) {
       if (value.relation !== 'multiple' || !Array.isArray(value.items) || value.items.length) return invalid('pending_continuation_shape_unverified');
       return { valid: true, relation: 'multiple', action: 'continue', items: previous.items, selectedIndex: null, selectionEvidence, reason: '' };
+    }
+    if (value.allTargets === true) {
+      if (!['continue', 'select'].includes(value.action) || value.relation !== 'multiple' || value.selectedIndex !== null
+        || !Array.isArray(value.items) || value.items.length || !Array.isArray(value.sharedUpdates)
+        || value.sharedUpdates.length > 2 || value.sharedUpdates.some(update => !text(update))) return invalid('all_targets_unverified');
+      return { valid: true, relation: 'multiple', action: 'continue', items: previous.items, selectedIndex: null,
+        selectionEvidence, allTargets: true, sharedUpdates: [...new Set(value.sharedUpdates)], reason: '' };
     }
     const selectedIndex = value.action === 'continue' && value.selectedIndex == null ? previous.selectedIndex : value.selectedIndex;
     if (!indexValid(selectedIndex, previous.items)) return invalid('selection_index_unverified');
@@ -139,11 +148,32 @@ export function applyProductRequestScope(searchIntent = {}, decision = {}, { use
       scopeUnverified: false, productRequestUnverified: false, productScopeReason: '' } : searchIntent;
   }
   if (!text(String(siteId), 160) || !text(String(characterId), 160)) return pendingIntent(searchIntent, null, 'scope_unverified');
+  if (request.allTargets === true) {
+    const users = recentMessages.filter(row => (row.senderType || row.sender_type) === 'user').map(row => String(row.text || row.text_content || ''));
+    const explicitCurrentUpdate = Array.isArray(decision.productRequirement?.updates) && decision.productRequirement.updates.length > 0;
+    const updates = [...request.sharedUpdates, ...(explicitCurrentUpdate && text(userText) ? [userText] : [])];
+    // Conditions are exact USER quotations, never assistant suggestions or a
+    // whole mixed identity request masquerading as a shared specification.
+    if (updates.some(update => !(update === userText || users.some(source => source.includes(update)))
+      || active.items.some(item => update.includes(item.evidence)))) return pendingIntent(searchIntent, active, 'shared_conditions_unverified');
+    if (typeof buildIntent !== 'function' || updates.some(update => {
+      const condition = buildIntent(update);
+      return (update === userText ? ['requestedTeam'] : ['requestedTeam','requestedProductType','requestedColor','requestedSeason','requestedVariant']).some(field => condition[field]);
+    })) return pendingIntent(searchIntent, active, 'shared_conditions_unverified');
+    const items = active.items.map(item => {
+      const revisions = [...new Set([...(item.updates || []), ...updates])];
+      return revisions.length <= 2 ? { ...item, updates: revisions, text: [item.evidence, item.sharedEvidence, ...revisions].filter(Boolean).join(' ') } : null;
+    });
+    if (items.some(item => !item)) return pendingIntent(searchIntent, active, 'shared_conditions_unverified');
+    return { ...pendingIntent(searchIntent, { ...active, items, status: 'pending', selectedIndex: null }),
+      batchAllTargets: true, batchUpdateEvidence: userText };
+  }
   const originalUserText = request.action === 'new' ? redactContactEmailsForPrompt(userText) : active?.originalUserText || '';
   if (request.action === 'new' && (!originalUserText || originalUserText.length > 4000)) return pendingIntent(searchIntent, null, 'original_context_unverified');
   const sameItems = active && JSON.stringify(request.items) === JSON.stringify(active.items);
   const state = { version: 1, status: request.selectedIndex === null ? 'pending' : 'selected', siteId: String(siteId), characterId: String(characterId),
     items: request.items, selectedIndex: request.selectedIndex,
+    ...(request.action === 'continue' && active?.selectionSource === 'batch' ? { selectionSource: 'batch' } : {}),
     ...(originalUserText ? { originalUserText } : {}),
     clarificationCount: request.selectedIndex === null ? (sameItems ? active.clarificationCount : 0) : (active?.clarificationCount || 0) };
   if (state.status === 'pending') return pendingIntent(searchIntent, state);

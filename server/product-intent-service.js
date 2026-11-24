@@ -1433,3 +1433,7 @@ function escapeRegExp(value = "") {
 function safeString(value) {
   return String(value == null ? "" : value).trim();
 }
+
+// The semantic router may choose an existing canonical team name across languages;
+// catalogue matchers keep the same shared identity vocabulary.
+export function knownProductTeamNames() { return TEAM_ALIASES.map(([name]) => name); }

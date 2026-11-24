@@ -1,0 +1,63 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { externalPromotionEditorHtml } from "../src/features/admin-console/admin-external-promotion-template.js";
+import { readPromotionForm } from "../src/features/admin-console/admin-external-promotion-controller.js";
+import { getAdminExternalPromotion, saveAdminExternalPromotion } from "../src/services/admin-external-promotion-service.js";
+import { uploadAdminCarouselImage } from "../src/services/home-carousel-service.js";
+
+const originalFetch = globalThis.fetch, originalWindow = globalThis.window;
+const calls = [];
+try {
+  globalThis.window = { location: { origin: "http://localhost:4173" }, localStorage: { getItem: () => null } };
+  globalThis.fetch = async (url, options = {}) => {
+    calls.push({ url, options });
+    const payload = { ok: true, item: { draft: {}, published: null }, imageUrl: "/uploads/carousel/fixture.png" };
+    return { ok: true, text: async () => JSON.stringify(payload), json: async () => payload };
+  };
+  await getAdminExternalPromotion("site/pj?scope=other");
+  assert.equal(calls.at(-1).url, "/api/admin/external-embeds/promotion?siteId=site%2Fpj%3Fscope%3Dother");
+  assert.equal(calls.at(-1).options.credentials, "include");
+  const draft = { launcherImageUrl: "/assets/promotions/pj-gift.svg", popupImageUrl: "/assets/promotions/pj-black-friday-2026.png", label: 'Offers " <script>bad()</script>', autoAvoid: true,
+    desktopRightPx: 24, desktopBottomPx: 24, mobileRightPx: 16, mobileBottomPx: 24 };
+  await saveAdminExternalPromotion("pj", "save_draft", draft);
+  assert.deepEqual(JSON.parse(calls.at(-1).options.body), { siteId: "pj", action: "save_draft", config: draft });
+  await saveAdminExternalPromotion("pj", "publish", draft);
+  assert.deepEqual(JSON.parse(calls.at(-1).options.body), { siteId: "pj", action: "publish", config: draft });
+  const form = { elements: Object.fromEntries(Object.entries(draft).map(([key, value]) => [key, { value: typeof value === "boolean" ? "on" : String(value), checked: value === true, disabled: false }])) };
+  assert.deepEqual(readPromotionForm(form), draft);
+  for (const input of Object.values(form.elements)) input.disabled = true;
+  assert.deepEqual(readPromotionForm(form), draft, "disabled inputs must not erase the visible upload/save draft");
+  form.elements.popupImageUrl.value = "/uploads/carousel/new-upload.webp";
+  assert.equal(readPromotionForm(form).popupImageUrl, "/uploads/carousel/new-upload.webp", "upload completion must reach preview while form is still disabled");
+  form.elements.autoAvoid.checked = false;
+  assert.equal(readPromotionForm(form).autoAvoid, false, "unchecked preference survives disabled state");
+  await saveAdminExternalPromotion("pj", "disable");
+  assert.deepEqual(JSON.parse(calls.at(-1).options.body), { siteId: "pj", action: "disable" });
+  assert.equal(calls.at(-1).options.method, "PUT");
+  const blob = new Blob([new Uint8Array([137,80,78,71])], { type: "image/png" });
+  await uploadAdminCarouselImage({ blob, filename: "poster.png" });
+  assert.equal(calls.at(-1).url, "/api/admin/carousel/upload");
+  assert.equal(calls.at(-1).options.body, blob, "existing upload sends original file, with no avatar crop or recompression");
+  const html = externalPromotionEditorHtml({ published: null, installerSnippet: '</textarea><script>bad()</script>' }, draft, '<img onerror="bad()">');
+  assert.ok(!html.includes("<script>bad()"));
+  assert.ok(!html.includes('<img onerror="bad()">'));
+  assert.ok(html.includes("&lt;script&gt;bad()&lt;/script&gt;"));
+  assert.match(html, /iframe src="\/embed\/promotion-preview.html"/, "preview uses the actual widget page");
+  assert.match(html, /data-promotion-action="save_draft"/);
+  assert.match(html, /data-promotion-action="publish"/);
+  assert.match(html, /data-promotion-action="disable" disabled/);
+  assert.match(html, /data-promotion-device="desktop"/);
+  assert.match(html, /data-promotion-device="mobile"/);
+  const source = await readFile("src/features/admin-console/admin-external-promotion-controller.js", "utf8");
+  assert.match(source, /event.origin !== origin/);
+  assert.match(source, /event.source === host.querySelector/);
+  assert.match(source, /previews.has\(event.source\)/);
+  assert.match(source, /postMessage\(\{ type: "aiove-promotion-preview", config: config\(\) \}, origin\)/);
+  assert.match(source, /detachObserver.disconnect\(\)/);
+  assert.match(source, /removeEventListener\("message", receive\)/);
+  assert.match(source, /frameResize\?\.disconnect\(\)/);
+  assert.doesNotMatch(source, /handleAvatarFile|onCropped|new FormData/);
+  assert.equal((source.match(/await saveAdminExternalPromotion/g) || []).length, 1, "publish must submit the visible configuration in one atomic request");
+  assert.match(source, /device === "mobile" \? 390 : 1024/, "desktop preview remains desktop even in a narrow admin column");
+  console.log("Promotion admin contract passed: escaped draft UI, real iframe, strict preview handshake, independent publish actions, original-ratio upload and lifecycle cleanup (fixture HTTP only)");
+} finally { globalThis.fetch = originalFetch; if (originalWindow === undefined) delete globalThis.window; else globalThis.window = originalWindow; }

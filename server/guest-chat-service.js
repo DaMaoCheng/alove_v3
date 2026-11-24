@@ -1,3 +1,4 @@
+import { dispatchGuestBatchVoices } from './product-request-batch-service.js';
 import { hashSessionToken } from "./security.js";
 import { getDbPool } from "./db.js";
 import { getMessagesForSession } from "./chat-message-store.js";
@@ -83,6 +84,7 @@ export async function sendGuestMessage({ token, characterId = "", text, attachme
   if (access) await recordGuestLastAccess(getDbPool(), { guestSessionId: initialGuest.id, access });
   const releaseLock = replyLockHeld ? async () => {} : await acquireGuestReplyLock(initialGuest.id);
   let voiceAssetId = "";
+  let replyPrepared = null;
   let requestDuplicate = false;
   try {
     const prepared = await persistGuestTurn({
@@ -99,10 +101,15 @@ export async function sendGuestMessage({ token, characterId = "", text, attachme
       callContext,
       characterId: initialGuest.mascot_character_id,
     });
+    replyPrepared = prepared;
     requestDuplicate = Boolean(prepared?.duplicate);
     if (!deferReply) voiceAssetId = await ensureGuestReply({ token, prepared });
   } finally {
     await releaseLock();
+    if (!replyLockHeld && replyPrepared) {
+      try { await dispatchGuestBatchVoices(getDbPool(), replyPrepared, generateGuestVoiceWithoutFailingText); }
+      catch (error) { console.warn('[aiove] batch voice dispatch failed after text commit:', error.message); }
+    }
   }
   if (voiceAssetId) await generateGuestVoiceWithoutFailingText(voiceAssetId);
   const conversation = await getGuestConversation(token, { characterId: initialGuest.mascot_character_id, skipRecovery: true, networkHash });
@@ -116,6 +123,7 @@ export async function sendGuestReplyForMessage({ token, characterId = "", messag
   const initialGuest = await requireGuestCharacter(token, characterId);
   const releaseLock = replyLockHeld ? async () => {} : await acquireGuestReplyLock(initialGuest.id);
   let voiceAssetId = "";
+  let replyPrepared = null;
   try {
     const prepared = await prepareStoredGuestReply({
       token,
@@ -124,6 +132,7 @@ export async function sendGuestReplyForMessage({ token, characterId = "", messag
       characterId: initialGuest.mascot_character_id,
       networkHash,
     });
+    replyPrepared = prepared;
     voiceAssetId = await ensureGuestReply({
       token,
       prepared,
@@ -131,6 +140,10 @@ export async function sendGuestReplyForMessage({ token, characterId = "", messag
     });
   } finally {
     await releaseLock();
+    if (!replyLockHeld && replyPrepared) {
+      try { await dispatchGuestBatchVoices(getDbPool(), replyPrepared, generateGuestVoiceWithoutFailingText); }
+      catch (error) { console.warn('[aiove] batch voice dispatch failed after text commit:', error.message); }
+    }
   }
   if (voiceAssetId) await generateGuestVoiceWithoutFailingText(voiceAssetId);
   return getGuestConversation(token, { characterId: initialGuest.mascot_character_id, skipRecovery: true, networkHash });

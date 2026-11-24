@@ -84,3 +84,21 @@ function runProviderModeCheck(apiMode) {
     stdio: ["pipe", "pipe", "pipe"],
   });
 }
+
+const { collectGuestInspectionVisionInputs } = await import('../server/chat-vision-input-service.js');
+let historyReads=0, imageReads=0;
+const db={execute:async(sql,params)=>{
+ historyReads++;
+ assert(sql.includes('s.guest_session_id = ?') && sql.includes("m.sender_type = 'user'") && sql.includes('LIMIT 1'));
+ assert.deepEqual(params,['session','guest','character',20,100]);
+ return [[{product_payload_json:JSON.stringify({kind:'image',storedName:'owned-image.webp'})}]];
+}};
+const args={sessionId:'session',guestSessionId:'guest',characterId:'character',beforeDisplayOrder:100,
+ recentMessages:[{senderType:'user',displayOrder:20},{senderType:'character',displayOrder:30}],
+ jevDecision:{ok:true,imageIntent:'image_inspection'},collect:async(images)=>{imageReads++;return images;}};
+assert.equal((await collectGuestInspectionVisionInputs(db,args))[0].storedName,'owned-image.webp');
+for (const patch of [{jevDecision:{ok:true,imageIntent:'none'}},{jevDecision:{ok:false,imageIntent:'image_inspection'}},
+ {sessionId:''},{guestSessionId:''},{characterId:''},{beforeDisplayOrder:0},{recentMessages:[]}])
+ assert.deepEqual(await collectGuestInspectionVisionInputs(db,{...args,...patch}),[]);
+assert.equal(historyReads,1);assert.equal(imageReads,1);
+console.log('Guest inspection history is same-session owned, recent, USER-only and explicitly inspection-gated');

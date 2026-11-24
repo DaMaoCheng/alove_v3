@@ -106,7 +106,7 @@ export function buildQuestions(_capabilities = {}, conversationContext = {}, cur
     },
     image_inspection: {
       type: "noul",
-      instructions: "Is the user asking the system to inspect or describe an image they provided?",
+      instructions: "Is the user asking the system to inspect or describe an image they provided, or continuing that same unresolved visual task by clarifying the image's source, meaning or visible details? Use recent USER context to resolve a short continuation. A clarification of an already supplied screenshot still inspects that same image. Choose no for an unrelated topic, social acknowledgement, a different product search, a new-image generation request or a try-on request. Prior assistant claims alone do not establish a user-supplied image.",
     },
     product_request: {
       type: "noul",
@@ -116,7 +116,7 @@ export function buildQuestions(_capabilities = {}, conversationContext = {}, cur
       type: "noul",
       instructions: "Is the user asking the system to find, recommend, compare, price, check size, or check availability of merchandise, including a short current selection, assent or specification continuing the USER's pending/selected task in productContext.requestScope or active productContext.targetEvidence? A concise merchandise category plus requested identifying/specification details can itself express a catalogue task without an explicit search verb. Resolve that actual user task before treating a noun as isolated. A disconnected bare name, compliment, opinion, unrelated comment, topic change or shopping cancellation is not a product action. A prior assistant suggestion alone never supplies a USER task. The requestScope grants no catalogue/image evidence or permission to act beyond this JEV decision.",
     },
-    order_request_kind: { type: 'choice', instructions: 'Classify the CURRENT request in any language. Choose existing only if the user asks to inspect a real already-placed order, personal shipment or tracking; preserve it when mixed with policy or other requests. Choose continuation only when this CURRENT message continues an actual order-lookup request previously made by this same user. A size-change request for a purchased item and its receipt confirmation are customer service, not order lookup. Preserve lookup only if independently requested, including mixed requests. General shipping durations, future/hypothetical orders, product questions, refusals, and an assistant suggestion are NOT order lookup. Uncertain means unclear. Judge only what the user asks, independently of capability, prior assistant responses or whether the same question was asked before. An explicit personal order lookup in the current message is existing, not continuation.', criteria: { none: 'No request to inspect an existing order.', existing: 'Current user explicitly requests inspection of an existing personal order or tracking.', continuation: 'Current user continues asking about the same prior user-mentioned real order.', unclear: 'Insufficient or ambiguous evidence.' } },
+    order_request_kind: { type: 'choice', instructions: 'Classify the CURRENT request in any language. First distinguish an already-placed purchase from a planned, conditional or future purchase, including informal spelling. A buyer asking where a purchase would be delivered, whether their location is covered, or how delivery works before buying is presale; a place name, first-person wording or mention of shipping does not establish an existing order. Choose existing only if the user asks to inspect a real already-placed order, personal shipment or tracking; preserve it when mixed with policy or other requests. Choose continuation only when this CURRENT message continues an actual order-lookup request previously made by this same user. A size-change request for a purchased item and its receipt confirmation are customer service, not order lookup. Preserve lookup only if independently requested, including mixed requests. General shipping durations, future/hypothetical orders, product questions, refusals, and an assistant suggestion are NOT order lookup. Uncertain means unclear. Judge only what the user asks, independently of capability, prior assistant responses or whether the same question was asked before. An explicit personal order lookup in the current message is existing, not continuation.', criteria: { none: 'No request to inspect an existing order.', presale: 'Delivery coverage, destination or conditions for a planned, conditional or future purchase, with no independent existing-order inspection.', existing: 'Current user explicitly requests inspection of an existing personal order or tracking.', continuation: 'Current user continues asking about the same prior user-mentioned real order.', unclear: 'Insufficient or ambiguous evidence.' } },
     order_evidence_source: { type: 'choice', instructions: 'Choose current only for a CURRENT user message that explicitly establishes an existing personal order or tracking lookup. For a CURRENT elliptical follow-up choose the prior USER message that establishes the same existing order. Never use an assistant suggestion, general delivery policy, hypothetical or unrelated text as evidence. Choose none when no such evidence exists. Decide evidence independently of capability and prior assistant response. If the current message explicitly asks to check a personal existing order, choose current even when the same question was asked earlier and even if another policy question is included. For continuation choose a prior USER message only when it actually refers to that same order.', criteria: { none: 'No user evidence of an actual existing order.', current: 'The current user message itself explicitly requests an existing order or tracking lookup.', ...Object.fromEntries(priorUsers.map((value, index) => [`prior${index}`, JSON.stringify(value)])) } },
     web_search: {
       type: "noul",
@@ -174,7 +174,8 @@ export function normalizeJevResponse(payload = {}, capabilities = {}, conversati
   const orderEvidenceValid = kind === 'existing' && (evidenceSource === 'current' || sameCurrentUserText)
     || kind === 'continuation' && priorIndex >= 0 && Boolean(prior[priorIndex]);
   const orderIntent = orderEvidenceValid ? 'lookup' : 'none';
-  if (primaryIntent === 'order_lookup' && !orderEvidenceValid) primaryIntent = 'daily_chat';
+  if (!orderEvidenceValid && (primaryIntent === 'order_lookup'
+    || kind === 'presale' && primaryIntent === 'unsupported_request')) primaryIntent = 'daily_chat';
   const supported = resolveSupport({ primaryIntent, imageIntent, productIntent, orderIntent, capabilities });
   return {
     ok: true,
@@ -186,7 +187,7 @@ export function normalizeJevResponse(payload = {}, capabilities = {}, conversati
     productIntent,
     productAction,
     orderIntent,
-    orderRequestKind: ['none', 'existing', 'continuation', 'unclear'].includes(kind) ? kind : 'unclear',
+    orderRequestKind: ['none', 'presale', 'existing', 'continuation', 'unclear'].includes(kind) ? kind : 'unclear',
     orderEvidenceSource: orderEvidenceValid ? (kind === 'existing' ? 'current' : 'prior_user') : 'none',
     webSearchIntent: webSearch === 1 || primaryIntent === "web_search",
     webSearchScore: webSearch,

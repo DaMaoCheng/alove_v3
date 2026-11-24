@@ -69,7 +69,7 @@ let capturedOwner;
 await enforceReplyBoundary({ ...base, requireIdentityReview: true, languageQualityRequired: true, independentLanguageQualityRequired: true,
   assess: async input => { capturedOwner = input.catalogueOwner; return { allowed: true, confidence: 1, reviewStatus: 'valid', boundarySupported: true, factualSupported: true }; },
   assessLanguageQuality: async () => ({ reviewStatus: 'valid', confidence: 1, languageQualitySupported: true, languageIssues: [] }), recordReview: async () => {} });
-assert.deepEqual(capturedOwner, { character: { ...character, siteId: undefined }, trustedSite: { id: 'shop', identity_mascot_character_id: undefined } });
+assert.deepEqual(capturedOwner, { character: { ...character, siteId: undefined }, trustedSite: { id: 'shop', slug: undefined, identity_mascot_character_id: undefined } });
 const mixed = await enforceReplyBoundary({ ...base, factualContext: { ...clock, required: true }, requireIdentityReview: true,
   languageQualityRequired: true, independentLanguageQualityRequired: true,
   assess: async () => ({ reviewStatus: 'valid', allowed: false, confidence: 1, boundarySupported: false, factualSupported: false }),

@@ -269,3 +269,24 @@ for (const claim of ['Size M has a 100 cm chest.','This size will fit you.','The
  assert.equal(verdict.businessFactsSupported,false);
 }
 console.log('resolved-chart exclusion and factual refusal preservation passed');
+
+// A literal, explicitly conditional interpretation of USER wording can cite
+// that report. Actual merchant applicability still cannot borrow its authority.
+const reportedOfferContext={bounded:true,typedClaims:true,relationshipAudit:false,generalGuidanceAllowed:false,generalDefinitionAllowed:false,
+ units:[{id:'u0',text:'According to the quoted offer, the free items are additional to the paid items.'}],
+ references:[{id:'r0',kind:'user_report',text:'The advert says buy four and receive two extra free.'}]};
+const reportedOfferAudit=[{roles:['user_report'],unitId:'u0',factual:true,referenceIds:['r0'],supported:true,sourceAllowsException:false,replyPreservesException:false}];
+assert.equal(validateBusinessClaimAudit(reportedOfferAudit,reportedOfferContext).accepted,true);
+assert.equal(validateBusinessClaimAudit([{...reportedOfferAudit[0],roles:['user_report','store_policy']}],reportedOfferContext).accepted,false,
+ 'USER interpretation cannot authorize an actual store-policy or basket claim');
+assert.equal(validateBusinessClaimAudit([{...reportedOfferAudit[0],supported:false}],reportedOfferContext).accepted,false,
+ 'a reviewer rejection of wrong arithmetic remains terminal; no local forced approval');
+console.log('Reported wording attribution preserves strict source-kind boundaries');
+
+const imageOptions={...options,searchIntent:{commerceRoute:'store_policy',knowledgeScope:'business'},catalogueOwner:{character:{id:'c',category_id:'mascot'},trustedSite:{id:'s',identity_mascot_character_id:'c'}},knowledgeContext:{ok:true,evidenceSchemaVersion:1,customerServiceIntent:true,businessOwner:{siteId:'s',characterId:'c'},items:[]}};
+const imageAuditContext=buildBusinessClaimContext({...imageOptions,text:'The screenshot says offers cannot be combined.',
+ visionInputs:[{name:'owned-screenshot.jpg',dataUrl:'data:image/jpeg;base64,YWJj'}]});
+assert(imageAuditContext.references.some(ref=>ref.id==='r_image0'&&ref.kind==='user_report'&&ref.imageIndex===0));
+assert(!buildBusinessClaimContext({...imageOptions,visionInputs:[{name:'remote.jpg',dataUrl:'https://untrusted.invalid/image.jpg'}]})
+ .references.some(ref=>ref.id==='r_image0'),'remote URLs never manufacture a reviewed attachment reference');
+console.log('Actual supplied image evidence uses separate unverified USER-report references');

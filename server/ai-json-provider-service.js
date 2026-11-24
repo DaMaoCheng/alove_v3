@@ -30,11 +30,14 @@ export async function requestAiJsonWithProviderFallback(messages, {
   providerTimeoutMs = null,
   validateParsed = null,
   protocolCorrectionMessages = null,
+  disableProviderThinking = false,
+  visionInputs = [],
   logContext = {},
 } = {}) {
   const providers = configuredProviders(config);
   if (!providers.length) throw new Error("AI JSON service is not configured");
   if (typeof perProviderTimeout !== "boolean") throw new Error("Invalid AI JSON timeout policy");
+  if (typeof disableProviderThinking !== 'boolean') throw new Error('Invalid AI JSON thinking policy');
   if (providerTimeoutMs !== null && (!perProviderTimeout || !Number.isSafeInteger(providerTimeoutMs) || providerTimeoutMs < 1 || providerTimeoutMs > 120000))
     throw new Error("Invalid AI JSON provider timeout policy");
   const budgetMs = Number(timeoutMs);
@@ -45,6 +48,7 @@ export async function requestAiJsonWithProviderFallback(messages, {
   const promptContext = {
     systemPrompt: hasLeadingSystem ? messages[0].content : "",
     messages: hasLeadingSystem ? messages.slice(1) : messages,
+    ...(Array.isArray(visionInputs) && visionInputs.length ? { visionInputs } : {}),
   };
   const failures = [];
   // Scope diagnostics explicitly; never forward prompts or arbitrary context
@@ -83,8 +87,12 @@ export async function requestAiJsonWithProviderFallback(messages, {
     try {
       const attemptContext = nextProtocolCorrection ? { ...promptContext, messages: [...promptContext.messages, { role: "system", content: nextProtocolCorrection }] } : promptContext;
       nextProtocolCorrection = "";
+      const requestExtras = { ...modelConfig.requestBodyExtras, ...formatExtras };
+      if (disableProviderThinking && modelConfig.id === 'venice' && modelConfig.apiMode === 'chat_completions') {
+        requestExtras.venice_parameters = { ...requestExtras.venice_parameters, disable_thinking: true };
+      }
       text = await requestOpenAiText(attemptContext, {
-        modelConfig: formatExtras ? { ...modelConfig, requestBodyExtras: { ...modelConfig.requestBodyExtras, ...formatExtras } } : modelConfig,
+        modelConfig: { ...modelConfig, requestBodyExtras: requestExtras },
         fetchImpl, jsonOutput: !responseFormat, sourceRef, recordProviderCallFn: recordCall,
         timeoutMs: Math.min(attemptBudget, providerTimeout > 0 ? providerTimeout : attemptBudget),
       });

@@ -4,6 +4,7 @@ Object.assign(process.env,{AIOVE_PROVIDER_LOG_WRITE_ENABLED:'false',AI_REPLY_PRO
   OPENAI_API_KEY:'fixture-openai',OPENAI_BASE_URL:'https://openai.fixture.invalid/v1',OPENAI_MODEL:'fixture-second',OPENAI_API_MODE:'chat_completions',
   OPENAI_FALLBACK_API_KEY:'fixture-third',OPENAI_FALLBACK_MODEL:'fixture-third'});
 globalThis.fetch = async () => { throw new Error('External requests forbidden'); };
+const { PROMOTION_WORDING_CONTRACT } = await import('../server/chat-global-reply-policy.js');
 const { isGroundedCommerceRepairEligible, repairGroundedCommerceReply } = await import('../server/chat-grounded-reply-repair-service.js');
 const knowledge = { strategy: 'business_verified_reference', items: [{ id: 'policy', scope: 'site', siteId: 'shop', title: 'Policy', content: 'Only region A has a delivery estimate. Check the destination at checkout.', evidenceQuote: 'Only region A has a delivery estimate.' }] };
 const original = { text: 'Delivery to region B is guaranteed.', speechText: 'Delivery to region B is guaranteed.', sourceType: 'ai', sourceRef: 'venice-chat-completions', aiModel: 'generator', voiceMeta: { languageCode: 'en' },
@@ -97,7 +98,7 @@ let detailedPacket;
 await repairGroundedCommerceReply({ ...base, config, userText: 'What is the shipping policy?',
   repairFeedback: { reviewStatus: 'rejected', failedContracts: ['business_facts'], previousReply: base.replyResult.text,
     issues: [{ kind: 'unsupported_fact', span: base.replyResult.text }] },
-  requestText: async prompt => { detailedPacket = JSON.parse(prompt.messages[0].content); return JSON.stringify({ displayText: 'The delivery destination is unverified.' }); } });
+  requestText: async prompt => { check(prompt.systemPrompt.includes(PROMOTION_WORDING_CONTRACT), 'the existing bounded rewrite shares the original conditional quantity rule'); detailedPacket = JSON.parse(prompt.messages[0].content); return JSON.stringify({ displayText: 'The delivery destination is unverified.' }); } });
 check(detailedPacket.proposedResponse === base.replyResult.text && detailedPacket.reviewFeedback.issues[0].span === base.replyResult.text,
   'grounded correction receives both original and validated specific review fragment');
 let isolatedPacket;
@@ -541,3 +542,8 @@ assert.deepEqual(reportsSnapshot, originalComplaintContext.messages.filter(m => 
 assert.equal(reportsSnapshot.filter(t => t.includes('Correction: it was 2XL')).length, 1);
 assert.equal(complaintPromptUserReports({ ...chatComplaint, chatImageContext: {}, promptContext: originalComplaintContext }), null);
 assert.equal(complaintPromptUserReports({ ...chatComplaint, promptContext: { messages: Array.from({ length: 52 }, () => ({role:'user',content:'x'})) } }), null);
+
+const repairVision=[{name:'owned.jpg',dataUrl:'data:image/jpeg;base64,YWJj'}];
+await repairGroundedCommerceReply({...base,config,language:'en',promptContext:{visionInputs:repairVision},
+ requestText:async prompt=>{assert.deepEqual(prompt.visionInputs,repairVision);return JSON.stringify({displayText:'The current delivery conditions remain unverified.'});}});
+console.log('Existing bounded correction receives the same loaded attachment source');

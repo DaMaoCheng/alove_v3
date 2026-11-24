@@ -1,3 +1,4 @@
+import { sourceProductSizingIntent, isSourceSizingRead, sourceSizingPrior, restoreSourceSizingContinuation } from './product-source-sizing-intent-service.js';
 import { alternativeProductsForSearch, bindProductAlternativeContext } from './product-alternative-service.js';
 import { buildDisplayedProductReferenceContext, buildLiveDisplayedProductReferenceContext } from './product-displayed-reference-service.js';
 import { mergeReplyCommerceContext } from "./chat-reply-boundary-service.js";
@@ -68,6 +69,8 @@ export async function resolveGuestProductRecommendation(db, {
   if (!precomputedSearchIntent) {
     searchIntent = await resolveCommerceSearchIntent({ userText, recentMessages, searchIntent, classifyCommerce, siteId: guest.site_id, characterId: guest.mascot_character_id, jevDecision: intentTurn?.decision, enrichAllTurns: true });
   }
+  searchIntent = sourceProductSizingIntent(searchIntent, { sourceContext: guest.external_source_context_json, siteId: guest.site_id, siteSlug: guest.site_slug,
+    characterId: guest.mascot_character_id, userText, recentMessages }) || searchIntent;
   if (searchIntent.commerceClassificationUnavailable === true) return { requested: true, context: null, searchIntent };
   if (hasPendingProductRequest(searchIntent)) return { requested: true, searchIntent, context: buildEmptyGuestProductContext({ id: guest.site_id || "" }, searchIntent,
     searchIntent.searchState === "clarification_exhausted" ? "guest-product-clarification-exhausted" : "guest-product-needs-clarification") };
@@ -86,6 +89,10 @@ export async function resolveGuestProductRecommendation(db, {
     return { requested: true, searchIntent: context.searchIntent || searchIntent, context };
   }
   const site = await loadFrozenGuestProductSite(db, guest);
+  if (isSourceSizingRead(searchIntent) || sourceSizingPrior(searchIntent, { sourceContext: guest.external_source_context_json, siteId: guest.site_id, siteSlug: guest.site_slug, characterId: guest.mascot_character_id, userText, recentMessages }) || searchIntent.productRequirementAction === 'continue' && searchIntent.requestedAudience === 'kids' && searchIntent.productCandidateState?.sourceProductId) {
+    const sourceSizing = await resolveGuestExternalSourceProductContext({ guest, site, userText, searchIntent, recentMessages });
+    if (sourceSizing) return sourceSizing;
+  }
   const sizingUpdate=buildSizingUpdateReferenceContext({site,characterId:guest.mascot_character_id,searchIntent,recentMessages});
   if (sizingUpdate) return {requested:true,searchIntent,context:mergeReplyCommerceContext(sizingUpdate,searchIntent)};
   const candidateReference = await buildCandidateAttributeReferenceContext({ site, characterId: guest.mascot_character_id,
@@ -105,9 +112,9 @@ export async function resolveGuestProductRecommendation(db, {
     };
   }
   if (searchIntent.nonShoppingReason || searchIntent.commerceRoute === "chat" || (searchIntent.customerServiceKnowledgeRequest && !searchIntent.shouldLoadProductContext)) return { requested: false, context: null, searchIntent };
-  const externalSourceProduct = await resolveGuestExternalSourceProductContext({ guest, site, userText, searchIntent });
+  const externalSourceProduct = await resolveGuestExternalSourceProductContext({ guest, site, userText, searchIntent, recentMessages });
   if (externalSourceProduct) {
-    externalSourceProduct.searchIntent = { ...externalSourceProduct.searchIntent, ...searchIntent };
+    externalSourceProduct.searchIntent = { ...searchIntent, ...externalSourceProduct.searchIntent };
     if (externalSourceProduct.context) externalSourceProduct.context = mergeReplyCommerceContext(externalSourceProduct.context, searchIntent);
     return externalSourceProduct;
   }
@@ -233,6 +240,7 @@ export async function resolveGuestExternalSourceProductContext({
   site = {},
   userText = "",
   searchIntent = {},
+  recentMessages = [],
   fetchProductById = fetchTtmallProductById,
   classifyEditions = fetchProductById === fetchTtmallProductById ? classifyCatalogueEditions : null,
 } = {}) {
@@ -242,9 +250,14 @@ export async function resolveGuestExternalSourceProductContext({
   if (String(externalSource.siteId || "") !== String(site.id || "")) return null;
   if (String(externalSource.siteSlug || "") !== String(site.slug || "")) return null;
   if (String(externalSource.mascotCharacterId || "") !== String(guest.mascot_character_id || "")) return null;
-  if (!isExternalSourceProductReference(userText, searchIntent)) return null;
+  const sourceSizingOptions = { sourceContext: guest.external_source_context_json, siteId: site.id, siteSlug: site.slug, characterId: guest.mascot_character_id, userText, recentMessages };
+  const priorSourceSizing = sourceSizingPrior(searchIntent, sourceSizingOptions);
+  const ownedSourceSizing = searchIntent.productRequirementAction === 'continue' && searchIntent.requestedAudience === 'kids'
+    && searchIntent.productCandidateState?.status === 'active' && searchIntent.productCandidateState.owner === 'single'
+    && !searchIntent.productCandidateState.proposal && searchIntent.productCandidateState.sourceProductId === externalSource.sourceProductId;
+  if (!isSourceSizingRead(searchIntent) && !ownedSourceSizing && !priorSourceSizing && !isExternalSourceProductReference(userText, searchIntent)) return null;
 
-  const resolvedIntent = {
+  let resolvedIntent = {
     ...searchIntent,
     contextSource: "external_source_page",
     sourceProductId: externalSource.sourceProductId,
@@ -253,6 +266,7 @@ export async function resolveGuestExternalSourceProductContext({
   try {
     product = await fetchProductById(site.product_api_url, externalSource.sourceProductId, {
       currency: site.currency || "",
+      retryEmptyDetail: true,
       throwOnError: true,
     });
   } catch (error) {
@@ -277,6 +291,9 @@ export async function resolveGuestExternalSourceProductContext({
       context: buildEmptyGuestProductContext(site, resolvedIntent, "guest-external-source-product-no-match"),
     };
   }
+  const restoredSourceSizing = priorSourceSizing && restoreSourceSizingContinuation(searchIntent, sourceSizingOptions, safeProduct);
+  if (priorSourceSizing && !restoredSourceSizing) return null;
+  if (restoredSourceSizing) { searchIntent = restoredSourceSizing; resolvedIntent = { ...resolvedIntent, ...restoredSourceSizing }; }
   const requiredEdition = requestedProductEdition(searchIntent);
   // Reading an existing item to answer a factual question is independent of
   // permitting a new recommendation that claims to satisfy an edition request.
@@ -286,6 +303,18 @@ export async function resolveGuestExternalSourceProductContext({
     const matchIntent = editionCardRequired ? searchIntent : { ...searchIntent, requestedEdition: "", requestedFeatures: (searchIntent.requestedFeatures || []).filter((feature) => !["authentic", "fan_version"].includes(feature)) };
     const anchoredMatch = filterProductsByIntent([safeProduct], matchIntent, { allowNearestAgeFallback: true });
     if (!anchoredMatch.length) return null;
+  }
+  if (searchIntent.intent === 'sizing' && searchIntent.cardAllowed === false || ownedSourceSizing || restoredSourceSizing) {
+    const sizingProduct = await resolveTrustedCurrentProductSizing({ site,
+      product: { ...safeProduct, siteId: site.id, siteSlug: site.slug },
+      // Reuse this very same completed exact source read; no second request.
+      resolveProduct: async () => ({ ...safeResult, resolvedFromSource: true }) });
+    const sizingIntent = { ...resolvedIntent, intent: 'sizing', commerceRoute: 'product_question', commerceTopic: 'sizing', shouldLoadProductContext: false, needsLiveProductData: false, cardAllowed: false,
+      ...(resolvedIntent.productCandidateState?.status === 'active' && resolvedIntent.productCandidateState.owner === 'single' ? { productCandidateState: { ...resolvedIntent.productCandidateState, sourceProductId: externalSource.sourceProductId } } : {}) };
+    return { requested: true, searchIntent: sizingIntent, context: {
+      sourceType: 'product_api', sourceRef: 'guest-current-product-sizing-context', siteId: site.id,
+      siteName: site.name || '', siteSlug: site.slug, siteCurrency: site.currency || '', searchIntent: sizingIntent,
+      searchOutcome: 'matched', cardAllowed: false, products: [], sizingProduct } };
   }
   return {
     requested: true,

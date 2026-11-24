@@ -36,6 +36,21 @@ export function resolveChatFeedbackActionCandidate({ character = {}, productCont
     return label ? { kind: "feedback", label, reason: sizeExchange ? "size_exchange" : handoff.explicitRequest ? "human_request" : "business_review" } : null;
   }
   if (knowledgeContext?.feedbackSubmission?.relation === 'submitted_followup') return null;
+  // Same-call semantic service purpose plus actual empty knowledge, not the
+  // language of a keyword, establishes a bounded request for human review.
+  const serviceKnowledgeMissing = handoff?.reviewReason === 'service_request'
+    && handoffEvidence && String(userText || '').includes(handoffEvidence)
+    && searchIntent?.replyBoundary?.contactAllowed === true
+    && Number.isFinite(searchIntent?.commerceConfidence) && searchIntent.commerceConfidence >= 0 && searchIntent.commerceConfidence <= 1
+    && searchIntent?.policyKnowledgeRequest?.source === 'jev' && searchIntent.policyKnowledgeRequest.required === true
+    && searchIntent.businessKnowledgeRequired === true && searchIntent.knowledgeScope === 'business'
+    && knowledgeContext?.ok === true && Array.isArray(knowledgeContext.items) && knowledgeContext.items.length === 0
+    && ['business_no_relevant_section', 'business_no_verified_answer'].includes(knowledgeContext.strategy);
+  if (serviceKnowledgeMissing) {
+    const label = HUMAN_HANDOFF_LABELS[resolveCharacterLanguage(character)];
+    return label ? { kind: 'feedback', label, reason: 'service_review' } : null;
+  }
+
   if (hasCheckoutIssue(searchIntent)) {
     const failedWithoutKnowledge = searchIntent.checkoutIssue.failedAttempts.length > 0
       && Array.isArray(knowledgeContext?.items) && knowledgeContext.items.length === 0;

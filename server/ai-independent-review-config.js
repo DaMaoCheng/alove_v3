@@ -5,6 +5,10 @@ const modelIdentity = value => String(value || '').trim().toLowerCase();
 // Call only at output-review/repair seams. The base generator and the legacy
 // intent fallback retain their configured requests and independent budgets.
 export function applyReviewRequestProfile(provider) {
+  if (provider?.id === 'venice' && provider.apiMode === 'chat_completions') {
+    provider = { ...provider, requestBodyExtras: { ...provider.requestBodyExtras,
+      venice_parameters: { ...provider.requestBodyExtras?.venice_parameters, disable_thinking: true } } };
+  }
   const profile = provider?.reviewRequestProfile;
   if (!profile || profile.model !== String(provider.model || '').trim()) return provider;
   const extras = { ...provider.requestBodyExtras };

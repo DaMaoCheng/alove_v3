@@ -46,3 +46,16 @@ const foreignSource=await resolveTrustedCurrentProductSizing({site,product:card,
 assert(!foreignSource.sizeChartResolved,'Conflicting source-item site cannot borrow the wrapper site');
 const noTable=await resolveTrustedCurrentProductSizing({site,product:card,resolveProduct:async()=>({resolvedFromSource:true,site,sourceItem:{...card,sizeChartResolved:true,sizeChart:null}})});
 assert(buildBusinessClaimContext({...base,productContext:{...base.productContext,sizingProduct:noTable}}).references.some(r=>r.id==='z0'),'Verified exact lookup without a table still supplies a bounded no-table fact, never inferred measurements');
+const { enforceReplyBoundary } = await import('../server/chat-reply-boundary-service.js');
+let projectedSizingReference = false;
+await enforceReplyBoundary({ character, trustedSite: site, searchIntent: base.searchIntent,
+  productContext: base.productContext, replyResult: { text: base.text }, language: 'es', recordReview: async () => {},
+  assess: async input => {
+    assert.equal(input.catalogueOwner.trustedSite.slug, site.slug);
+    projectedSizingReference = Boolean(buildBusinessClaimContext(input)?.references.some(reference => reference.id === 'z0'));
+    assert(projectedSizingReference, 'real reply-boundary projection must retain the trusted chart reference');
+    return { allowed: true, confidence: 1, boundarySupported: true, guidanceSupported: true, businessFactsSupported: true, factualSupported: true, evidenceSupported: true };
+  },
+});
+assert(projectedSizingReference);
+console.log('Production reply-boundary owner projection preserves sizing slug and z0 source authority.');

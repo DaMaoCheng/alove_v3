@@ -1,8 +1,15 @@
+import { getPublicExternalPromotion } from "./external-promotion-service.js";
 import { createExternalEmbedHandoff, getPublicExternalEmbed } from "./external-embed-service.js";
 import { readJson } from "./http-utils.js";
 import { securityHeaders } from "./security-response-utils.js";
 
 export async function handlePublicExternalEmbedRoute(req, res, { path, requestUrl }) {
+  if (path === "/api/embed/promotion" && req.method === "GET") {
+    const origin = String(req.headers.origin || "").trim();
+    const promotion = await getPublicExternalPromotion(requestUrl.searchParams.get("embed") || "", origin);
+    sendEmbedJson(res, promotion ? 200 : 404, promotion ? { ok: true, promotion } : { ok: false, error: "Widget not found." }, promotion ? origin : "");
+    return true;
+  }
   if (path === "/api/embed/handoff" && req.method === "OPTIONS") {
     sendEmbedPreflight(res, String(req.headers.origin || "").trim());
     return true;

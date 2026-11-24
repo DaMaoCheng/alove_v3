@@ -45,7 +45,7 @@ console.log('JEV multi-item complete source spans, low-score choices and owned p
 
 const scopeRows=[{senderType:'character',productRequestState:intent.productRequestState}];
 const selectionPacket=buildCommerceJevPacket('Manchester',{siteId:'s',characterId:'c',recentMessages:scopeRows});
-assert.deepEqual(Object.keys(selectionPacket.questions.selected_index.criteria),['none','i0','i1'],'Only existing owned indices are offered');
+assert.deepEqual(Object.keys(selectionPacket.questions.selected_index.criteria),['none','all','i0','i1'],'Only existing owned indices and the explicit whole-set option are offered');
 assert(JSON.parse(selectionPacket.questions.selected_index.criteria.i0).evidence===first);
 assert(JSON.parse(selectionPacket.questions.selected_index.criteria.i1).evidence===second);
 assert.deepEqual(Object.keys(buildCommerceJevPacket('Manchester',{siteId:'foreign',characterId:'c',recentMessages:scopeRows}).questions.selected_index.criteria),['none'],'No foreign set can supply an index');

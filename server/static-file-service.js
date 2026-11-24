@@ -74,7 +74,7 @@ export async function serveStatic(req, res) {
     try {
       const content = await readFile(filePath);
       const contentType = STATIC_TYPES[extname(filePath).toLowerCase()] || "application/octet-stream";
-      res.writeHead(200, staticHeaders(contentType));
+      res.writeHead(200, staticHeaders(contentType, relativePath));
       res.end(content);
       return true;
     } catch {
@@ -89,11 +89,12 @@ export async function serveStatic(req, res) {
   return true;
 }
 
-function staticHeaders(contentType) {
+function staticHeaders(contentType, relativePath = "") {
   const shouldAvoidCache = contentType.startsWith("text/html") || contentType.startsWith("text/javascript") || contentType.startsWith("text/css");
   return {
     ...securityHeaders(),
     "Content-Type": contentType,
+    ...(relativePath === "embed/promotion-widget.js" ? { "Access-Control-Allow-Origin": "*" } : {}),
     ...(shouldAvoidCache ? { "Cache-Control": "no-store" } : {}),
   };
 }

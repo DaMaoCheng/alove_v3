@@ -93,7 +93,10 @@ export async function saveAdminExternalEmbed(siteId, payload = {}) {
     );
   });
 
-  return { ok: true, item: mapAdminEmbedRow({ ...site, ...fields, id, public_id: publicId }) };
+  // A concurrent first promotion/chat insert may own the surviving public ID.
+  const persisted = await getExternalEmbedBySiteId(site.site_id);
+  if (!persisted) throwNotFound();
+  return { ok: true, item: mapAdminEmbedRow({ ...site, ...persisted }) };
 }
 
 export async function getPublicExternalEmbed(publicId, requestOrigin = "") {
@@ -328,7 +331,7 @@ function normalizeExternalOrigin(value) {
   return url.origin;
 }
 
-function resolveExternalOrigin(value, siteUrl = "") {
+export function resolveExternalOrigin(value, siteUrl = "") {
   const raw = safeString(value).slice(0, 255);
   const siteUrlOrigin = deriveExternalOriginFromSiteUrl(siteUrl);
   if (shouldPreferSiteUrlOrigin(raw, siteUrlOrigin)) return siteUrlOrigin;
@@ -361,7 +364,7 @@ function isTemporaryExternalOrigin(value) {
   }
 }
 
-function normalizeLauncherImageUrl(value) {
+export function normalizeLauncherImageUrl(value) {
   const raw = safeString(value).slice(0, 512);
   if (!raw) return null;
   if (raw.startsWith("/uploads/avatars/")) return raw;

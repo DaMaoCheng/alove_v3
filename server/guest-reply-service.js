@@ -1,3 +1,4 @@
+import { planProductRequestBatch, readProductBatchStep, prepareProductBatchStep, resolveProductBatchStepIntent, markProductBatchPrepared } from './product-request-batch-service.js';
 import { shouldRecheckBusinessKnowledge } from './business-knowledge-selection-service.js';
 import { registerChatImageInitialReplyForDb } from "./chat-image-failure-reply-job-service.js";
 import { resolveFeedbackConversationHistory, attachFeedbackSubmissionContext, applyFeedbackSubmissionPrompt, isSubmittedFeedbackFollowup } from './chat-feedback-submission-service.js';
@@ -41,7 +42,7 @@ import { maybeCreateGuestChatImagePlaceholder } from "./chat-image-generation-se
 import { reserveAiReplyVoiceAssetForDb } from "./chat-voice-asset-service.js";
 import { resolveReplySpeechText } from "./chat-reply-speech-service.js";
 import { listGuestAttachmentsForRequest } from "./guest-chat-attachment-service.js";
-import { collectVisionInputsForAttachments } from "./chat-vision-input-service.js";
+import { collectVisionInputsForAttachments, collectGuestInspectionVisionInputs } from "./chat-vision-input-service.js";
 import {
   guestSessionForImage,
   guestVoiceMeta,
@@ -140,7 +141,8 @@ export async function prepareStoredGuestReply({
 
 // Internal command: callers must hold the guest reply advisory lock across this function.
 export async function ensureGuestReply({ token, prepared, voiceModelMode = "" }) {
-  const replyRef = `guest-reply:${prepared.message.id}`;
+  const batchStep = readProductBatchStep(prepared);
+  const replyRef = `guest-reply:${prepared.message.id}${batchStep && batchStep.index < batchStep.count - 1 ? ':batch-' + batchStep.index : ''}`;
   const clarificationReplyRef = `${replyRef}:${PRODUCT_CLARIFICATION_SOURCE_MARKER}`;
   const [existing] = await getDbPool().execute(
     `SELECT id, voice_asset_id FROM chat_messages
@@ -173,10 +175,25 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
     beforeDisplayOrder: prepared.promptBeforeDisplayOrder || prepared.message.display_order });
   const commerceRecentMessages = feedbackHistory?.entries?.length
     ? [...recentMessages, ...feedbackHistory.entries].sort((a, b) => Number(a.displayOrder || 0) - Number(b.displayOrder || 0)) : recentMessages;
-  const precomputedSearchIntent = await (intentTurn.resolveCommerce?.bind(intentTurn) || resolveCommerceSearchIntent)({ userText: prepared.text, recentMessages: commerceRecentMessages,
+  const precomputedSearchIntent = (batchStep ? await resolveProductBatchStepIntent(batchStep, (text, scopeHistory) => resolveCommerceSearchIntent({ userText: text,
+    recentMessages: scopeHistory, searchIntent: buildProductSearchIntent(text), enrichAllTurns: true,
+    jevDecision: intentTurn.decision, siteId: prepared.guest.site_id, characterId: promptCharacter.id })) : null) || await (intentTurn.resolveCommerce?.bind(intentTurn) || resolveCommerceSearchIntent)({ userText: prepared.text, recentMessages: commerceRecentMessages,
     searchIntent: buildProductSearchIntent(prepared.text, "", { recentProductContext: buildRecentProductContext(recentMessages) }),
     enrichAllTurns: true, jevDecision: intentTurn.decision, siteId: prepared.guest.site_id, characterId: promptCharacter.id,
     logContext: { requestId: prepared.message.id, sessionId: prepared.guest.chat_session_id, characterId: promptCharacter.id } });
+  if (!batchStep && prepared.message.source_ref !== 'guest-call' && prepared.message.sourceRef !== 'guest-call' && !prepared.attachments?.length && !prepared.imageResult?.taskCreated && !prepared.imageResult?.directive && !prepared.imageResult?.message) {
+    const batch = planProductRequestBatch(precomputedSearchIntent, { userText: prepared.text, siteId: prepared.guest.site_id,
+      characterId: promptCharacter.id, jevDecision: intentTurn.decision });
+    if (batch) {
+      markProductBatchPrepared(prepared);
+      let voiceId = '';
+      for (const step of batch) {
+        voiceId = await ensureGuestReply({ token, voiceModelMode,
+          prepared: prepareProductBatchStep({ ...prepared, intentTurn, languagePreference }, step) });
+      }
+      return voiceId;
+    }
+  }
   const productStartedAt = Date.now();
   const productRecommendation = await resolveGuestProductRecommendation(getDbPool(), {
     guest: prepared.guest,
@@ -240,7 +257,9 @@ export async function ensureGuestReply({ token, prepared, voiceModelMode = "" })
   );
   const visionInputs = prepared.attachments?.length
     ? await collectVisionInputsForAttachments(prepared.attachments)
-    : [];
+    : await collectGuestInspectionVisionInputs(getDbPool(), { sessionId: prepared.guest.chat_session_id,
+      guestSessionId: prepared.guest.id, characterId: promptCharacter.id, beforeDisplayOrder: Number(prepared.message.display_order || prepared.message.displayOrder || 0),
+      recentMessages, jevDecision: intentTurn.decision });
   const voiceLogContext = guestVoiceLogContext(promptCharacter, voiceModelMode, languagePreference);
   const guestBenefitContext = buildGuestBenefitContext({ searchIntent: productRecommendation.searchIntent,
     userText: prepared.text, languageCode: languagePreference.languageCode || "en", isGuest: true });

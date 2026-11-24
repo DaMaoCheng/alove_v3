@@ -10,6 +10,8 @@ export async function createSiteExternalEmbedsTableIfMissing() {
       external_origin VARCHAR(255) NOT NULL,
       embed_status VARCHAR(32) NOT NULL DEFAULT 'draft',
       launcher_image_url VARCHAR(512) NULL,
+      promotion_draft_json JSON NULL,
+      promotion_published_json JSON NULL,
       show_badge TINYINT(1) NOT NULL DEFAULT 1,
       desktop_right_px SMALLINT UNSIGNED NOT NULL DEFAULT 24,
       desktop_bottom_px SMALLINT UNSIGNED NOT NULL DEFAULT 84,
@@ -36,6 +38,8 @@ export async function createSiteExternalEmbedsTableIfMissing() {
   `);
   await addColumnIfMissing("site_external_embeds", "title_rich_text", "TEXT NULL AFTER title");
   await addColumnIfMissing("site_external_embeds", "description_rich_text", "TEXT NULL AFTER description");
+  await addColumnIfMissing("site_external_embeds", "promotion_draft_json", "JSON NULL");
+  await addColumnIfMissing("site_external_embeds", "promotion_published_json", "JSON NULL");
   await ensureTitleDefault();
 }
 
