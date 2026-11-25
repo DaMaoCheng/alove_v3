@@ -24,7 +24,8 @@
 
 - [Current Workspace](./docs/current-workspace.md)
 - [Project TODO](./docs/project-todo.md)
-- [Release Notes](./docs/releases/)
+- [GitHub Releases](https://github.com/DaMaoCheng/alove_v3/releases)
+- [Tag 与 Release 发布流程](./docs/deployment/github-releases.md)
 - [Update Logs](./logs/updates/)
 - [Bug Logs](./logs/bugs/)
 

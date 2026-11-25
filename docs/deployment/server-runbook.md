@@ -85,6 +85,10 @@ The script will:
 - run `SMOKE_BASE_URL=http://127.0.0.1:4173 node scripts/multisite-http-smoke.mjs`;
 - run `SMOKE_BASE_URL=https://alove.fans npm run smoke:multisite`.
 
+### GitHub Release Completion
+
+After production verification passes and the verified source is present on remote `main`, create an annotated tag and a GitHub Release using the [GitHub release workflow](./github-releases.md). This is required for each formal publication. Verify the remote tag's resolved commit and published Release, then record both in the private deployment log. Target the exact deployed source commit, not a later documentation commit. GitHub source archives do not replace production environment, database, or upload backups.
+
 ## 4. First Conversion From Directory Current
 
 If `/srv/alove-new/current` is still a real directory, the script treats it as a legacy current directory:
